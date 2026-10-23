@@ -14,8 +14,6 @@
     "check:frontend": "node scripts/prepare-frontend.mjs --check",
     "dev": "npm run build:frontend && tsx watch server/index.ts",
     "start": "node dist-server/server/index.js",
-    "legacy:dev": "vite --config legacy-web/vite.config.ts",
-    "legacy:build": "vite build --config legacy-web/vite.config.ts",
     "shell:web": "npm --workspace apps/shell run web",
     "shell:ios": "npm --workspace apps/shell run ios",
     "shell:android": "npm --workspace apps/shell run android",

@@ -22,7 +22,6 @@
   },
   "include": [
     "server",
-    "packages",
-    "legacy-web/src"
+    "packages"
   ]
 }

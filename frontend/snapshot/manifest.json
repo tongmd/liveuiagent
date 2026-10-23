@@ -1,15 +1,14 @@
 {
   "formatVersion": 2,
   "file": "index.html",
-  "sha256": "7e77f4b6712620d52f0f0c97181fa263e360bc7f72b2a335d31151f5dcebbc94",
+  "sha256": "5b309899c7fb3b8d592ff3a6e142323c6e5ae1ce9e697b8235c2c0ccb5cab11d",
   "captured": "2026-10-21",
   "deployedRevisionDate": "2026-10-16",
-  "kind": "maintained-integrated-frontend-with-sidecars",
   "resources": [
     {
       "file": "index.html",
-      "sha256": "7e77f4b6712620d52f0f0c97181fa263e360bc7f72b2a335d31151f5dcebbc94",
-      "bytes": 1395210
+      "sha256": "5b309899c7fb3b8d592ff3a6e142323c6e5ae1ce9e697b8235c2c0ccb5cab11d",
+      "bytes": 1395190
     },
     {
       "file": "complete-apps.js",
@@ -56,8 +55,5 @@
       "sha256": "af973cae1b7dbf7589fe72f10031f780028a86a789474e8f90934cfad7dcb7b9",
       "bytes": 2863
     }
-  ],
-  "provenance": "Based on the reviewed October 2026 LIVEUIAGENT deployment import; maintained as LiveUIAgent with explicit branding, subpath routing, and editable runtime controls.",
-  "rebuildStatus": "The integrated HTML remains a deployment snapshot. The earlier React implementation in legacy-web does not reproduce it; the sidecar source files alone are not a complete reproducible frontend build.",
-  "modified": "2026-10-23"
+  ]
 }

@@ -15,8 +15,5 @@ for (const file of names) {
   manifest.resources.push({ file, sha256: createHash('sha256').update(bytes).digest('hex'), bytes: bytes.length });
 }
 manifest.sha256 = manifest.resources.find(entry => entry.file === manifest.file).sha256;
-manifest.modified = new Date().toISOString().slice(0, 10);
-manifest.kind = 'maintained-integrated-frontend-with-sidecars';
-manifest.provenance = 'Based on the reviewed October 2026 LIVEUIAGENT deployment import; maintained as LiveUIAgent with explicit branding, subpath routing, and editable runtime controls.';
 await writeFile(filename, JSON.stringify(manifest, null, 2) + '\n');
 console.log(`Recorded ${manifest.resources.length} reviewed frontend resources.`);
