@@ -1,0 +1,63 @@
+{
+  "formatVersion": 2,
+  "file": "index.html",
+  "sha256": "7e77f4b6712620d52f0f0c97181fa263e360bc7f72b2a335d31151f5dcebbc94",
+  "captured": "2026-10-21",
+  "deployedRevisionDate": "2026-10-16",
+  "kind": "maintained-integrated-frontend-with-sidecars",
+  "resources": [
+    {
+      "file": "index.html",
+      "sha256": "7e77f4b6712620d52f0f0c97181fa263e360bc7f72b2a335d31151f5dcebbc94",
+      "bytes": 1395210
+    },
+    {
+      "file": "complete-apps.js",
+      "sha256": "ae5dca108ff09c58eae0c006278597fe13bff94dc82ce5c79b3d57935454aa4f",
+      "bytes": 8100
+    },
+    {
+      "file": "complete-apps.css",
+      "sha256": "eb84d4a49b473791f599abeb0443161ad7465f9e9ad4b3a23a1da8f3a144e5e9",
+      "bytes": 2379
+    },
+    {
+      "file": "personalization.js",
+      "sha256": "d8da3c5c06568404a7f33fcea33245e951cb9ba7a97bb644e5b537b2645cdcbd",
+      "bytes": 8046
+    },
+    {
+      "file": "personalization.css",
+      "sha256": "259fb1e83cf100d17ae4137aefe4e5aedc85331a923b637e495cf7abbe2cc037",
+      "bytes": 6817
+    },
+    {
+      "file": "liveui-bootstrap.js",
+      "sha256": "ec1d982199f07faf73d631b27a58bd3b3dac12d6a48133c886c5443b309dd002",
+      "bytes": 567
+    },
+    {
+      "file": "runtime-controls.js",
+      "sha256": "245982021291dce5c028952075cfabb7028b2d29147affdee6f9ca00330e5deb",
+      "bytes": 18888
+    },
+    {
+      "file": "runtime-controls.css",
+      "sha256": "a3e8a9d57405038653872a87dbe220726ebb50af69a621c5da6cc531939fc952",
+      "bytes": 9963
+    },
+    {
+      "file": "material-catalog.js",
+      "sha256": "2e69ef2609b2730d27c765b5002ab77f3c43cf5e85d778d4f2a6065eed9eefed",
+      "bytes": 2091
+    },
+    {
+      "file": "material-catalog.css",
+      "sha256": "af973cae1b7dbf7589fe72f10031f780028a86a789474e8f90934cfad7dcb7b9",
+      "bytes": 2863
+    }
+  ],
+  "provenance": "Based on the reviewed October 2026 LIVEUIAGENT deployment import; maintained as LiveUIAgent with explicit branding, subpath routing, and editable runtime controls.",
+  "rebuildStatus": "The integrated HTML remains a deployment snapshot. The earlier React implementation in legacy-web does not reproduce it; the sidecar source files alone are not a complete reproducible frontend build.",
+  "modified": "2026-10-23"
+}

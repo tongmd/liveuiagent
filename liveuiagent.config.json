@@ -1,0 +1,111 @@
+{
+  "appworld": {
+    "enabled": false,
+    "apiBase": "http://127.0.0.1:9000",
+    "snapshotRoot": "./artifacts/appworld-snapshots",
+    "exposeAllTools": true,
+    "timeoutMs": 15000
+  },
+  "gui_debug_policy": {
+    "mode": "workflow_first",
+    "fix_scope": "generation_pipeline",
+    "forbidden": [
+      "business_source_patch",
+      "renderer_special_case",
+      "single_app_hotfix"
+    ],
+    "required_fix_path": [
+      "router",
+      "requirement",
+      "ui",
+      "action",
+      "data",
+      "asset",
+      "validator",
+      "qa"
+    ],
+    "acceptance": [
+      "regenerate_spec_package",
+      "rerun_validation",
+      "rerun_screenshot_audit"
+    ]
+  },
+  "evaluator": {
+    "workflow": "independent_behavior_evaluation",
+    "entrypoint": "/evaluator/run",
+    "defaultChannel": "behavior",
+    "decisionMode": "online_step_by_step",
+    "defaultHorizonTurns": 3,
+    "defaultMaxSteps": 14,
+    "inputs": [
+      "appName",
+      "expectedBehaviorPrompt"
+    ],
+    "allowed_surface": "app_package_a2ui_behavior_channel",
+    "optionalChannels": [
+      "browser_visual_audit"
+    ],
+    "forbidden": [
+      "business_source_patch",
+      "app_spec_mutation",
+      "agent_action_shortcut",
+      "database_assertion_without_gui_interaction",
+      "pre_generated_multi_turn_script_as_default",
+      "renderer_special_case"
+    ],
+    "required_steps": [
+      "open_named_app",
+      "snapshot_a2ui_before",
+      "decide_next_gui_action_from_current_snapshot",
+      "execute_one_a2ui_interaction",
+      "resnapshot_after_each_action",
+      "repeat_until_long_horizon_or_clear_failure",
+      "route_clicks_through_agent_action",
+      "snapshot_a2ui_after",
+      "judge_expected_behavior"
+    ],
+    "artifacts": [
+      "report.json",
+      "before.json",
+      "after.json",
+      "step snapshots",
+      "optional browser screenshots"
+    ]
+  },
+  "guiEvaluator": {
+    "workflow": "rendered_gui_quality_evaluation",
+    "entrypoint": "/evaluator/gui",
+    "runOn": [
+      "app_package_save",
+      "app_package_patch",
+      "manual_request"
+    ],
+    "inputs": [
+      "appName"
+    ],
+    "evaluates": [
+      "functionality",
+      "information_hierarchy",
+      "aesthetics",
+      "interaction_naturalness",
+      "cross_platform_readiness"
+    ],
+    "defaultSurface": "a2ui_render_model",
+    "threshold": 86,
+    "failFast": true,
+    "forbidden": [
+      "business_source_patch",
+      "renderer_special_case",
+      "single_app_hotfix",
+      "type_rule_based_exception",
+      "silent_score_override"
+    ],
+    "requiredEvidence": [
+      "rendered_component_tree",
+      "visible_text_sample",
+      "input_slot_count",
+      "action_binding_count",
+      "gui_evaluation_report"
+    ]
+  }
+}

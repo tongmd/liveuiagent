@@ -1,0 +1,23 @@
+{
+  "expo": {
+    "name": "LIVEUIAGENT",
+    "slug": "liveuiagent",
+    "scheme": "liveuiagent",
+    "version": "0.1.0",
+    "orientation": "default",
+    "platforms": ["ios", "android", "web"],
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "agentGatewayUrl": ""
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{
+  "name": "liveuiagent",
+  "version": "0.2.0",
+  "description": "An open-source agent runtime for creating and evolving personalized applications.",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build:server && npm run build:frontend",
+    "build:server": "tsc -p tsconfig.server.json",
+    "build:frontend": "node scripts/prepare-frontend.mjs",
+    "check:frontend": "node scripts/prepare-frontend.mjs --check",
+    "dev": "npm run build:frontend && tsx watch server/index.ts",
+    "start": "node dist-server/server/index.js",
+    "legacy:dev": "vite --config legacy-web/vite.config.ts",
+    "legacy:build": "vite build --config legacy-web/vite.config.ts",
+    "shell:web": "npm --workspace apps/shell run web",
+    "shell:ios": "npm --workspace apps/shell run ios",
+    "shell:android": "npm --workspace apps/shell run android",
+    "test": "npm run test:offline",
+    "pretest:offline": "npm run build",
+    "test:offline": "node --test tests/*.test.mjs && tsx tests/agent-scheduler.test.ts && tsx tests/appworld-bridge.test.ts && npm run test:dsh",
+    "test:runtime-ui": "node scripts/test-runtime-controls.mjs",
+    "test:evaluator": "tsx scripts/test-complete-app-evaluator.ts",
+    "test:catalog": "node scripts/test-material-catalog.mjs",
+    "check:release": "node scripts/check-release.mjs",
+    "test:dsh": "node --test packages/dsh-plugin/tests/*.test.mjs",
+    "test:driver": "tsx --test tests/complete-app-driver.test.ts",
+    "deploy": "bash scripts/deploy-liveui.sh",
+    "test:deployment": "node --test tests/deployment.test.mjs",
+    "test:deploy": "node --test tests/deployment.test.mjs",
+    "check:docs": "node scripts/check-docs.mjs"
+  },
+  "keywords": [
+    "liveuiagent",
+    "agent-runtime",
+    "app-spec",
+    "dynamic-renderer",
+    "cross-platform"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "type": "module",
+  "dependencies": {
+    "better-sqlite3": "^12.10.0",
+    "cors": "^2.8.6",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "puppeteer-core": "^25.1.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.1",
+    "@vitejs/plugin-react": "^6.0.2",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.16"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.10.0": true,
+    "esbuild@0.28.2": true,
+    "fsevents@2.3.3": true
+  }
+}

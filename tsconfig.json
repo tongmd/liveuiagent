@@ -1,0 +1,28 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "allowSyntheticDefaultImports": true,
+    "types": [
+      "vite/client"
+    ],
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "@liveuiagent/app-spec": [
+        "packages/app-spec/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "server",
+    "packages",
+    "legacy-web/src"
+  ]
+}

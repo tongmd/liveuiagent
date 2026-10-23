@@ -1,0 +1,42 @@
+# Dependencies and builds
+node_modules/
+dist/
+dist-server/
+dist-legacy-web/
+.expo/
+dist-expo-*/
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# User state, generated apps, and test scratch
+data/
+generated-apps/
+generated-apps-*/
+artifacts/
+.test-runs/
+logs/
+tmp/
+*.db
+*.db-shm
+*.db-wal
+*.log
+
+# Local environment and editor state
+.appworld*/
+.venv/
+.claude/
+.agents/
+.aris/
+.DS_Store
+*.bak
+*.backup
+packages/*/src/*.js
+
+# Python deployment test caches
+__pycache__/
+*.pyc

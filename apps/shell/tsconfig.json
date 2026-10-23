@@ -1,0 +1,16 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "ignoreDeprecations": "6.0",
+    "baseUrl": ".",
+    "paths": {
+      "@liveuiagent/app-spec": ["../../packages/app-spec/src/index.ts"]
+    }
+  },
+  "include": [
+    "app",
+    "src",
+    "../../packages/app-spec/src"
+  ]
+}

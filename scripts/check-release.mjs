@@ -1,0 +1,3 @@
+import {execFileSync} from 'node:child_process';import fs from 'node:fs';
+const files=execFileSync('git',['ls-files','--cached','--others','--exclude-standard','-z'],{encoding:'utf8'}).split('\0').filter(Boolean);let n=0;
+for(const f of files){if(!fs.existsSync(f)||!fs.statSync(f).isFile())continue;const b=fs.readFileSync(f);if(b.includes(0))continue;const s=b.toString();for(const pattern of [/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,/\bgh[pousr]_[A-Za-z0-9]{30,}/,/\bsk-(?:proj-)?[A-Za-z0-9_-]{24,}/,/https?:\/\/[^\s/:]+:[^\s/@]+@/,/\/(?:Users|home)\/[A-Za-z0-9_.-]+\//])if(pattern.test(s))throw Error('Potential credential or personal path in '+f);n++;}console.log('Source credential/path scan passed: '+n+' text files.');

@@ -1,0 +1,55 @@
+(() => {
+  const stages = {'等待开始':'Queued','DSH 正在理解需求':'DSH is preparing your app','任务完成':'Complete','应用已更新':'App updated','本次任务未完成':'Task failed','服务已停止':'Service stopped','服务重启，请重新提交':'Service restarted. Please submit again.'};
+  const stageLabel = value => stages[value] || (/[\u3400-\u9fff]/.test(value || '') ? 'Working…' : value || 'Working…');
+  const api=async(route,method='GET',body)=>{const path='/agent/complete/'+route;const r=await fetch(window.__liveuiPath?window.__liveuiPath(path):path,{method,headers:{...(method!=='GET'?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d;};
+  const channel=()=>Array.from(crypto.getRandomValues(new Uint8Array(24)),x=>x.toString(16).padStart(2,'0')).join('');
+  function bootstrap(initial,key){
+    const values=Object.assign(Object.create(null),initial),pending=new Map(),touched=new Set();let seq=0;
+    function request(type,payload){const id=++seq;return new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(id);reject(Error('Request timed out. Please try again.'));},930000);pending.set(id,{resolve,reject,timer});parent.postMessage({channel:key,id,type,...payload},'*');});}
+    addEventListener('message',e=>{if(e.source!==parent||e.data?.channel!==key||e.data?.type!=='reply')return;const p=pending.get(e.data.id);if(!p)return;pending.delete(e.data.id);clearTimeout(p.timer);e.data.error?p.reject(Error(e.data.error)):p.resolve(e.data.value);});
+    const storage={getItem(k){return Object.hasOwn(values,String(k))?values[String(k)]:null;},setItem(k,v){values[String(k)]=String(v);request('store',{store:values}).catch(e=>console.error(e.message));},removeItem(k){delete values[String(k)];request('store',{store:values}).catch(e=>console.error(e.message));},clear(){for(const k of Object.keys(values))delete values[k];request('store',{store:values}).catch(e=>console.error(e.message));},key(i){return Object.keys(values)[i]||null;},get length(){return Object.keys(values).length;}};
+    Object.defineProperty(window,'localStorage',{value:storage});
+    function capture(){const fields=[...touched].filter(e=>e.isConnected&&e.value?.trim()).map(e=>({label:e.labels?.[0]?.textContent||e.getAttribute('aria-label')||e.name||e.id||'Text input',value:e.value.slice(0,2000)}));touched.clear();if(fields.length)request('interaction',{fields}).catch(()=>{});}
+    document.addEventListener('input',e=>{const x=e.target;if(e.isTrusted&&(x.matches('textarea')||x.matches('input[type="text"],input:not([type])'))&&!/password|secret|token|api.?key/i.test(x.name+' '+x.id+' '+x.autocomplete))touched.add(x);},true);
+    document.addEventListener('submit',capture,true);
+    window.liveuiagent={storage,ai(prompt,context){capture();return request('ai',{prompt,context});},download(filename,content,mimeType='text/plain;charset=utf-8'){const u=URL.createObjectURL(new Blob([content],{type:mimeType})),a=document.createElement('a');a.href=u;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(u),10000);}};
+  }
+  function documentFor(html,store,key){
+    const policy='<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'; frame-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'">';
+    const insertion=policy+'<script>('+bootstrap.toString()+')('+JSON.stringify(store).replace(/</g,'\\u003c')+','+JSON.stringify(key)+');<\/script>';
+    return /<head[^>]*>/i.test(html)?html.replace(/<head[^>]*>/i,m=>m+insertion):insertion+html;
+  }
+  window.LiveUIAgentCompleteApp=function({app}){
+    const R=window.__liveuiagentReact,h=R.createElement,[data,setData]=R.useState(null),[status,setStatus]=R.useState('Opening…'),[prompt,setPrompt]=R.useState(''),[job,setJob]=R.useState(null),frame=R.useRef(null),key=R.useRef(channel()),writes=R.useRef(Promise.resolve()),alive=R.useRef(true),jobRef=R.useRef(null);
+    const appId=app.appId;
+    const load=async()=>{const d=await api('apps/'+appId);if(!alive.current)return;key.current=channel();setData(d);setStatus('');};
+    const wait=async(id)=>{for(;;){const j=await api('jobs/'+id);if(!['queued','running'].includes(j.status)){if(j.status!=='done')throw Error(j.error||'Task cancelled');return j;}if(alive.current){setStatus(stageLabel(j.stage));setJob(j);}await new Promise(r=>setTimeout(r,2000));}};
+    R.useEffect(()=>{alive.current=true;load().catch(e=>setStatus(e.message));return()=>{alive.current=false;};},[appId]);
+    R.useEffect(()=>{
+      const handler=async e=>{
+        if(e.source!==frame.current?.contentWindow||e.data?.channel!==key.current)return;
+        const {id,type,channel:ch}=e.data,source=e.source;const reply=(value,error)=>source.postMessage({channel:ch,type:'reply',id,value,error},'*');
+        try{
+          if(type==='store'){
+            if(!e.data.store||Array.isArray(e.data.store)||JSON.stringify(e.data.store).length>1000000)throw Error('Data is too large');
+            const snapshot=e.data.store;setStatus('Saving…');const write=writes.current.catch(()=>{}).then(()=>api('apps/'+appId+'/store','PUT',snapshot));writes.current=write;await write;if(alive.current)setStatus('Saved');reply({ok:true});
+          }else if(type==='interaction'){
+            await api('apps/'+appId+'/interaction','POST',{fields:e.data.fields});reply({ok:true});
+          }else if(type==='ai'){
+            if(jobRef.current)throw Error('Wait for the current task to finish');
+            const j=await api('apps/'+appId+'/action','POST',{prompt:e.data.prompt,context:e.data.context??{}});jobRef.current=j;setJob(j);const result=await wait(j.id);reply(result.result);jobRef.current=null;if(alive.current){setJob(null);setStatus('');}
+          }
+        }catch(err){reply(null,err.message);if(alive.current){setStatus(err.message);if(type==='ai'){jobRef.current=null;setJob(null);}}}
+      };
+      addEventListener('message',handler);return()=>removeEventListener('message',handler);
+    },[appId]);
+    const revise=async e=>{e.preventDefault();if(!prompt.trim()||jobRef.current)return;setStatus('Preparing changes…');jobRef.current={pending:true};setJob({stage:'Preparing changes…'});try{await writes.current;const j=await api('apps/'+appId+'/revise','POST',{prompt});jobRef.current=j;setJob(j);await wait(j.id);setPrompt('');await load();window.__liveuiagentRefresh?.();}catch(err){setStatus(err.message);}finally{jobRef.current=null;setJob(null);}};
+    const download=()=>{const u=URL.createObjectURL(new Blob([data.html],{type:'text/html;charset=utf-8'})),a=document.createElement('a');a.href=u;a.download=app.name+'.html';a.click();setTimeout(()=>URL.revokeObjectURL(u),10000);};
+    const src=R.useMemo(()=>data?documentFor(data.html,data.store,key.current):'', [data]);
+    return h('div',{className:'complete-app-host'},
+      h('div',{className:'complete-app-actions'},h('small',null,job?stageLabel(job.stage):status||'Your app and data are saved'),h('div',null,h('button',{type:'button',onClick:()=>load().catch(e=>setStatus(e.message)),disabled:!!job,title:'Reopen'},'↻'),h('button',{type:'button',onClick:download,disabled:!data},'Export app ↗'),job?.id?h('button',{type:'button',onClick:()=>api('jobs/'+job.id,'DELETE').catch(e=>setStatus(e.message))},'Cancel task'):null)),
+      data?h('iframe',{ref:frame,title:app.name,className:'complete-app-frame',sandbox:'allow-scripts allow-forms allow-modals allow-downloads',referrerPolicy:'no-referrer',srcDoc:src}):h('p',{role:'status'},status),
+      h('form',{className:'complete-app-edit',onSubmit:revise},h('textarea',{rows:1,maxLength:16000,value:prompt,onChange:e=>setPrompt(e.target.value),placeholder:'Describe your changes. Saved records will be kept…','aria-label':'Edit this app'}),h('button',{type:'submit',disabled:!!job||!prompt.trim()},job?'Working…':'Update app ↑'))
+    );
+  };
+})();

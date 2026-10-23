@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LiveUIAgent · DSH</title><link rel="stylesheet" href="./style.css"></head>
+<body>
+<aside class="sidebar">
+  <a class="brand" href="./"><span class="brand-mark">L<span>·</span></span><span>LiveUIAgent <small>DSH EDITION</small></span></a>
+  <button class="new-button" id="new-app"><span>＋</span> Create App <kbd>N</kbd></button>
+  <div class="nav-label">My Apps <span id="app-count">0</span></div>
+  <nav id="app-list" aria-label="My Apps"></nav>
+  <button class="memory-button" id="open-memory"><span>◎</span><span>Memory<small>Preferences for future apps</small></span><span class="memory-count" id="memory-count">0</span></button>
+  <div class="sidebar-bottom"><span class="status-dot"></span><span>DeepSeek Harness<small>DSH profile</small></span><a href="/" title="Back to DeepSeek Harness">Back to DSH ↗</a></div>
+</aside>
+<main>
+  <header class="topbar"><button class="mobile-nav" id="mobile-nav" aria-label="Open app list">☰</button><div class="breadcrumb">Memory <span>/</span> <b id="view-title">Workspace</b></div><div class="top-actions"><span class="edition-tag">DSH</span><span id="user-name"></span></div></header>
+  <section id="home-view" class="home-view">
+    <div class="home-intro"><div class="eyebrow">YOUR SOFTWARE, YOUR WAY</div><h1>Make daily tasks<br>work your way.</h1><p>Describe what you need and how you like to work.<br>Use your app, then keep improving it.</p></div>
+    <form id="create-form" class="composer"><label class="sr-only" for="create-prompt">Describe the app you want</label><textarea id="create-prompt" rows="4" maxlength="16000" placeholder="For example: Build a travel expense tracker with categories, budgets, and CSV export. Use a compact layout." required></textarea><div class="composer-footer"><button type="button" class="text-button" id="composer-memory">◎ Use My Memory</button><button class="primary" type="submit" id="create-submit">Create App <span>↗</span></button></div></form>
+    <div class="suggestions"><span>Start with a task</span><button data-suggestion="Build a travel expense tracker: add, edit, and delete expenses; filter by category; show budget progress and category totals; export CSV. Use a compact desktop layout that also works on mobile.">↗ Travel Expenses</button><button data-suggestion="Build a bedtime reading log with book titles, authors, progress, and quotes. Support search, editing, deletion, and status filters. Use warm dark colors, larger text, and a calm reading layout.">↗ Reading Log</button><button data-suggestion="Build a weekly meal planner: choose meals for each day, combine shopping lists, check off purchased ingredients, save recipes, and adjust servings. Make the weekly plan the main view.">↗ Meal Planner</button></div>
+    <section class="recent-section"><div class="section-heading"><h2>Your Saved Apps</h2><span>Keep your data and improve your apps</span></div><div id="home-apps" class="home-apps"></div></section>
+  </section>
+  <section id="app-view" class="app-view" hidden>
+    <div class="app-toolbar"><div><h2 id="active-name"></h2><p id="active-description"></p></div><div class="toolbar-actions"><span id="revision-label"></span><button class="icon-button" id="refresh-app" title="Reopen app">↻</button><button class="secondary" id="download-app">Export App ↗</button><button class="icon-button danger" id="delete-app" title="Delete app">×</button></div></div>
+    <div class="preview-wrap"><iframe id="app-frame" title="Generated application" sandbox="allow-scripts allow-forms allow-modals allow-downloads" referrerpolicy="no-referrer"></iframe></div>
+    <form id="edit-form" class="edit-composer"><label class="sr-only" for="edit-prompt">Describe your changes</label><textarea id="edit-prompt" rows="1" maxlength="16000" placeholder="For example: Add a month filter and keep my existing records…" required></textarea><button class="primary" type="submit" id="edit-submit">Update App ↑</button></form>
+    <div class="saved-status" id="saved-status">Saved data is preserved when you update the app</div>
+  </section>
+  <section id="job-panel" class="job-panel" hidden aria-live="polite"><div class="job-top"><span class="spinner"></span><div><b id="job-stage">DSH is reviewing your request</b><small id="job-detail">Creating your app</small></div><span id="job-time">0:00</span><button id="cancel-job" class="text-button">Cancel</button></div><div class="job-progress"><i></i></div></section>
+</main>
+<dialog id="memory-dialog"><form method="dialog" class="dialog-heading"><div><span class="eyebrow">MEMORY</span><h2>Memory</h2></div><button class="icon-button" aria-label="Close">×</button></form><p>Save preferences you want future apps to remember. They can vary by context and apply when creating or updating apps.</p><label for="memory-text">What should I remember?</label><textarea id="memory-text" rows="5" maxlength="8000" placeholder="For example: Use warm dark colors and large text for bedtime reading; use white backgrounds and compact tables for work."></textarea><div id="remembered-items"></div><div class="memory-footer"><span id="memory-save-status"></span><button id="save-memory" class="primary">Save Memory</button></div></dialog>
+<div id="toast" role="status" hidden></div>
+<script type="module" src="./app.js"></script>
+</body></html>

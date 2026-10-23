@@ -1,0 +1,6 @@
+{
+  "apiName": "calc",
+  "purpose": "Evaluate an arithmetic expression exactly (e.g. 23*7+1, 15% of 340 as 340*0.15). Use for any math instead of computing in your head.",
+  "argsHint": "expression*",
+  "command": ["python3", "-c", "import sys,json,ast,operator as op\nargs=json.load(sys.stdin)\nOPS={ast.Add:op.add,ast.Sub:op.sub,ast.Mult:op.mul,ast.Div:op.truediv,ast.Pow:op.pow,ast.Mod:op.mod,ast.USub:op.neg,ast.UAdd:op.pos}\ndef ev(n):\n    if isinstance(n,ast.Constant) and isinstance(n.value,(int,float)): return n.value\n    if isinstance(n,ast.BinOp) and type(n.op) in OPS: return OPS[type(n.op)](ev(n.left),ev(n.right))\n    if isinstance(n,ast.UnaryOp) and type(n.op) in OPS: return OPS[type(n.op)](ev(n.operand))\n    raise ValueError('only arithmetic allowed')\nexpr=str(args.get('expression',''))\nprint(json.dumps({'expression':expr,'result':ev(ast.parse(expr,mode='eval').body)}))"]
+}

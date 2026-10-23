@@ -1,0 +1,36 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import express from 'express';
+import {createServer} from 'node:http';
+import {mkdtemp,mkdir,writeFile,symlink,readFile,rm} from 'node:fs/promises';
+import {tmpdir} from 'node:os';
+import path from 'node:path';
+import {createEvaluatorArtifacts} from '../dist-server/server/evaluator-artifacts.js';
+
+test('artifact links return only the current owner PNG/JSON and reject traversal or symbolic links',async t=>{
+  const root=await mkdtemp(path.join(tmpdir(),'liveui-artifacts-'));t.after(()=>rm(root,{recursive:true,force:true}));
+  const artifacts=createEvaluatorArtifacts(root,req=>req.header('x-liveuiagent-user')||'');
+  const req={header:name=>name==='x-liveuiagent-user'?'alice':undefined};
+  const out=artifacts.directory(req);await mkdir(out,{recursive:true});
+  const png=Buffer.from('89504e470d0a1a0a','hex');await writeFile(path.join(out,'before.png'),png);await writeFile(path.join(out,'delivered.html'),'<html>not a public artifact</html>');
+  const outside=path.join(root,'outside.json');await writeFile(outside,'{"private":true}');await symlink(outside,path.join(out,'escape.json'));
+  const report=await artifacts.decorate(req,{passed:true,artifactsDir:out,screenshots:{before:path.join(out,'before.png')},before:{screenshot:path.join(out,'before.png')},finalStore:{artifactsDir:'user text',value:path.join(out,'before.png')}},out);
+  assert.match(report.screenshots.before,/^\/evaluator\/artifacts\//);assert.equal(report.before.screenshot,report.screenshots.before);assert.equal(report.artifactsDir,undefined);
+  assert.deepEqual(report.finalStore,{artifactsDir:'user text',value:path.join(out,'before.png')});
+  assert.ok(report.artifacts.files.every(file=>!file.name.endsWith('.html')&&file.name!=='escape.json'));
+  const app=express();artifacts.install(app);app.use((err,req,res,next)=>res.status(err.status||500).json({code:err.code}));
+  const server=createServer(app);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));
+  const base=`http://127.0.0.1:${server.address().port}`;
+  const request=(url,owner='alice')=>fetch(base+url,{headers:{'X-LiveUIAgent-User':owner}});
+  const image=await request(report.screenshots.before);assert.equal(image.status,200);assert.equal(image.headers.get('content-type'),'image/png');assert.deepEqual(Buffer.from(await image.arrayBuffer()),png);
+  assert.equal((await request(report.screenshots.before,'bob')).status,404);
+  assert.equal((await request(report.screenshots.before,'')).status,404);
+  const download=await request(report.artifacts.reportUrl);assert.equal(download.status,200);assert.match(download.headers.get('content-disposition'),/attachment/);assert.equal((await download.json()).screenshots.before,report.screenshots.before);
+  const run=report.artifacts.runId;
+  for(const file of ['escape.json','delivered.html','%2e%2e%2foutside.json'])assert.equal((await request(`/evaluator/artifacts/${run}/${file}`)).status,404);
+  const linkedRun='11111111-1111-1111-1111-111111111111';await symlink(out,path.join(path.dirname(out),linkedRun));
+  assert.equal((await request(`/evaluator/artifacts/${linkedRun}/before.png`)).status,404);
+  const bobReq={header:()=> 'bob'};const bobDir=path.dirname(artifacts.directory(bobReq));await symlink(path.dirname(out),bobDir);
+  assert.equal((await request(report.screenshots.before,'bob')).status,404);
+  assert.equal((await readFile(outside,'utf8')),'{"private":true}');
+});

@@ -1,0 +1,16 @@
+# DSH 0.2.0-rc.2 patch-list overlay for an existing authenticated web profile.
+# Install @liveuiagent/dsh-plugin into that profile before applying this file.
+# Replace dataDir and owner with this operator workspace's values.
+- insert:
+    - id: liveuiagent
+      name: '@liveuiagent/dsh-plugin'
+      config:
+        basePath: /liveuiagent
+        dataDir: /srv/liveuiagent/data
+        owner: local-operator
+        model: DSH profile
+        maxPending: 8
+        timeoutMs: 900000
+        runner:
+          command: dsh
+          args: [--profile, headless, --json]

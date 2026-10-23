@@ -1,0 +1,5 @@
+{
+  "prompt": "Create a reading log with a book title, notes, and a list of saved entries.",
+  "platform": "web",
+  "harness": "native"
+}

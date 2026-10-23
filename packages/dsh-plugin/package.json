@@ -1,0 +1,40 @@
+{
+  "name": "@liveuiagent/dsh-plugin",
+  "version": "0.1.0",
+  "description": "LIVEUIAGENT applications mounted in an authenticated DeepSeek Harness workspace.",
+  "type": "module",
+  "main": "./index.mjs",
+  "exports": {
+    ".": "./index.mjs",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "*.mjs",
+    "public/",
+    "examples/",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@deepseek-ai/schemastery": "3.18.4"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.2.0-rc.2"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/cordis-plugin-include": "1.0.9",
+    "@deepseek-ai/cordis-plugin-loader": "1.0.5",
+    "@deepseek-ai/dsh-client-connection": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.2.0-rc.2",
+    "js-yaml": "4.3.2"
+  }
+}
