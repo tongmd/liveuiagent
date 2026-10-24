@@ -78,7 +78,7 @@ try {
   await page.goto(`${base}/liveuiagent/`);
   await page.waitForFunction(() => document.querySelector('#user-name').textContent === 'browser-operator');
   assert.equal(await page.evaluate(() => document.documentElement.lang), 'en');
-  assert.equal(await page.$eval('.brand', node => node.textContent.includes('LiveUIAgent')), true);
+  assert.equal(await page.$eval('.brand', node => node.textContent.includes('liveUI')), true);
   assert.equal(await page.$eval('#create-submit', node => node.textContent.trim()), 'Create App ↗');
   assert.equal(await page.$eval('#memory-dialog h2', node => node.textContent), 'Memory');
   assert.equal(await page.$eval('.sidebar-bottom small', node => node.textContent), 'Browser fixture');
