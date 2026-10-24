@@ -8,6 +8,8 @@ LiveUIAgent is an open-source runtime for personalized applications. Describe wh
 
 ![LiveUIAgent application workflow](assets/overview.png)
 
+Corresponding author: Tao Xie.
+
 ## Get Started
 
 Requires Node.js 22.19 or later and npm. Linux and macOS are supported by the local workflow.
