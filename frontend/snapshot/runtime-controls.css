@@ -54,3 +54,26 @@ body:has(.settings-dialog) .liveui-runtime-controls,body:has(.settings-dialog) .
 @media(max-width:620px){.liveui-panel{padding:18px}.liveuiagent-toasts{top:72px!important}}
 
 body.liveui-keyboard-open .liveui-catalog-empty{visibility:hidden}
+
+/* Empty workspace: keep the introduction, starters and composer together. */
+body:has(.liveui-catalog-empty:not([hidden])){--liveui-welcome-top:clamp(110px,20vh,200px)}
+body:has(.liveui-composer) .liveui-catalog-empty{top:var(--liveui-welcome-top)!important;width:min(780px,calc(100vw - 48px));transform:translateX(-50%);text-align:left;z-index:85}
+.liveui-catalog-empty h2{font-size:34px;line-height:1.2;font-weight:600;color:#233d2c;margin-bottom:12px}
+.liveui-catalog-empty p{font-size:14px;margin-bottom:24px}
+.liveui-starters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+.liveui-catalog-empty .liveui-starters button{min-height:54px;padding:12px;text-align:left;border:1px solid #d5ddd7;background:#ffffffb8;color:#345641;border-radius:10px;font-size:12px}
+.liveui-catalog-empty .liveui-starters button:hover{background:#e9efe9;border-color:#9db3a3}
+body:has(.liveui-catalog-empty:not([hidden])) .material-system-core .frontend-prompt.liveui-composer{top:calc(var(--liveui-welcome-top) + 185px)!important;bottom:auto!important}
+@media(max-width:620px){
+ body:has(.liveui-catalog-empty:not([hidden])){--liveui-welcome-top:110px}
+ body:has(.liveui-composer) .liveui-catalog-empty{width:calc(100vw - 24px)}
+ .liveui-catalog-empty h2{font-size:27px}.liveui-catalog-empty p{font-size:12px;margin-bottom:18px}
+ .liveui-starters{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+ .liveui-catalog-empty .liveui-starters button{min-height:44px;padding:10px}
+ body:has(.liveui-catalog-empty:not([hidden])) .material-system-core .frontend-prompt.liveui-composer{top:320px!important}
+}
+@media(max-height:650px){
+ body:has(.liveui-composer) .liveui-catalog-empty{visibility:hidden}
+ body:has(.liveui-catalog-empty:not([hidden])) .material-system-core .frontend-prompt.liveui-composer{top:auto!important;bottom:calc(8px + var(--liveui-keyboard-inset,0px))!important}
+}
+body.liveui-keyboard-open:has(.liveui-catalog-empty:not([hidden])) .material-system-core .frontend-prompt.liveui-composer{top:auto!important;bottom:calc(8px + var(--liveui-keyboard-inset,0px))!important}

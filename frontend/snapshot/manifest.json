@@ -42,13 +42,13 @@
     },
     {
       "file": "runtime-controls.css",
-      "sha256": "a3e8a9d57405038653872a87dbe220726ebb50af69a621c5da6cc531939fc952",
-      "bytes": 9963
+      "sha256": "d35f343afd32cb0c6fb4f9d2d3c01c28df00e9cfe403e9ec160064021088e569",
+      "bytes": 12058
     },
     {
       "file": "material-catalog.js",
-      "sha256": "2e69ef2609b2730d27c765b5002ab77f3c43cf5e85d778d4f2a6065eed9eefed",
-      "bytes": 2091
+      "sha256": "504cc02a544005c3f6547ce2944f694bb9b5fe9a8a9d08ee10d28ed11a27ad85",
+      "bytes": 2900
     },
     {
       "file": "material-catalog.css",

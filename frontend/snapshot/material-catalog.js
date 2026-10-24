@@ -26,11 +26,24 @@
     empty.setAttribute('aria-label', 'Your apps');
     const title = document.createElement('h2'); title.textContent = 'Your apps start here';
     const detail = document.createElement('p'); detail.textContent = 'Ask a question, start a task, or build an app.';
-    const create = document.createElement('button'); create.type = 'button'; create.textContent = 'Get started';
-    create.addEventListener('click', () => {
-      document.querySelector('.frontend-prompt textarea')?.focus();
-    });
-    empty.append(title, detail, create); document.body.append(empty);
+    const starters = document.createElement('div'); starters.className = 'liveui-starters';
+    for (const [label, prompt] of [
+      ['Track expenses', 'Build a personal expense tracker with categories, a monthly budget, and CSV export.'],
+      ['Plan my week', 'Build a weekly planner with tasks, priorities, and a simple calendar view.'],
+      ['Save reading notes', 'Build a reading list with books, progress, and searchable notes.'],
+      ['Start a habit', 'Build a daily habit tracker with check-ins and weekly progress.']
+    ]) {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+      button.addEventListener('click', () => {
+        const field = document.querySelector('.frontend-prompt textarea');
+        if (!field) return;
+        field.focus();
+        Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(field, prompt);
+        field.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+      starters.append(button);
+    }
+    empty.append(title, detail, starters); document.body.append(empty);
     new MutationObserver(() => { if (!scheduled) { scheduled = true; requestAnimationFrame(synchronize); } }).observe(document.body, { childList: true, subtree: true });
     synchronize();
   }
