@@ -1,14 +1,14 @@
 {
   "formatVersion": 2,
   "file": "index.html",
-  "sha256": "68744949f376da68a95c8dbd52ad660b752561cb8fe2be921ed9ef781938bf23",
+  "sha256": "bd6f1affe02fd5f6baee82e78faaf7cb2cedf24c34f0c06e815941f1570676e3",
   "captured": "2026-10-21",
   "deployedRevisionDate": "2026-10-16",
   "resources": [
     {
       "file": "index.html",
-      "sha256": "68744949f376da68a95c8dbd52ad660b752561cb8fe2be921ed9ef781938bf23",
-      "bytes": 1394601
+      "sha256": "bd6f1affe02fd5f6baee82e78faaf7cb2cedf24c34f0c06e815941f1570676e3",
+      "bytes": 1394218
     },
     {
       "file": "complete-apps.js",
@@ -47,8 +47,8 @@
     },
     {
       "file": "material-catalog.js",
-      "sha256": "504cc02a544005c3f6547ce2944f694bb9b5fe9a8a9d08ee10d28ed11a27ad85",
-      "bytes": 2900
+      "sha256": "561e82213191eb8c38f77cc231342a2d3279a0d58d91979fc9ed3c7409aa7c8f",
+      "bytes": 2916
     },
     {
       "file": "material-catalog.css",
