@@ -143,8 +143,7 @@ export default function WhiteboardHome() {
         <View style={styles.headerBrand}>
           <View style={styles.brandMark} />
           <View style={styles.headerCopy}>
-            <Text style={styles.eyebrow}>你的应用桌面</Text>
-            <Text style={styles.title}>LIVEUIAGENT</Text>
+            <Text style={styles.title}>liveUI</Text>
             <Text style={styles.headerSummary} numberOfLines={1}>{summary ? summary.text : 'One sentence becomes a live agent app.'}</Text>
           </View>
         </View>
