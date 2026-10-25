@@ -49,3 +49,15 @@ test('backend action tasks do not recursively request the browser bridge or rewr
   assert.match(task,/Do not change index.html or app.json/);
   assert.doesNotMatch(task,/HOST CONNECTED SERVICE CONTRACT|primary submit control/);
 });
+
+test('generation and revision naming follow user language, explicit names and existing identity', () => {
+  for (const mode of ['generate', 'revise']) {
+    const task = buildTask({ prompt: '每天看看最新的研究', mode, memory: {}, context: {} });
+    assert.match(task, /short, plain functional name/);
+    assert.match(task, /same language as the user request/);
+    assert.match(task, /explicitly supplies an app name, use it verbatim/);
+    assert.match(task, /preserve its existing name unless the current user request explicitly asks to rename/);
+  }
+  const action = buildTask({ prompt: '打开记录', mode: 'action', memory: {}, context: {} });
+  assert.match(action, /Do not change index.html or app.json/);
+});
