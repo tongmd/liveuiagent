@@ -7,9 +7,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLiveUIAgentRuntime } from '../runtime.mjs';
 const html = script => `<html><body>${' '.repeat(1100)}<button>Count</button><script>${script}</script></body></html>`;
-async function fixture(t, runner) {
+async function fixture(t, runner, options = {}) {
   const dataDir = await mkdtemp(path.join(tmpdir(), 'liveui-flow-'));
-  const runtime = await createLiveUIAgentRuntime({ basePath:'/apps', dataDir, frontendDir:fileURLToPath(new URL('../public/', import.meta.url)), owner:'operator', model:'fixture', maxPending:3, timeoutMs:3000, runner });
+  const runtime = await createLiveUIAgentRuntime({ basePath:'/apps', dataDir, frontendDir:fileURLToPath(new URL('../public/', import.meta.url)), owner:'operator', model:'fixture', maxPending:3, timeoutMs:3000, runner, ...options });
   const server = createServer(runtime.handle);
   await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
   t.after(async () => { await runtime.dispose(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await rm(dataDir,{recursive:true,force:true}); });
@@ -69,4 +69,24 @@ test('explicit cancellation does not trigger repair or publication', async t => 
   assert.equal((await f.finished(job.id)).status,'cancelled');
   assert.equal(calls,1);
   assert.equal((await f.api('state')).apps.length,0);
+});
+
+test('generation deadline preserves valid delivery without unnecessary repair', async t => {
+  let calls = 0, aborts = 0;
+  const f = await fixture(t, { async run({ work, onEvent, signal }) {
+    calls++; onEvent({ type: 'tool_call', name: 'write_file' });
+    await writeFile(path.join(work, 'index.html'), html('let count = 0;'));
+    await writeFile(path.join(work, 'app.json'), '{"name":"Counter"}');
+    await new Promise((resolve, reject) => {
+      const abort = () => { aborts++; reject(signal.reason); };
+      signal.addEventListener('abort', abort, { once: true });
+      if (signal.aborted) abort();
+    });
+  } }, { timeoutMs: 100 });
+  const queued = await f.api('generate', 'POST', { prompt: 'Make a counter' });
+  const job = await f.finished(queued.id);
+  assert.equal(job.status, 'done');
+  assert.equal(calls, 1);
+  assert.equal(aborts, 1);
+  assert.equal((await f.api('state')).apps.length, 1);
 });
