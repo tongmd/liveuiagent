@@ -1,5 +1,5 @@
 import {domainFieldUnion,persistedDomainPolicy} from '../server/native-domain-fields.js';
-import {makeBusinessFields,refineBusinessFieldsWithSchemas,designAppSurface,validateDesignedOverview} from '../server/liveuiagent.js';
+import {makeBusinessFields,refineBusinessFieldsWithSchemas,designAppSurface,validateDesignedOverview,planAgentApp} from '../server/liveuiagent.js';
 import {compileSemanticSurface} from '../server/native-surface-design.js';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import http from 'node:http';import Database from 'better-sqlite3';
@@ -68,4 +68,26 @@ test('design and schema refinement declare persistent domain state separately un
  const cap:any={source:'appworld',appName:'inventory',apiName:'list',id:'list',permission:'list',method:'GET',purpose:'Read entries',inputSchema:{type:'object'}};
  const refined=await refineBusinessFieldsWithSchemas({prompt:'Save entries and their review annotations',subject:'Entries',design,capabilities:[cap],llm:{model:'fixture',chatCompletion:async request=>{calls++;const packet=JSON.parse(request.messages[1].content);assert.equal(packet.hostOfferedAppState.declaredFields.length,3);assert.deepEqual(packet.currentDesign.persistedDomainFields,raw.persistedDomainFields);return reply(packet.currentDesign);}}});assert.equal(calls,2);assert.deepEqual(refined.persistedDomainFields,design.persistedDomainFields);
  for(const invalid of [undefined,[{label:'Entry title',type:'string'}],[{label:'Reviewed',type:'boolean',hiddenInForm:true}],[{label:'Reviewed',type:'boolean',default:true}]])await assert.rejects(makeBusinessFields('Save review entries','Entries',[],{focus:'Entries',resultFocus:'Review'},{model:'fixture',chatCompletion:async()=>reply({...raw,persistedDomainFields:invalid})},[{name:'inventory',description:'Entries'}]));
+});
+
+test('actual full planner carries nonempty state schema through strict Orchestrator data model without form inputs or extra roles',async()=>{
+ const raw={appName:'Review entries',tagline:'Keep review annotations',accent:'#426b57',slots:[{label:'Entry title',type:'string',required:false}],persistedDomainFields:[{label:'Reviewed',type:'boolean'},{label:'Review date',type:'date'}],actions:[{label:'Add',description:'Add an entry'},{label:'Review',description:'Mark the selected entry reviewed',perItem:true,consumedSlotIndices:[]}],services:['inventory'],primaryMembership:'app_local',itemLabel:'Entry',glyph:'📚',tileTagline:'Review entries',metricLabel:'Entries',collection:'Entries',actionVerb:'Review'};
+ const cap:any={id:'tool.appworld.inventory.read_items',permission:'tool.appworld.inventory.read_items',source:'appworld',appName:'inventory',apiName:'read_items',method:'GET',path:'/inventory/items',purpose:'Read entries',inputSchema:{type:'object'}};let executed=0;const roles:string[]=[];let orchestrator:any;
+ const bridge:any={getAppDescriptions:async()=>[{name:'inventory',description:'Public entry directory'}],getCapabilities:async()=>[cap],callTool:()=>{executed++;throw Error('No business authorized');}};
+ const plan=await planAgentApp('Save selected entries and mark each reviewed, remembering the review date when reopened.',{model:'fixture',chatCompletion:async(request,options)=>{roles.push(options!.roleLabel!);const system=request.messages[0].content;const packet=JSON.parse(request.messages[1].content);
+  if(system.includes('You refine a Native'))return reply(packet.currentDesign);
+  if(system.includes('Business Slot Agent'))return reply(raw);
+  if(system.includes('Orchestrator Agent')){orchestrator=packet;return reply({workflowId:'review_fixture',agents:packet.minimumValidAgents,routes:packet.minimumValidRoutes,sharedState:packet.minimumValidSharedState,dataModels:packet.minimumValidDataModels,uiPlan:packet.minimumValidUiPlan});}
+  return reply({glyph:'<path d="M20 18h56v60H20z" fill="#fff"/>'});}},bridge);
+ assert.equal(executed,0);assert.deepEqual(plan.interaction.businessFields.map(f=>f.name),['entry_title']);assert.deepEqual(plan.interaction.persistedDomainFields?.map(f=>f.name),['reviewed','review_date']);assert(!plan.interaction.fields.some(f=>['reviewed','review_date'].includes(f.name)));
+ const storedModel=plan.orchestration.dataModels.find(m=>m.id==='agent_state')!;assert.equal(storedModel.fields.find(f=>f.name==='reviewed')?.type,'boolean');assert.equal(storedModel.fields.find(f=>f.name==='review_date')?.type,'date');assert(!orchestrator.generatedInteractionFields.some((f:any)=>f.name==='reviewed'));assert.deepEqual(orchestrator.persistedDomainFields.map((f:any)=>f.name),['reviewed','review_date']);assert.equal(roles.length,4,'same initial/refinement/Orchestrator/icon logical calls, no extra state role');
+});
+
+test('persisted metadata uses the actual display namespace and rejects unknown keys before schema projection',async()=>{
+ const inputs:any=[{name:'title',label:'Title',type:'string'}],field:any={name:'reviewed',label:'Reviewed',type:'boolean'};
+ for(const name of ['app_id','appId','owner','recordId','appRecordId','revision','updatedAt','prompt','context','state','nextStep','result','__proto__','constructor','prototype'])assert.throws(()=>domainFieldUnion(inputs,[{...field,name}]),/namespace/);
+ for(const extra of [{unknown:true},{defaultValue:false},{default:false},{required:false},{hiddenInForm:false}])assert.throws(()=>domainFieldUnion(inputs,[{...field,...extra}]),/metadata/);
+ const allowed=domainFieldUnion(inputs,[{name:'app_category',label:'App category',type:'string'}]);assert.equal(allowed[1].name,'app_category','a real user domain word is not banned by an invented broad app prefix');
+ const raw={appName:'Review entries',tagline:'Keep review annotations',accent:'#426b57',slots:[{label:'Entry title',type:'string',required:false}],persistedDomainFields:[{label:'App id',type:'string'}],actions:[{label:'Add',description:'Add an entry'}],services:[],primaryMembership:'app_local',itemLabel:'Entry',glyph:'📚',tileTagline:'Review entries',metricLabel:'Entries',collection:'Entries',actionVerb:'Review'};
+ await assert.rejects(makeBusinessFields('Save entries','Entries',[],{focus:'Entries',resultFocus:'Entries'},{model:'fixture',chatCompletion:async()=>reply(raw)}),/namespace/);
 });
