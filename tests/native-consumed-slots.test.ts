@@ -21,7 +21,7 @@ test('raw indices map once to normalized names, preserve optional status and ori
  const functions=makeFunctions(result.actions.map(a=>({...a,verb:a.label,target:'Entry'})),'fixed');assert.deepEqual(functions.map(f=>f.id),['agent_turn_1','agent_turn_2','agent_turn_3']);assert.deepEqual(functions[1].consumedSlots,result.slots.map(s=>s.name));
  for(const raw of [undefined,[0,0],[-1],[4],[1.2],['1']]){const d=design();(d.actions[1] as any).consumedSlotIndices=raw;await assert.rejects(normalize(d),/consumedSlotIndices/);}
  const collision=design();collision.slots[1].label=collision.slots[0].label;await assert.rejects(normalize(collision),/names collide/);
- const tooMany=design();tooMany.actions.push({...tooMany.actions[2],label:'Archive'});await assert.rejects(normalize(tooMany),/At most two/);
+ const tooMany=design();tooMany.actions[0]={...tooMany.actions[2],label:'Archive'};tooMany.actions.push({...tooMany.actions[2],label:'Remove'});await assert.rejects(normalize(tooMany),/At most three/);
  const numbered=design();numbered.slots=numbered.slots.slice(0,3).map((field,i)=>({...field,label:['起床时间','闹钟名字','周几'][i]}));numbered.actions[1].consumedSlotIndices=[2,0];const numberedResult=await normalize(numbered);assert.deepEqual(numberedResult.slots.map(field=>field.name),['slot_1','slot_2','slot_3']);assert.deepEqual(numberedResult.actions[1].consumedSlots,['slot_3','slot_1']);
  assert.throws(()=>requireConsumedSlots(undefined),/explicit array/);assert.throws(()=>consumedSlotsFromIndices([] ,['same','same']),/collide/);
  assert.deepEqual(rowActionSlotMap([{actionId:'actions.edit',perItem:true,consumedSlots:names},{actionId:'actions.done',perItem:true,consumedSlots:[]}],names),{edit:names,done:[]});
@@ -56,4 +56,25 @@ test('real runtime owner/app route rejects forged row payload before model, tool
 test('designer rejects a missing action contract before any model call; identity-only surfaces cannot gain a targetless composer',async()=>{
  let calls=0;await assert.rejects(designAppSurface({name:'Entries',description:'Edit entries',sourcePrompt:'Edit an entry',businessFields:fields,actions:[{actionId:'actions.edit',label:'Update',perItem:true}],llm:{model:'fixture',chatCompletion:async()=>{calls++;throw Error('unreachable');}}}),/explicit array/);assert.equal(calls,0);
  const nodes=components();nodes[0].children=nodes[0].children.filter((id:string)=>id!=='refresh');assert.equal(validateDesignedOverview(nodes,{...opts,actionIds:['actions.edit','actions.done']}),null,'only-perItem design remains unsupported rather than inventing a global action');
+});
+
+test('explicit maintained-list lifecycle supports Add plus three exact row actions without expanding the four-action budget',async()=>{
+ const need='Maintain my equipment list: add entries, edit their label, remove an entry from this local list, and run the explicitly authorized service operation on one selected entry.';
+ const d=design();d.actions=[{label:'Add',description:'Add a local entry',perItem:false},{label:'Update',description:'Edit one entry',perItem:true,consumedSlotIndices:[0,1,2,3]},{label:'Remove',description:'Remove one local entry',perItem:true,consumedSlotIndices:[]},{label:'Service',description:'Run the requested item operation',perItem:true,consumedSlotIndices:[]}];
+ const result=await makeBusinessFields(need,'Entries',[],{focus:'Entries',resultFocus:'Saved'},{model:'fixture',chatCompletion:async()=>({choices:[{message:{content:JSON.stringify(d)}}]})});
+ assert.equal(result.actions.length,4);assert.equal(result.actions.filter(a=>a.perItem).length,3);
+ const functions=makeFunctions(result.actions.map(a=>({...a,verb:a.label,target:'Entry'})),'lifecycle');assert.equal(functions.length,4);
+ assert.deepEqual(rowActionSlotMap([{actionId:'actions.edit',perItem:true,consumedSlots:names},{actionId:'actions.done',perItem:true,consumedSlots:[]},{actionId:'actions.service',perItem:true,consumedSlots:[]}],names),{edit:names,done:[],service:[]});
+ const nodes=components();nodes.find(n=>n.id==='row').children.push('service');nodes.push({id:'service',component:'Button',child:'serviceLabel',action:{event:{name:'actions.service',context:{}}}},{id:'serviceLabel',component:'Text',text:'Service'});
+ const contract={...opts,actionIds:[...opts.actionIds,'actions.service'],rowActionSlots:{...opts.rowActionSlots,service:[]}};
+ assert.ok(validateDesignedOverview(nodes,contract));
+ const pkg={messages:[{updateComponents:{components:validateDesignedOverview(nodes,contract)}}]};
+ const payload={entityName:'One',entityId:'one',sourceComponentId:'d_service'};
+ assert.doesNotThrow(()=>assertRowActionPayload({perItem:true,consumedSlots:[]},payload,names,[{entityName:'One',entityId:'one'}],pkg,'service'));
+ assert.throws(()=>assertRowActionPayload({perItem:true,consumedSlots:[]},{...payload,entityId:'other'},names,[{entityName:'One',entityId:'one'}],pkg,'service'),/owner\/app/);
+ const duplicate=structuredClone(nodes);duplicate.find(n=>n.id==='service').action.event.name='actions.done';assert.equal(validateDesignedOverview(duplicate,contract),null);
+ const fourth=[...result.actions.map(a=>({...a,verb:a.label,target:'Entry'}))];fourth[0]={...fourth[1],label:'Fourth'};assert.throws(()=>makeFunctions(fourth,'too-many-rows'),/At most three/);
+ assert.throws(()=>makeFunctions([...functions.map(f=>({verb:'Act',target:'Entry',label:f.label,description:'Act'})),{verb:'Act',target:'Entry',label:'Fifth',description:'Act'}],'five'),/1-4/);
+ assert.throws(()=>rowActionSlotMap(['a','b','c','d'].map(id=>({actionId:`actions.${id}`,perItem:true,consumedSlots:[]})),names),/At most three/);
+ assert.equal(validateDesignedOverview(nodes,{...contract,rowActionSlots:{...contract.rowActionSlots,fourth:[]}}),null);
 });

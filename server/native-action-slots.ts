@@ -33,7 +33,7 @@ export function rowActionSlotMap(
   slots: Iterable<string>,
 ): Record<string, string[]> {
   const rows = actions.filter(action => action.perItem === true);
-  if (rows.length > 2) throw Error('At most two distinct perItem actions are supported');
+  if (rows.length > 3) throw Error('At most three distinct perItem actions are supported');
   const result: Record<string, string[]> = {};
   for (const action of rows) {
     const id = action.actionId.replace(/^actions\./, '');
