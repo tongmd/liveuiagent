@@ -69,6 +69,9 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       const frame = await page.waitForFrame(frame => frame.parentFrame() === page.mainFrame());
       await frame.waitForFunction(() => document.readyState === 'complete');
       await new Promise(resolve => setTimeout(resolve, settleMs));
+      if (requireAgentAction && await frame.evaluate(() => [...document.querySelectorAll('[data-liveui-view="records"]')].some(node => node.textContent.trim()))) {
+        add('agent_action_contract', 'A fresh connected app must start with an empty data-liveui-view="records" surface. Do not prefill unobserved service records or business values. Put headings, empty-state text and user-provided editable drafts/preferences outside this observed-record surface; ask for missing amounts/dates rather than inventing service facts.');
+      }
       return frame;
     };
     let frame = await loadApp();

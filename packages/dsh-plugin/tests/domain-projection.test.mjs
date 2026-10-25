@@ -13,6 +13,14 @@ test('core-only observed entities do not satisfy domain delivery; local apps rem
  assert.equal(result.ok,false);assert.match(JSON.stringify(result.errors),/domain record surface omitted/);
  assert.equal((await validateBrowserDelivery(html)).ok,true);
 });
+test('fresh connected records cannot contain unobserved business facts; editable drafts remain allowed', async () => {
+ const prefilled=connectedStarterHtml().replace(slot,'<ul data-liveui-view="records" data-liveui-default-projection><li>Unobserved record and value</li></ul>');
+ const rejected=await validateBrowserDelivery(prefilled,{requireAgentAction:true});
+ assert.equal(rejected.ok,false);assert.match(JSON.stringify(rejected.errors),/fresh connected app must start with an empty/);
+ const draft=connectedStarterHtml().replace('</main>','<label>Draft amount <input value="1850"></label><p>Draft invoice supplied by the user</p></main>');
+ const accepted=await validateBrowserDelivery(draft,{requireAgentAction:true});
+ assert.equal(accepted.ok,true,JSON.stringify(accepted));
+});
 test('unknown groups and every observed field survive domain projection and later failure', async () => {
  const result = await validateBrowserDelivery(connectedStarterHtml(),{requireAgentAction:true});
  assert.equal(result.ok,true,JSON.stringify(result));
