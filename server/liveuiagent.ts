@@ -5900,6 +5900,8 @@ export async function runAppWorldGrounding(input: {
   let lastReadAt = -1;
   try {
   for (let round = 1; round <= 4; round++) {
+    // Prior rows remain context only; each repair round must provide its own final list.
+    entitiesProvided = false;
     remainingActionMs();
     callsAtRoundStart = calls.length + webCallCount;
     const roundSuccessLimit = round === 1 ? 24 : 16;
@@ -5979,7 +5981,10 @@ export async function runAppWorldGrounding(input: {
           continue;
         }
         summary = compactText(String(decision?.summary || ''), 500);
-        entitiesProvided = Array.isArray(decision?.entities);
+        entitiesProvided = Array.isArray(decision?.entities) && decision.entities.every((item: unknown) =>
+          item !== null && typeof item === 'object' && !Array.isArray(item)
+          && typeof (item as Record<string, unknown>).name === 'string'
+          && Boolean(((item as Record<string, unknown>).name as string).trim()));
         entities = (Array.isArray(decision?.entities) ? decision.entities : [])
           .filter((item: unknown) => item && typeof item === 'object' && String((item as Record<string, unknown>).name || '').trim())
           .slice(0, 20)
@@ -6150,7 +6155,7 @@ export async function runAppWorldGrounding(input: {
       deficiencies: (Array.isArray(verdictRaw?.deficiencies) ? verdictRaw.deficiencies : []).map((item: unknown) => compactText(String(item), 160)).filter(Boolean).slice(0, 5),
     };
     if (!calls.length && !webCallCount) evaluation.deficiencies.unshift(`No successful API evidence: ${apiAttemptCount} tool-call attempts, ${unknownDispatchOutcomes} unknown dispatch outcomes, ${notStartedApiCalls} trusted preflight rejections; cause=${zeroSuccessfulCallCause()}. No completion is verified; do not automatically repeat writes. Planning, gate rejection and no proposed calls are different causes; inspect attempts.`);
-    if (!entitiesProvided) evaluation.deficiencies.unshift('not_verified: explicit current primary entities array missing; omitted output is not verified empty');
+    if (!entitiesProvided) evaluation.deficiencies.unshift('not_verified: explicit current primary entities array missing or malformed; only [] is verified empty; each entry must be an object with a nonempty string name');
     if(lastWriteAt > lastReadAt) evaluation.deficiencies.unshift('not_verified: no successful read-back after the last write');
     const mailGaps = mailEvidence.deficiencies();
     if (mailGaps.length) { evaluation.pass = false; evaluation.deficiencies.unshift(...mailGaps); }

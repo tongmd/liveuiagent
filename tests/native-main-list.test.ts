@@ -43,12 +43,13 @@ async function runtimeFixture(t:any){
 
 test('actual runtime commits verified empty rows through reopen, but failed or omitted rows preserve prior data',async t=>{
  const f=await runtimeFixture(t);
- for(const mode of ['verified','failed','missing','review_failed']){
+ const malformed:any={malformed_blank:[{name:''}],malformed_null:[null],malformed_primitive:['not an entity'],malformed_array:[[]],malformed_nonstring:[{name:42}],malformed_mixed:[{name:'Valid row'},{name:''}]};
+ for(const mode of ['verified','failed','missing','review_failed',...Object.keys(malformed)]){
   f.reset();let decision=0;const captures:any[]=[];
   const chatCompletion=async(request:any)=>{const sys=request.messages[0].content,input=JSON.parse(request.messages[1].content.split("\n")[0]);captures.push({sys,input});
    if(sys.includes('You analyze a GUI'))return reply({objective:'Read actual current parcels',deliverables:['Current parcel list']});
    if(sys.includes('You are an INDEPENDENT evaluator'))return reply({pass:mode!=='failed',deficiencies:mode==='failed'?['Full current list could not be verified']:[]});
-   if(sys.includes('You are the backend workflow'))return reply(decision++===0?{calls:[{api:'read_items',args:{}}]}:{done:true,summary:'No current parcels',...(mode==='missing'?{}:{entities:[]}),stats:[]});
+   if(sys.includes('You are the backend workflow'))return reply(decision++===0?{calls:[{api:'read_items',args:{}}]}:{done:true,summary:'No current parcels',...(mode==='missing'?{}:{entities:malformed[mode]??[]}),stats:[]});
    return reply(sys.includes('independently verify')?{pass:mode!=='review_failed',reason:mode==='review_failed'?'Independent final review rejected this result':'Observed current empty parcel list'}:{proceed:true,instructions:'Read the current parcels only',constraints:[],expectedOutcome:'Verified current list'});
   };
   const invoke=()=>f.runtime.action({appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{subject:'Refresh current parcels',scope:'All',filter:'All',entities:[],authoritativeEntities:true},llm:{model:'fixture-only',chatCompletion}}as any);
@@ -57,5 +58,26 @@ test('actual runtime commits verified empty rows through reopen, but failed or o
   assert.deepEqual(stored.entityStats,mode==='verified'?[]:[{label:'Parcels',value:'1'}]);
   const reopened=await f.runtime.queryState({user:'fixture-owner'});assert.deepEqual(reopened.apps[0].runtimeState.entities,stored.entities);assert.equal(reopened.apps[0].appPackage.ui.meta.a2ui.initialData.entities.length,mode==='verified'?0:1);
   const requirements=captures.find(x=>x.sys.includes('You analyze a GUI'));assert.deepEqual(requirements.input.viewContext,descriptor);assert.equal(requirements.input.goal,undefined,'view metadata must not inject new goal obligations');
+ }
+});
+
+test('repair round must explicitly return its own empty list before clearing persisted rows',async t=>{
+ const f=await runtimeFixture(t);
+ for(const secondRound of ['missing','explicit']){
+  f.reset();let decisions=0,reviews=0;
+  const chatCompletion=async(request:any)=>{const sys=request.messages[0].content;
+   if(sys.includes('You analyze a GUI'))return reply({objective:'Read actual current parcels',deliverables:['Current parcel list']});
+   if(sys.includes('You are an INDEPENDENT evaluator')){reviews++;return reply({pass:reviews>1,deficiencies:reviews===1?['Recheck the primary-list projection']:[]});}
+   if(sys.includes('You are the backend workflow')){
+    decisions++;if(decisions===1)return reply({calls:[{api:'read_items',args:{}}]});
+    return reply({done:true,summary:'No current parcels',...(decisions===2||secondRound==='explicit'?{entities:[]}:{}),stats:[]});
+   }
+   return reply(sys.includes('independently verify')?{pass:true,reason:'Verified current empty list'}:{proceed:true,instructions:'Read current parcels only',constraints:[],expectedOutcome:'Verified current list'});
+  };
+  const invoke=()=>f.runtime.action({appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{subject:'Refresh current parcels',scope:'All',filter:'All'},llm:{model:'fixture-only',chatCompletion}}as any);
+  if(secondRound==='explicit')await invoke();else await assert.rejects(invoke(),/explicit current primary entities array missing/);
+  assert.equal(reviews,2,'first explicit [] is rejected; only the second round is approved by the mock evaluator');assert.equal(decisions,3,'one actual fixture read followed by exactly two done responses');
+  const stored=JSON.parse(f.stored().runtime_state_json);assert.deepEqual(stored.entities,secondRound==='explicit'?[]:[{id:'old-1',name:'Old parcel',detail:'Previously observed'}]);
+  const reopened=await f.runtime.queryState({user:'fixture-owner'});assert.equal(reopened.apps[0].appPackage.ui.meta.a2ui.initialData.entities.length,secondRound==='explicit'?0:1);
  }
 });
