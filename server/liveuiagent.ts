@@ -2980,6 +2980,8 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
   return {
     entities,
     appRecords: Array.isArray(stored.runtimeState.appRecords) ? stored.runtimeState.appRecords : [],
+    appPreferences: Array.isArray(stored.runtimeState.appPreferences) ? stored.runtimeState.appPreferences : [],
+    unclassifiedAppRecords: Array.isArray(stored.runtimeState.unclassifiedAppRecords) ? stored.runtimeState.unclassifiedAppRecords : [],
     entitiesTitle: entities.length ? `Current items (${entities.length})` : '',
     entitiesEmptyHint: entities.length ? '' : "No items yet. Fill in the form below and submit to see the results.",
     // 结构化聚合统计:与 /draft/stats 同一份 grounding 数据,但保留 label/value 分离。
@@ -5960,6 +5962,7 @@ export async function runAppWorldGrounding(input: {
   let localWriteAt=-1, localReadAt=-1;
   const localPendingReadback = new Set<string>();
   const localPendingDeletes = new Set<string>();
+  const localDeletedKinds=new Map<string,string>();
   const appStateExecutionEvidence=()=>({attemptedCalls:appStateAttempts,successfulCalls:appStateSuccesses,unknownDispatchOutcomes:appStateUnknown,unknownWriteOutcomes:appStateUnknownWrites});
   const totalAttempts=()=>apiAttemptCount+appStateAttempts;
   const totalSuccesses=()=>calls.length+webCallCount+appStateSuccesses;
@@ -6230,8 +6233,8 @@ export async function runAppWorldGrounding(input: {
               const observed=response as any;
               for(const record of [...(observed?.record?[observed.record]:[]),...(observed?.records??[])]) {if(!localPendingDeletes.has(record.recordId))localPendingReadback.delete(record.recordId);}
               if(apiName==='app_state.read_record'&&observed?.operation==='read'&&observed.record===null&&localPendingDeletes.has(String(args.recordId))){localPendingDeletes.delete(String(args.recordId));localPendingReadback.delete(String(args.recordId));}
-              if(apiName==='app_state.list_records'&&observed?.operation==='list'&&observed.offset===0&&Array.isArray(observed.records)&&Number.isSafeInteger(observed.limit)&&observed.records.length<observed.limit)for(const key of localPendingDeletes){if(!observed.records.some((record:any)=>record.recordId===key)){localPendingDeletes.delete(key);localPendingReadback.delete(key);}}
-            } else {localWriteAt=appStateAttempts;localPendingReadback.add(String(args.recordId));if(apiName==='app_state.delete_record')localPendingDeletes.add(String(args.recordId));else localPendingDeletes.delete(String(args.recordId));}
+              if(apiName==='app_state.list_records'&&observed?.operation==='list'&&observed.offset===0&&Array.isArray(observed.records)&&Number.isSafeInteger(observed.limit)&&observed.records.length<observed.limit)for(const key of localPendingDeletes){if(observed.filter?.recordKind===localDeletedKinds.get(key)&&!observed.records.some((record:any)=>record.recordId===key)){localPendingDeletes.delete(key);localPendingReadback.delete(key);}}
+            } else {localWriteAt=appStateAttempts;localPendingReadback.add(String(args.recordId));if(apiName==='app_state.delete_record'){localPendingDeletes.add(String(args.recordId));localDeletedKinds.set(String(args.recordId),String((response as any).deletedRecordKind));}else localPendingDeletes.delete(String(args.recordId));}
             appStateCalls.push({source:'app-state',api:apiName,order:totalAttempts(),request:args,response,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments'});
           } catch(error) {
             appStateUnknown += 1;

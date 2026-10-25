@@ -15,8 +15,8 @@ export function hasLocalReadNameBinding(entity:GroundedEntity,calls:Array<Record
   if(call.source!=='app-state'||call.ok!==true||call.executionState!=='succeeded'||call.requestSource!=='host-bound-app-state-dispatched-arguments'
    ||!Number.isSafeInteger(call.order)||call.order<=latestWrite||!response||response.source!=='app-state'||response.scope!=='authenticated-current-owner-app'||response.persisted!==true)return false;
   const records=call.api==='app_state.read_record'&&response.operation==='read'&&call.request?.recordId===key?[response.record]
-   :call.api==='app_state.list_records'&&response.operation==='list'&&Array.isArray(response.records)?response.records:[];
-  return records.some((record:any)=>record?.recordId===key&&Number.isSafeInteger(record.revision)&&record.revision>0&&record.values&&typeof record.values==='object'&&!Array.isArray(record.values)
+   :call.api==='app_state.list_records'&&response.operation==='list'&&call.request?.recordKind==='primary_member'&&response.filter?.recordKind==='primary_member'&&Array.isArray(response.records)?response.records:[];
+  return records.some((record:any)=>record?.recordId===key&&record.recordKind==='primary_member'&&Number.isSafeInteger(record.revision)&&record.revision>0&&record.values&&typeof record.values==='object'&&!Array.isArray(record.values)
    &&fields.some(field=>field.type==='string'&&typeof record.values[field.name]==='string'&&record.values[field.name].trim()===entity.name));
  });
 }

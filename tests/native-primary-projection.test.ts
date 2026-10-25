@@ -8,7 +8,7 @@ const cap:any={id:'tool.appworld.directory.search',permission:'tool.appworld.dir
 async function flow(t:any,kind:PrimaryMembership,entities:any[],options:{seed?:boolean;stats?:any[];verdict?:boolean;prior?:any[];writeFirst?:boolean}={}){
  const db=new Database(':memory:');db.exec('CREATE TABLE agent_apps(app_id TEXT,owner TEXT)');db.prepare('INSERT INTO agent_apps VALUES(?,?)').run('fixture','alice');db.prepare('INSERT INTO agent_apps VALUES(?,?)').run('other','bob');t.after(()=>db.close());
  const full=createAppStateAdapter(db,'alice','fixture',fields,['storage.app','app_state.write'])!;
- if(options.seed)full.call('app_state.upsert_record',{recordId:'member-one',values:{member_name:'Chosen member'}});
+ if(options.seed)full.call('app_state.upsert_record',{recordKind:'primary_member',recordId:'member-one',values:{member_name:'Chosen member'}});
  const adapter=options.writeFirst?full:createInitialAppStateAdapter(db,'alice','fixture',fields,['storage.app','app_state.write'])!;
  let decisions=0;let reads=0;const inputs:any[]=[];
  const bridge:any={getCapabilities:async()=>[cap],callTool:async(id:string,args:any)=>{assert.equal(id,cap.id);reads++;return{tool:cap,request:args,requestSource:'bridge-returned-request',response:catalog};}};
@@ -17,7 +17,7 @@ async function flow(t:any,kind:PrimaryMembership,entities:any[],options:{seed?:b
   if(label==='Grounding Requirement Agent')return reply({objective:'Read current membership',projectionPolicy:'retain_existing',deliverables:[],expectedNumbers:[]});
   if(label==='Grounding Evaluator Agent')return reply({pass:options.verdict!==false,deficiencies:options.verdict===false?['Required external business result missing']:[]});
   if(label==='Write Verifier Agent')return reply({approved:true,calls:JSON.parse(request.messages[1].content).proposedCalls});
-  assert.equal(label,'AppWorld Grounding Agent');decisions++;if(options.writeFirst&&[1,4,6].includes(decisions))return reply({calls:[{api:'app_state.upsert_record',args:{recordId:'member-one',values:{member_name:'Chosen member'}}}]});if(options.writeFirst&&[2,5].includes(decisions))return reply({calls:[{api:'app_state.list_records',args:{}},{api:cap.id,args:{}}]});if(!options.writeFirst&&decisions===1)return reply({calls:[{api:'app_state.list_records',args:{}},{api:cap.id,args:{}}]});return reply({done:true,summary:'Current verified collection',entities,stats:options.stats??[]});
+  assert.equal(label,'AppWorld Grounding Agent');decisions++;if(options.writeFirst&&[1,4,6].includes(decisions))return reply({calls:[{api:'app_state.upsert_record',args:{recordKind:'primary_member',recordId:'member-one',values:{member_name:'Chosen member'}}}]});if(options.writeFirst&&[2,5].includes(decisions))return reply({calls:[{api:'app_state.list_records',args:{recordKind:'primary_member',}},{api:cap.id,args:{}}]});if(!options.writeFirst&&decisions===1)return reply({calls:[{api:'app_state.list_records',args:{recordKind:'primary_member',}},{api:cap.id,args:{}}]});return reply({done:true,summary:'Current verified collection',entities,stats:options.stats??[]});
  }}});return{output,reads,inputs,db,adapter};
 }
 test('membership scalar strictly accepts only declared kinds, with no generated default',async()=>{
@@ -29,8 +29,8 @@ test('membership scalar strictly accepts only declared kinds, with no generated 
 });
 test('initial adapter lists genuine owner/app SQLite records without granting write or reading another scope',t=>{
  const db=new Database(':memory:');t.after(()=>db.close());db.exec('CREATE TABLE agent_apps(app_id TEXT,owner TEXT)');for(const[app,owner]of[['fixture','alice'],['other','alice'],['fixture','bob']])db.prepare('INSERT INTO agent_apps VALUES(?,?)').run(app,owner);
- for(const[app,owner]of[['fixture','alice'],['other','alice'],['fixture','bob']])createAppStateAdapter(db,owner,app,fields,['storage.app','app_state.write'])!.call('app_state.upsert_record',{recordId:'same',values:{member_name:owner+'/'+app}});
- const adapter=createInitialAppStateAdapter(db,'alice','fixture',fields,['storage.app','app_state.write'])!;assert.equal(adapter.capabilities.length,2);assert.deepEqual(adapter.listAll().map(r=>r.values.member_name),['alice/fixture']);assert.throws(()=>adapter.call('app_state.upsert_record',{recordId:'new',values:{member_name:'Fake'}}),/Unauthorized/);assert.equal(createInitialAppStateAdapter(db,'alice','fixture',fields,[]),undefined);
+ for(const[app,owner]of[['fixture','alice'],['other','alice'],['fixture','bob']])createAppStateAdapter(db,owner,app,fields,['storage.app','app_state.write'])!.call('app_state.upsert_record',{recordKind:'primary_member',recordId:'same',values:{member_name:owner+'/'+app}});
+ const adapter=createInitialAppStateAdapter(db,'alice','fixture',fields,['storage.app','app_state.write'])!;assert.equal(adapter.capabilities.length,2);assert.deepEqual(adapter.listAll('primary_member').map(r=>r.values.member_name),['alice/fixture']);assert.throws(()=>adapter.call('app_state.upsert_record',{recordKind:'primary_member',recordId:'new',values:{member_name:'Fake'}}),/Unauthorized/);assert.equal(createInitialAppStateAdapter(db,'alice','fixture',fields,[]),undefined);
 });
 test('global catalog twenty is not app-local membership even when evaluator incorrectly says pass',async t=>{
  const{output}=await flow(t,'app_local',catalog);assert.equal(output?.evaluation?.pass,false);assert(output?.evaluation?.deficiencies.some(x=>x.startsWith('primary_membership:')));
@@ -64,7 +64,7 @@ test('new BusinessSlot designs must declare membership independently of display 
 });
 
 test('capacity failure preserves one committed local write and blocks later writes even after more reads',async t=>{
- const raw=[...catalog,{name:'New member',id:'21'}];const{output,adapter}=await flow(t,'service_collection',raw,{writeFirst:true});assert.equal(output?.evaluation?.pass,false);assert.equal(adapter.listAll()[0].revision,1);assert.equal(output?.appStateCalls.filter(x=>x.api==='app_state.upsert_record'&&x.ok===true).length,1);assert(output?.appStateCalls.some(x=>x.dispatchBlocked===true));
+ const raw=[...catalog,{name:'New member',id:'21'}];const{output,adapter}=await flow(t,'service_collection',raw,{writeFirst:true});assert.equal(output?.evaluation?.pass,false);assert.equal(adapter.listAll('primary_member')[0].revision,1);assert.equal(output?.appStateCalls.filter(x=>x.api==='app_state.upsert_record'&&x.ok===true).length,1);assert(output?.appStateCalls.some(x=>x.dispatchBlocked===true));
 });
 test('one membership cannot duplicate rows and a missing-record read cannot prove an empty collection',()=>{
  const response={source:'app-state',operation:'read',scope:'authenticated-current-owner-app',persisted:true,record:{recordId:'one',revision:1,values:{member_name:'Member'}}};const calls=[{source:'app-state',api:'app_state.read_record',request:{recordId:'one'},order:1,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments',response}];
@@ -72,7 +72,7 @@ test('one membership cannot duplicate rows and a missing-record read cannot prov
 });
 
 test('long local names use exact unshortened read evidence while display may be compact',()=>{
- const name='A deliberately long complete member identity that exceeds forty display characters';const row={name,appRecordId:'one'};const calls=[{source:'app-state',api:'app_state.read_record',request:{recordId:'one'},order:1,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments',response:{source:'app-state',operation:'read',scope:'authenticated-current-owner-app',persisted:true,record:{recordId:'one',revision:1,values:{member_name:name}}}}];
+ const name='A deliberately long complete member identity that exceeds forty display characters';const row={name,appRecordId:'one'};const calls=[{source:'app-state',api:'app_state.read_record',request:{recordId:'one'},order:1,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments',response:{source:'app-state',operation:'read',scope:'authenticated-current-owner-app',persisted:true,record:{recordKind:'primary_member',recordId:'one',revision:1,values:{member_name:name}}}}];
  assert.deepEqual(primaryProjectionDeficiencies('app_local',[row],calls,fields),[]);assert.equal(normalizeGroundingEntities([row],new Set([name]),calls,fields).length,1);assert.equal(normalizeGroundingEntities([row],new Set([name]),[],fields).length,0);assert.equal(normalizeGroundingEntities([row],new Set([name]),calls,fields)[0].name.length,40);
 });
 

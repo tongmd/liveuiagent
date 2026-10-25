@@ -45,7 +45,7 @@ test('mutable app-local targets receive an explicit row update even when the ext
 });
 test('design app-state schemas are the same pure descriptors used by the real scoped SQLite adapter',async()=>{
  const {appStateCapabilitySchemas,createAppStateAdapter}=await import('../server/native-app-state.js');const {default:Database}=await import('better-sqlite3');const db=new Database(':memory:');db.exec('CREATE TABLE agent_apps(app_id TEXT,owner TEXT)');db.prepare('INSERT INTO agent_apps VALUES(?,?)').run('fixture','alice');
- try{const fields=[{name:'target',type:'number' as const}];assert.deepEqual(appStateCapabilitySchemas(fields,[]),[]);assert.equal(appStateCapabilitySchemas(fields,['storage.app']).length,2);const permissions=['storage.app','app_state.write'];const adapter=createAppStateAdapter(db,'alice','fixture',fields,permissions)!;assert.deepEqual(appStateCapabilitySchemas(fields,permissions),adapter.capabilities);assert.equal(adapter.listAll().length,0,'describing capabilities does not create any record');}finally{db.close();}
+ try{const fields=[{name:'target',type:'number' as const}];assert.deepEqual(appStateCapabilitySchemas(fields,[]),[]);assert.equal(appStateCapabilitySchemas(fields,['storage.app']).length,2);const permissions=['storage.app','app_state.write'];const adapter=createAppStateAdapter(db,'alice','fixture',fields,permissions)!;assert.deepEqual(appStateCapabilitySchemas(fields,permissions),adapter.capabilities);assert.equal(adapter.listAll('primary_member').length,0,'describing capabilities does not create any record');}finally{db.close();}
 });
 
 test('captured currentDesign is legal unchanged refinement, including optional bindings and isolated app-state names',async()=>{
