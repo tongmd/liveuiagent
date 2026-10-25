@@ -131,8 +131,14 @@ async function verifyAgentAction(frame, request, serviceError, calls, beginActio
     const visible = node => { const r = node.getBoundingClientRect(), s = getComputedStyle(node); return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden'; };
     const candidates = new Set(), hiddenControls = new Set();
     for (const node of document.querySelectorAll('[data-liveui-action="agent.invoke"]')) {
-      for (const control of node instanceof HTMLFormElement ? node.elements : [node]) {
-        if (control.matches('button,input[type="submit"],input[type="button"]')) {
+      // A form owns its real submit controls (including external form= controls),
+      // not every preset/filter button that happens to sit inside it. An explicit
+      // control binding remains primary even when its type is button.
+      const controls = node instanceof HTMLFormElement
+        ? [...node.elements].filter(control => control.form === node && ((control instanceof HTMLButtonElement && control.type === 'submit') || (control instanceof HTMLInputElement && ['submit', 'image'].includes(control.type))))
+        : [node];
+      for (const control of controls) {
+        if (control.matches('button,input[type="submit"],input[type="image"],input[type="button"]')) {
           if (visible(control)) candidates.add(control); else hiddenControls.add(control);
         }
       }

@@ -61,3 +61,15 @@ test('a success-only callback ReferenceError is rejected even when failure rende
  const result=await check(app(good+'if(reply.ok===true){missingSuccessState.value=false;}'));
  assert.equal(result.ok,false);assert.ok(result.errors.some(error=>error.code==='browser_script_error'&&/missingSuccessState/.test(error.message)),JSON.stringify(result));assert.equal(result.businessBehaviorVerified,false);
 });
+
+test('a bound form may contain ordinary helper buttons without making them primary',async()=>{
+ const html=app(good).replace('<label>','<button type="button">Preset</button><button type="button">Clear filter</button><label>');
+ const result=await check(html);assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.agentAction.calls,2);
+});
+test('multiple real submit controls remain ambiguous even without explicit button bindings',async()=>{
+ const html=app(good).replace('</form>','<button type="submit">Other submit</button></form>');const result=await check(html);assert.equal(result.ok,false);assert.match(result.errors.map(e=>e.message).join(' '),/found 2/);
+});
+test('an external form-owned submit is primary while unrelated form controls stay separate',async()=>{
+ const html=app(good).replace('<button type="submit" data-liveui-action="agent.invoke">Run task</button>','').replace('</form>','</form><button form="taskForm" type="submit" data-liveui-action="agent.invoke">Run task</button><form><button type="submit">Unrelated</button></form>');
+ const result=await check(html);assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.agentAction.calls,2);
+});
