@@ -7,13 +7,23 @@ import {planNativeGuiInteractionStep} from '../server/liveuiagent.js';
 import {withActionDeadline,remainingActionMs} from '../server/action-deadline.js';
 const view={visibleText:'Books',fields:[{target:'e1',label:'Book title',type:'text',value:'',required:true},{target:'e2',label:'Shelf',type:'select-one',value:'todo',options:[{label:'To read',value:'todo'},{label:'Finished',value:'done'}]},{target:'e3',label:'Finished',type:'checkbox',value:'on',checked:false}],buttons:[{target:'e4',label:'Add book',actionId:'record.add',contextText:'Piranesi — To read'}]};
 const input=()=>({appId:'owned',harness:'dsh',model:'fixture-selected',userMessage:'Add Piranesi to my to-read shelf',snapshot:structuredClone(view),observations:[]});
+// Existing fixture intents explicitly upgraded to the single current protocol.
+// Production has no legacy-contract fallback; raw missing-binding rejection is
+// independently covered in gui-operation-binding.test.ts.
+function bindFixture(proposal:any,context:any){
+ if(!Array.isArray(proposal?.fields)||!proposal.action)return proposal;
+ const selected=context.snapshot.buttons.find((b:any)=>b.target===proposal.action.target);
+ return {...proposal,operation:{quote:context.userMessage,...(proposal.action.kind==='click'?{target:proposal.action.target,...(selected?.contextText?{rowContextQuote:selected.contextText}:{})}:{})},fields:proposal.fields.map((d:any)=>({...d,binding:d.decision==='set'?'current':'unspecified'}))};
+}
+function resolveFixturePreparation(proposal:any,context:any){return resolveControlPreparation(bindFixture(proposal,context),context);}
 async function setup(t:any,overrides:any={}){
- let plans=0,dispatches=0;const modelInputs:any[]=[];
+ let currentInput:any;let plans=0,dispatches=0;const modelInputs:any[]=[];
  const llm={model:'fixture-selected',apiKey:'private-provider-key',apiBase:'https://provider.invalid',personalContext:'private personal context',chatCompletion:async(request:any)=>{dispatches++;modelInputs.push(request);return{choices:[{message:{content:JSON.stringify({fields:[{target:'e1',decision:'set',value:'Piranesi',source:'user',quote:'Piranesi'},{target:'e2',decision:'keep'},{target:'e3',decision:'keep'}],action:{kind:'click',target:'e4'}})}}]};}};
- const handler=createGuiInteractionPlanner({owner:()=> 'alice',authorize:(id,owner)=>{if(id!=='owned'||owner!=='alice')throw Object.assign(Error('not found'),{status:404});},resolve:()=>({harness:'dsh',llm}),plan:async(...args:any[])=>{plans++;return planNativeGuiInteractionStep(args[0],args[1],args[2]);},...overrides});
+ const fixtureResolve=()=>{const resolved=overrides.resolve?overrides.resolve():{harness:'dsh',llm};if(!resolved.llm?.chatCompletion)return resolved;const original=resolved.llm.chatCompletion;return {...resolved,llm:{...resolved.llm,chatCompletion:async(...args:any[])=>{const reply=await original(...args);const content=reply?.choices?.[0]?.message?.content;if(typeof content!=='string')return reply;const parsed=JSON.parse(content);reply.choices[0].message.content=JSON.stringify(bindFixture(parsed,currentInput));return reply;}}};};
+ const handler=createGuiInteractionPlanner({owner:()=> 'alice',authorize:(id,owner)=>{if(id!=='owned'||owner!=='alice')throw Object.assign(Error('not found'),{status:404});},resolve:()=>({harness:'dsh',llm}),plan:async(...args:any[])=>{plans++;return planNativeGuiInteractionStep(args[0],args[1],args[2]);},...overrides,resolve:fixtureResolve});
  const app=express();app.use(express.json());app.post('/evaluator/interaction-step',handler);app.use((e:any,_q:any,r:any,_n:any)=>r.status(e.status||500).json({error:e.message,code:e.code,planningContractInvalid:e.planningContractInvalid,plannerModelCalls:e.plannerModelCalls}));
  const server=http.createServer(app);await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();return new Promise<void>(r=>server.close(()=>r()));});
- const post=async(body:any,headers={})=>{const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/evaluator/interaction-step`,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(body)});return{status:r.status,body:await r.json() as any};};
+ const post=async(body:any,headers={})=>{currentInput=body;const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/evaluator/interaction-step`,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(body)});return{status:r.status,body:await r.json() as any};};
  return{post,modelInputs,counts:()=>({plans,dispatches})};
 }
 test('real HTTP pure step endpoint uses actual selected DSH adapter and keeps provider/personal data off the planner input and response',async t=>{
@@ -63,23 +73,23 @@ test('bounded GUI planner still rejects truncated DSH completion once without re
 test('host preparation always returns actual field changes before an immediate business click',()=>{
  const context={userMessage:'Set new time to 05:45, shelf Finished and check Finished',snapshot:structuredClone(view)};
  const proposal={fields:[{target:'e3',decision:'set',checked:true,source:'user',quote:'check Finished'},{target:'e2',decision:'set',value:'done',source:'visible',quote:'Finished'},{target:'e1',decision:'set',value:'05:45',source:'user',quote:'05:45'}],action:{kind:'click',target:'e4'}};
- assert.deepEqual(resolveControlPreparation(proposal,context),{kind:'fill',target:'e1',value:'05:45'});
- context.snapshot.fields[0].value='05:45';assert.deepEqual(resolveControlPreparation(proposal,context),{kind:'select',target:'e2',value:'done'});
- context.snapshot.fields[1].value='done';assert.deepEqual(resolveControlPreparation(proposal,context),{kind:'check',target:'e3',checked:true});
- context.snapshot.fields[2].checked=true;assert.deepEqual(resolveControlPreparation(proposal,context),{kind:'click',target:'e4'});
+ assert.deepEqual(resolveFixturePreparation(proposal,context),{kind:'fill',target:'e1',value:'05:45'});
+ context.snapshot.fields[0].value='05:45';assert.deepEqual(resolveFixturePreparation(proposal,context),{kind:'select',target:'e2',value:'done'});
+ context.snapshot.fields[1].value='done';assert.deepEqual(resolveFixturePreparation(proposal,context),{kind:'check',target:'e3',checked:true});
+ context.snapshot.fields[2].checked=true;assert.deepEqual(resolveFixturePreparation(proposal,context),{kind:'click',target:'e4'});
 });
 test('preparation rejects incomplete ambiguous invented and non-visible decisions without returning any operation',()=>{
  const context={userMessage:'Add Piranesi',snapshot:view};
  const valid:any={fields:[{target:'e1',decision:'set',value:'Piranesi',source:'user',quote:'Piranesi'},{target:'e2',decision:'keep'},{target:'e3',decision:'keep'}],action:{kind:'click',target:'e4'}};
- for(const mutate of [(p:any)=>p.fields.pop(),(p:any)=>p.fields[1].target='e1',(p:any)=>p.fields[0].quote='future hidden answer',(p:any)=>p.fields[0].source='observation',(p:any)=>p.fields[1]={target:'e2',decision:'set',value:'invented',source:'visible',quote:'Finished'},(p:any)=>p.fields[2].value='invented',(p:any)=>p.action={kind:'fill',target:'e1',value:'Piranesi'},(p:any)=>p.fields[0].api='hidden']){const p=structuredClone(valid);mutate(p);assert.throws(()=>resolveControlPreparation(p,context));}
- assert.throws(()=>resolveControlPreparation({kind:'click',target:'e4'},context),'legacy direct-click model output cannot bypass preparation');
- const unsupported={...valid,action:{kind:'unsupported',reason:'No visible label editor exists'}};assert.equal(resolveControlPreparation(unsupported,context).kind,'unsupported');
+ for(const mutate of [(p:any)=>p.fields.pop(),(p:any)=>p.fields[1].target='e1',(p:any)=>p.fields[0].quote='future hidden answer',(p:any)=>p.fields[0].source='observation',(p:any)=>p.fields[1]={target:'e2',decision:'set',value:'invented',source:'visible',quote:'Finished'},(p:any)=>p.fields[2].value='invented',(p:any)=>p.action={kind:'fill',target:'e1',value:'Piranesi'},(p:any)=>p.fields[0].api='hidden']){const p=structuredClone(valid);mutate(p);assert.throws(()=>resolveFixturePreparation(p,context));}
+ assert.throws(()=>resolveFixturePreparation({kind:'click',target:'e4'},context),'legacy direct-click model output cannot bypass preparation');
+ const unsupported={...valid,action:{kind:'unsupported',reason:'No visible label editor exists'}};assert.equal(resolveFixturePreparation(unsupported,context).kind,'unsupported');
 });
 
 test('preparation preserves optional keep and handles explicit clear, false, zero and equivalent numbers',()=>{
  const context={userMessage:'Clear note and turn alerts off; set count to 0',snapshot:{visibleText:'Current count 0',fields:[{target:'e1',label:'Note',type:'text',value:'old'},{target:'e2',label:'Alerts',type:'switch',value:'true',checked:true},{target:'e3',label:'Count',type:'number',value:'0.0'},{target:'e4',label:'Optional',type:'text',value:'retain'}],buttons:[{target:'e5',label:'Save',actionId:'save'}]}};
  const p={fields:[{target:'e1',decision:'set',value:'',source:'user',quote:'Clear note'},{target:'e2',decision:'set',checked:false,source:'user',quote:'alerts off'},{target:'e3',decision:'set',value:'0',source:'user',quote:'0'},{target:'e4',decision:'keep'}],action:{kind:'click',target:'e5'}};
- assert.deepEqual(resolveControlPreparation(p,context),{kind:'fill',target:'e1',value:''});context.snapshot.fields[0].value='';assert.deepEqual(resolveControlPreparation(p,context),{kind:'check',target:'e2',checked:false});context.snapshot.fields[1].checked=false;assert.deepEqual(resolveControlPreparation(p,context),{kind:'click',target:'e5'});assert.equal(context.snapshot.fields[3].value,'retain');
+ assert.deepEqual(resolveFixturePreparation(p,context),{kind:'fill',target:'e1',value:''});context.snapshot.fields[0].value='';assert.deepEqual(resolveFixturePreparation(p,context),{kind:'check',target:'e2',checked:false});context.snapshot.fields[1].checked=false;assert.deepEqual(resolveFixturePreparation(p,context),{kind:'click',target:'e5'});assert.equal(context.snapshot.fields[3].value,'retain');
 });
 
 test('sequential ordinary form policy preserves precise unsupported and no invented optional data boundaries',()=>{
@@ -92,10 +102,10 @@ test('sequential ordinary form policy preserves precise unsupported and no inven
  assert.match(GUI_INTERACTION_SYSTEM,/Never automatically resend a mutation whose outcome is unknown/);
  const context={userMessage:'Create Alpha and Beta',snapshot:{visibleText:'Items empty',fields:[{target:'e1',label:'Name',type:'text',value:''},{target:'e2',label:'Optional amount',type:'number',value:'0'}],buttons:[{target:'e3',label:'Create',actionId:'create'}]}};
  const p={fields:[{target:'e1',decision:'set',value:'Alpha',source:'user',quote:'Alpha'},{target:'e2',decision:'keep'}],action:{kind:'click',target:'e3'}};
- assert.deepEqual(resolveControlPreparation(p,context),{kind:'fill',target:'e1',value:'Alpha'});
- context.snapshot.fields[0].value='Alpha';assert.deepEqual(resolveControlPreparation(p,context),{kind:'click',target:'e3'});
+ assert.deepEqual(resolveFixturePreparation(p,context),{kind:'fill',target:'e1',value:'Alpha'});
+ context.snapshot.fields[0].value='Alpha';assert.deepEqual(resolveFixturePreparation(p,context),{kind:'click',target:'e3'});
  assert.equal(context.snapshot.fields[1].value,'0');
- assert.equal(resolveControlPreparation({...p,action:{kind:'unsupported',reason:'An atomic transaction is explicitly required but no atomic control exists'}},context).kind,'unsupported');
+ assert.equal(resolveFixturePreparation({...p,action:{kind:'unsupported',reason:'An atomic transaction is explicitly required but no atomic control exists'}},context).kind,'unsupported');
 });
 
 test('real HTTP marks only model preparation contract errors and accepts separate bounded feedback',async t=>{
