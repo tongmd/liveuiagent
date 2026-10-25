@@ -19,6 +19,11 @@ function withOutputLanguage(prompt: unknown) {
   return OUTPUT_LANGUAGE_REQUEST + prompt;
 }
 
+export function dshServiceContext(services: Array<{name:string;description:string}>) {
+  return {connectedServices:services.map(({name,description})=>({name,description})),
+    serviceExecutionContract:'For functionality involving a connected service, use await window.liveuiagent.ai(prompt, context) from the relevant user action and render its returned text/data. This host bridge executes real service APIs. Pass the complete user inputs and intended operation in prompt/context. Browser storage may keep UI preferences or caches; it must not pretend to read or mutate external service records. Do not hardcode sample results or claim success before the host call completes. Show host errors honestly.'};
+}
+
 // This trace describes the actual native requirement/execute/review workflow,
 // not a claim extracted from generated HTML or a DSH model response.
 export function dshToolEvidence(appId: string, grounded: NonNullable<Awaited<ReturnType<typeof runAppWorldGrounding>>>) {
@@ -165,7 +170,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
   async function start(req: express.Request, appId?: string) {
     const prompt = req.body?.prompt;
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 16000) throw error('Describe what you want to do');
-    const context = await contextual(req,appId);
+    const context = {...await contextual(req,appId),...(toolBridge && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off' ? dshServiceContext(await toolBridge.getAppDescriptions()) : {})};
     const selected = await execution(req);
     const job = await dsh(req,'generate','POST',{prompt:withOutputLanguage(prompt),...(appId ? {appId:internalId(appId)} : {}),context,...selected});
     return {...job, execution:{harness:'dsh',model:job.model || selected.model}};

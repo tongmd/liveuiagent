@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {dshToolEvidence} from '../server/complete-apps.js';
+import {dshToolEvidence,dshServiceContext} from '../server/complete-apps.js';
 
 test('trusted evidence retains native workflow attempts, executed calls, and rejected review without inventing success',()=>{
  const call:any={tool:{id:'tool.appworld.simple_note.update_note'},request:{id:42},response:{id:42},dbChanges:{changedApps:[{appName:'simple_note',delta:1}]}};
@@ -13,3 +13,12 @@ test('trusted evidence retains native workflow attempts, executed calls, and rej
  assert.equal(evidence.toolResults['tool.appworld.simple_note.update_note#1'],call);
  assert.deepEqual(evidence.toolDbChanges,[{appName:'simple_note',delta:1}]);
 });
+
+ test('generation capabilities describe actual connected services and require the host bridge without benchmark answers',()=>{
+ const services=[{name:'simple_note',description:'Notes service'}];
+ const context=dshServiceContext(services);
+ assert.deepEqual(context.connectedServices,services);
+ assert.match(context.serviceExecutionContract,/window.liveuiagent.ai/);
+ assert.match(context.serviceExecutionContract,/returned text\/data/);
+ assert.doesNotMatch(JSON.stringify(context),/reading-log|expectedBehavior|episode/);
+ });
