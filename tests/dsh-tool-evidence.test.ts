@@ -48,3 +48,18 @@ test('host completed actions survive store recreation, keep actual results, and 
   assert.equal(createHostActionStore(db).load('bob',job.id),undefined);
  }finally{db.close();}
 });
+
+test('service bindings persist by owner and published generation revision without activating failed pending revisions',async()=>{
+ const {default:Database}=await import('better-sqlite3');const {createDshServiceBindings}=await import('../server/complete-apps.js');const db=new Database(':memory:');
+ try{
+  const store=createDshServiceBindings(db),notes={services:['simple_note'],permissions:['tool.appworld.simple_note.update_note']},multi={services:['simple_note','todoist'],permissions:['tool.appworld.simple_note.update_note','tool.appworld.todoist.create_task']};
+  store.save('alice','dsh_app','original',notes,'Original complete request');
+  assert.deepEqual(store.load('alice','dsh_app','original',1),notes);
+  store.save('alice','dsh_app','pending',multi,'Revision adds tasks');
+  assert.deepEqual(createDshServiceBindings(db).load('alice','dsh_app','original',1),notes);
+  assert.equal(store.load('bob','dsh_app','original',1),undefined);
+  assert.equal(store.load('alice','dsh_app','original',2),undefined);
+  assert.deepEqual(store.load('alice','dsh_app','pending',2),multi);
+  store.save('alice','dsh_local','local',{services:[],permissions:[]},'Local counter');assert.deepEqual(store.load('alice','dsh_local','local',1),{services:[],permissions:[]});
+ }finally{db.close();}
+});

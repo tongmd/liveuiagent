@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createAppWorldBridge } from './appworld-bridge.js';
-import { planAppWorldToolPermissions, runAppWorldGrounding } from './liveuiagent.js';
+import { planAppWorldServices, runAppWorldGrounding } from './liveuiagent.js';
 import { runtimeError, type HarnessId } from './runtime-settings.js';
 
 const PREFIX = 'dsh_';
@@ -17,6 +17,22 @@ function withOutputLanguage(prompt: unknown) {
   // Only the upstream execution gets this instruction. Local chat and the
   // caller's request retain the original; upstream history records the real task.
   return OUTPUT_LANGUAGE_REQUEST + prompt;
+}
+
+type DshServicePlan={services:string[];permissions:string[]};
+export function createDshServiceBindings(db: Database.Database) {
+  db.exec('CREATE TABLE IF NOT EXISTS complete_service_bindings(owner TEXT NOT NULL,app_id TEXT NOT NULL,generation_job_id TEXT NOT NULL,revision INTEGER,plan_json TEXT NOT NULL,request_text TEXT NOT NULL,PRIMARY KEY(owner,app_id,generation_job_id))');
+  return {
+    save(owner:string,appId:string,jobId:string,plan:DshServicePlan,request:string,revision?:number) {
+      db.prepare('INSERT OR REPLACE INTO complete_service_bindings VALUES (?,?,?,?,?,?)').run(owner,appId,jobId,revision??null,JSON.stringify(plan),request);
+    },
+    load(owner:string,appId:string,jobId:string,revision:number):DshServicePlan|undefined {
+      const row=db.prepare('SELECT revision,plan_json FROM complete_service_bindings WHERE owner=? AND app_id=? AND generation_job_id=?').get(owner,appId,jobId) as {revision:number|null;plan_json:string}|undefined;
+      if(!row || (row.revision!==null && row.revision!==revision))return undefined;
+      if(row.revision===null)db.prepare('UPDATE complete_service_bindings SET revision=? WHERE owner=? AND app_id=? AND generation_job_id=? AND revision IS NULL').run(revision,owner,appId,jobId);
+      return JSON.parse(row.plan_json);
+    },
+  };
 }
 
 export function createHostActionStore(db: Database.Database) {
@@ -76,7 +92,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
 } = {}) {
   const toolBridge = createAppWorldBridge(process.cwd());
   const hostActions=createHostActionStore(db);
-  const toolPlans = new Map<string, Promise<string[]>>();
+  const serviceBindings=createDshServiceBindings(db);
   const configuredBase = process.env.LIVEUIAGENT_DSH_API_BASE?.trim();
   const userPrefix = process.env.LIVEUI_DSH_USER_PREFIX?.trim() || '';
   const emptyAccountRoot = process.env.LIVEUI_DSH_EMPTY_ACCOUNT_ROOT?.trim() || '';
@@ -206,9 +222,16 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
   async function start(req: express.Request, appId?: string) {
     const prompt = req.body?.prompt;
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 16000) throw error('Describe what you want to do');
-    const context = {...await contextual(req,appId),...(toolBridge && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off' ? dshServiceContext(await toolBridge.getAppDescriptions()) : {})};
     const selected = await execution(req);
+    let servicePlan:DshServicePlan|undefined,planningPrompt=prompt;
+    if(toolBridge && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off') {
+      if(appId){const previous=await loadApp(req,appId);planningPrompt=JSON.stringify({appName:previous.app.name,purpose:previous.app.description,previousRequests:(previous.app.history||[]).slice(-6),currentRevisionRequest:prompt});}
+      servicePlan=await planAppWorldServices(planningPrompt,llmOf(req),toolBridge);
+    }
+    const services=servicePlan && toolBridge ? (await toolBridge.getAppDescriptions()).filter(service=>servicePlan!.services.includes(service.name)) : [];
+    const context = {...await contextual(req,appId),...(servicePlan?dshServiceContext(services):{})};
     const job = await dsh(req,'generate','POST',{prompt:withOutputLanguage(prompt),...(appId ? {appId:internalId(appId)} : {}),context,...selected});
+    if(servicePlan && internalId(PREFIX+job.appId))serviceBindings.save(userOf(req),PREFIX+job.appId,job.id,servicePlan,planningPrompt);
     return {...job, execution:{harness:'dsh',model:job.model || selected.model}};
   }
   async function run(req: express.Request,res: express.Response,next: express.NextFunction,appId?: string) {
@@ -241,13 +264,14 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
 
     if(toolBridge && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off') {
       const llm=llmOf(req);
-      const planKey=JSON.stringify([userOf(req),appId,saved.app.revision,saved.app.description]);
-      if(!toolPlans.has(planKey)){
-        if(toolPlans.size>=1000)toolPlans.delete(toolPlans.keys().next().value!);
-        const pending=planAppWorldToolPermissions([saved.app.name,saved.app.description].join('\n'),llm,toolBridge);
-        toolPlans.set(planKey,pending);pending.catch(()=>toolPlans.delete(planKey));
+      const generationId=String(saved.app.lastJobId||'legacy:'+saved.app.revision);
+      let servicePlan=serviceBindings.load(userOf(req),appId,generationId,saved.app.revision);
+      if(!servicePlan){
+        const request=[saved.app.name,saved.app.description].join('\n');
+        servicePlan=await planAppWorldServices(request,llm,toolBridge);
+        serviceBindings.save(userOf(req),appId,generationId,servicePlan,request,saved.app.revision);
       }
-      const permissions=await toolPlans.get(planKey)!;
+      const permissions=servicePlan.permissions;
       const grounded=await runAppWorldGrounding({bridge:toolBridge,permissions,payload:groundingPayload,appName:saved.app.name,appPurpose:saved.app.description,llm});
       if(grounded) {
         if(!grounded.calls.length)throw runtimeError('No real business API call completed','dsh_tool_execution_empty',502);
