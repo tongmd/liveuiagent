@@ -1,3 +1,4 @@
+import {hostNativeActionNotStartedProof} from './native-action-not-started.js';
 import 'dotenv/config';
 import { createDshNativeInference } from './dsh-native-inference.js';
 import { createNativeHarnessBindings } from './native-harness.js';
@@ -152,6 +153,7 @@ function errorPayload(err: any) {
     ...(err?.trace ? { trace: err.trace } : {}),
     ...(err?.artifactsDir ? { artifactsDir:err.artifactsDir } : {}),
     ...(err?.workflowExecution ? { workflowExecution:err.workflowExecution } : {}),
+    ...(hostNativeActionNotStartedProof(err)?{nativeActionNotStarted:hostNativeActionNotStartedProof(err)}:{}),
     ...(err?.nativeInference ? { nativeInference:err.nativeInference } : {}),
     ...(err?.planningContractInvalid===true?{planningContractInvalid:true}:{}),
     ...(Number.isInteger(err?.plannerModelCalls) ? {plannerModelCalls:err.plannerModelCalls} : {}),

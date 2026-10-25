@@ -1,3 +1,4 @@
+import {markNativeActionNotStarted,normalizeNativeActionId} from './native-action-not-started.js';
 import { assertSurfaceContract, compileSemanticSurface, semanticSurfaceDesignPolicy, type SemanticSurfaceDesign } from './native-surface-design.js';
 import {factorNativePlanInput} from './native-plan-factor.js';
 import {parsePrimaryMembership,primaryMembershipPolicy,primaryProjectionDeficiencies,appStateMembershipEvidencePolicy,type PrimaryMembership} from './native-primary-projection.js';
@@ -5502,7 +5503,7 @@ function businessPayloadSummary(interaction: InteractionModel, values: Record<st
 }
 
 function normalizeActionId(actionId: string) {
-  return actionId.replace(/^actions\./, '').trim();
+  return normalizeNativeActionId(actionId);
 }
 
 function requireStoredInteraction(stored: StoredApp): InteractionModel {
@@ -7382,6 +7383,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         // causal record and never automatically rerun the business operation.
         nativeWorkflow?.fail(error, { externalEffectsMayHaveOccurred: nativeExecutionStarted });
         nativeWorkflow?.record('turn', 'agents.orchestrator', 'failed', undefined, { error: String(error), externalEffectsMayHaveOccurred: nativeExecutionStarted });
+        if(nativeWorkflow&&!nativeExecutionStarted){try{markNativeActionNotStarted(error,{executionId:nativeWorkflow.executionId,appId:input.appId,actionId:input.actionId,eventPayload:input.eventPayload});}catch{/* Missing/unserializable binding cannot establish non-entry to a client. */}}
         if (error && typeof error === 'object' && nativeWorkflow) Object.assign(error, {
           workflowExecution: { executionId: nativeWorkflow.executionId, status: 'failed', steps: nativeWorkflow.steps, externalEffectsMayHaveOccurred: nativeExecutionStarted },
         });
