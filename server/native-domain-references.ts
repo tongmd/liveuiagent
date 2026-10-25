@@ -2,7 +2,7 @@ import {createHash} from 'node:crypto';
 import {domainFieldUnion,type DomainField} from './native-domain-fields.js';
 
 type RawField=Record<string,unknown>;
-export type DomainDeclarationReference={inputIndex:number;persistedIndex:number;canonicalFieldName:string;rawTypedIdentitySha256:string};
+export type DomainDeclarationReference={inputIndex:number;persistedIndex:number;canonicalFieldName:string;declarationGeneratedName:string;identityResolution:'same-normalized-name'|'exact-raw-index-fallback';rawTypedIdentitySha256:string};
 const types=new Set(['string','text','select','boolean','date','number']);
 function field(raw:unknown,input:boolean):RawField{
  if(!raw||typeof raw!=='object'||Array.isArray(raw))throw Error('Domain reference requires an object declaration');
@@ -35,20 +35,26 @@ export function canonicalizeDomainReferences(rawSlots:unknown,rawStates:unknown,
  const states=rawStates.map(raw=>field(raw,false));
  domainFieldUnion(normalizedSlots,[]);// Never bypass the existing input gate.
  const inputNames=new Map(normalizedSlots.map((value,index)=>[value.name,index]));
- const stateNames=new Set<string>();const additional:DomainField[]=[];const additionalIndices:number[]=[];const references:DomainDeclarationReference[]=[];
+ const stateNames=new Set<string>();const referenceTargets=new Set<string>();const additional:DomainField[]=[];const additionalIndices:number[]=[];const references:DomainDeclarationReference[]=[];
  for(let index=0;index<states.length;index++){
   const normalized=normalizedStates[index];
   domainFieldUnion([],[normalized]);// A reference cannot bypass state namespace/metadata gates.
   if(stateNames.has(normalized.name))throw Error('Duplicate declarations inside persistedDomainFields');
   stateNames.add(normalized.name);
   if(normalized.type!==states[index].type)throw Error('State normalization changed the explicit type');
-  const inputIndex=inputNames.get(normalized.name);
+  const exactRawMatches=slots.map((value,inputIndex)=>({inputIndex,identity:JSON.stringify(typedIdentity(value))})).filter(value=>value.identity===JSON.stringify(typedIdentity(states[index])));
+  if(exactRawMatches.length>1)throw Error('Ambiguous complete raw input identity');
+  const rawMatch=exactRawMatches[0]?.inputIndex;
+  const isIndexFallback=rawMatch!==undefined&&/^slot_\d+$/.test(normalizedSlots[rawMatch].name)&&/^domain_\d+$/.test(normalized.name);
+  const inputIndex=isIndexFallback?rawMatch:inputNames.get(normalized.name);
   if(inputIndex===undefined){additional.push(structuredClone(normalized));additionalIndices.push(index);continue;}
   const input=normalizedSlots[inputIndex];
   const original=JSON.stringify(typedIdentity(slots[inputIndex]));
   const repeated=JSON.stringify(typedIdentity(states[index]));
   if(input.type!==slots[inputIndex].type||input.type!==normalized.type||original!==repeated||JSON.stringify(input.options?.map(option=>[option.label,option.value]))!==JSON.stringify(normalized.options?.map(option=>[option.label,option.value])))throw Error('Cross-array collision is not an exact complete raw typed reference');
-  references.push({inputIndex,persistedIndex:index,canonicalFieldName:input.name,rawTypedIdentitySha256:createHash('sha256').update(original).digest('hex')});
+  if(referenceTargets.has(input.name))throw Error('Duplicate declarations inside persistedDomainFields');
+  referenceTargets.add(input.name);
+  references.push({inputIndex,persistedIndex:index,canonicalFieldName:input.name,declarationGeneratedName:normalized.name,identityResolution:isIndexFallback&&input.name!==normalized.name?'exact-raw-index-fallback':'same-normalized-name',rawTypedIdentitySha256:createHash('sha256').update(original).digest('hex')});
  }
  const union=domainFieldUnion(normalizedSlots,additional);
  return {persistedDomainFields:additional,additionalStateIndices:additionalIndices,schemaFields:union,aliasTrace:{schemaVersion:1 as const,rule:'exact-raw-cross-array-reference' as const,references},

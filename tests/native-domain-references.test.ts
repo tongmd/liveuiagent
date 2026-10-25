@@ -43,3 +43,13 @@ test('ambiguous identities, unknown schema fields and slot mapping are not silen
  assert.throws(()=>run(input,state,normalized,{...normalizedState,type:'number'}),/changed the explicit type/);
  assert.throws(()=>canonicalize([input],Array.from({length:13},()=>state),[normalized],Array.from({length:13},()=>normalizedState)),/cardinality/);
 });
+
+test('non-ASCII raw identity resolves only unique index-fallback declaration to the actual input name without reindexing state',()=>{
+ const slot={label:'完成日期',type:'date',required:false};const state={label:'完成日期',type:'date'};
+ const input:DomainField={name:'slot_2',label:'完成日期',type:'date',required:false};const repeated:DomainField={name:'domain_1',label:'完成日期',type:'date'};
+ const out=canonicalize([slot],[state,{label:'是否归档',type:'boolean'}],[input],[repeated,{name:'domain_2',label:'是否归档',type:'boolean'}]);
+ assert.deepEqual(out.persistedDomainFields,[{name:'domain_2',label:'是否归档',type:'boolean'}]);assert.deepEqual(out.additionalStateIndices,[1]);assert.equal(out.aliasTrace.references[0].canonicalFieldName,'slot_2');assert.equal(out.aliasTrace.references[0].declarationGeneratedName,'domain_1');assert.equal(out.aliasTrace.references[0].identityResolution,'exact-raw-index-fallback');assert.equal(out.schemaFields[0].name,'slot_2');
+ assert.throws(()=>canonicalize([slot],[state,state],[input],[repeated,{...repeated,name:'domain_2'}]),/Duplicate declarations/);
+ const longA={...slot,label:'一个完整不可截断的非常长的业务字段名称甲'};const longB={...state,label:'一个完整不可截断的非常长的业务字段名称乙'};
+ assert.throws(()=>canonicalize([longA],[longB],[{...input,label:'一个完整不可截断的非常长…'}],[{...repeated,label:'一个完整不可截断的非常长…'}]),/collision/);
+});
