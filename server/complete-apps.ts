@@ -51,10 +51,10 @@ export function createHostActionStore(db: Database.Database) {
       db.prepare('INSERT INTO complete_host_actions VALUES (?,?,?,?,?)').run(owner,job.id,appId,JSON.stringify(job),createdAt);
       return job;
     },
-    fail(owner:string,appId:string,model:string,error:{message:string;code:string},services:string[]) {
+    fail(owner:string,appId:string,model:string,error:{message:string;code:string},services:string[],executionFailure?:{executionEvidence:unknown;evaluation:unknown}) {
       const createdAt=new Date().toISOString();
       const job={id:'host_'+randomUUID(),appId,status:'error',createdAt,finishedAt:createdAt,error:error.message,code:error.code,
-        execution:{harness:'dsh',actionRuntime:'host-appworld',model},selectedServices:services};
+        execution:{harness:'dsh',actionRuntime:'host-appworld',model},selectedServices:services,...(executionFailure?{executionFailure}:{})};
       db.prepare('INSERT INTO complete_host_actions VALUES (?,?,?,?,?)').run(owner,job.id,appId,JSON.stringify(job),createdAt);
       return job;
     },
@@ -295,13 +295,15 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       }
       const permissions=servicePlan.permissions;
       const grounded=await runAppWorldGrounding({bridge:toolBridge,permissions,payload:groundingPayload,appName:saved.app.name,appPurpose:saved.app.description,llm});
-      if(!grounded && servicePlan.services.length){
+      // Both an unavailable grounding result and its structured zero-call
+      // failure need the same durable receipt. Deadline results retain the
+      // existing unresolved save path; they must not be converted or replayed.
+      if((!grounded && servicePlan.services.length) || (grounded && !grounded.calls.length && !grounded.deadlineExceeded)){
         const failure=runtimeError('Connected service execution produced no completed real API calls; no outcome was verified','dsh_tool_execution_empty',502);
-        const failed=hostActions.fail(userOf(req),appId,selected.model,failure,servicePlan.services);
+        const failed=hostActions.fail(userOf(req),appId,selected.model,failure,servicePlan.services,grounded?{executionEvidence:grounded.executionEvidence,evaluation:grounded.evaluation}:undefined);
         throw Object.assign(failure,{trace:[{agent:'Host service executor',step:'Connected service action failed',status:'error',jobId:failed.id,message:failure.message}]});
       }
       if(grounded) {
-        if(!grounded.calls.length && !grounded.deadlineExceeded)throw runtimeError('No real business API call completed','dsh_tool_execution_empty',502);
         // Real execution and independent review are complete. Persist the host
         // result directly; launching another coding agent risks redoing writes.
         return hostActions.save(userOf(req),appId,grounded,selected.model);

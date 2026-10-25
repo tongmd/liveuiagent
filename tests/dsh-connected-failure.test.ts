@@ -20,5 +20,7 @@ test('connected service with zero actual native API calls fails durably without 
  assert.equal(response.status,502);assert.equal(result.code,'dsh_tool_execution_empty');assert.equal(upstreamActions,0);assert.equal(clockReads,1);assert.equal(businessCalls,0);assert.ok(modelCalls>=2,'actual native requirement and execution agents ran');
  const failed=await fetch(base+'/agent/complete/jobs/'+result.trace[0].jobId,{headers:{'X-LiveUIAgent-User':'alice'}}).then(r=>r.json()) as any;
  assert.equal(failed.status,'error');assert.equal(failed.code,'dsh_tool_execution_empty');assert.equal(failed.evidence,undefined);assert.deepEqual(failed.selectedServices,['simple_note']);
+ assert.equal(failed.executionFailure.executionEvidence.attemptedApiCalls,0);assert.equal(failed.executionFailure.executionEvidence.successfulApiCalls,0);assert.equal(failed.executionFailure.executionEvidence.unknownDispatchOutcomes,0);assert.equal(failed.executionFailure.executionEvidence.zeroSuccessfulCallCause,'no_dispatch_proposed');assert.equal(failed.executionFailure.evaluation.pass,false);
+ assert.doesNotMatch(failed.error,/nothing was changed|write gates rejected every attempt/);
  assert.equal(db.prepare('SELECT count(*) AS n FROM complete_host_actions').get().n,1);
 });
