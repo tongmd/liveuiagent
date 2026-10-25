@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, PanResponder, Pressable, ScrollView, StyleSheet, Text, TextInput, View, Platform } from 'react-native';
 import { router } from 'expo-router';
 import type { AgentTrace, AppRecord, CanvasPatchResponse, CanvasState, QueryStateResponse } from '@liveuiagent/app-spec';
 import { agentPost } from '../src/agentApi';
@@ -64,7 +64,8 @@ export default function WhiteboardHome() {
   const [summary, setSummary] = useState<QueryStateResponse['summary'] | null>(null);
   const [selectedAppId, setSelectedAppId] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [activeRequests, setActiveRequests] = useState(0);
+  const busy = activeRequests > 0;
   const [trace, setTrace] = useState<AgentTrace[]>([]);
   const [message, setMessage] = useState('输入一句话，LIVEUIAGENT 会生成一个可打开、可交互的 agent app。');
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
@@ -112,7 +113,8 @@ export default function WhiteboardHome() {
   async function submitPrompt() {
     const text = prompt.trim();
     if (!text) return;
-    setBusy(true);
+    setPrompt('');
+    setActiveRequests((count) => count + 1);
     setMessage('正在处理...');
     try {
       const data = await agentPost<any>('/agent/run', {
@@ -120,10 +122,9 @@ export default function WhiteboardHome() {
         selectedAppId,
         selectedNodeId: canvas.selectedNodeId,
         canvasState: canvas,
-        platform: 'web',
+        platform: Platform.OS,
       });
       setTrace(requiredTrace(data.trace));
-      setPrompt('');
       await refresh();
       if (data.type === 'app_created') setSelectedAppId(requiredText(data.appSummary?.appId, 'app_created missing appSummary.appId'));
       else if (data.type === 'app_patched') setSelectedAppId(requiredText(data.appPackage?.manifest?.appId, 'app_patched missing app id'));
@@ -133,7 +134,7 @@ export default function WhiteboardHome() {
     } catch (err) {
       setMessage(`执行失败：${(err as Error).message}`);
     } finally {
-      setBusy(false);
+      setActiveRequests((count) => Math.max(0, count - 1));
     }
   }
 
@@ -221,11 +222,11 @@ export default function WhiteboardHome() {
           onChangeText={setPrompt}
           placeholder={canvas.inputDock.placeholder}
           placeholderTextColor="#7a8799"
-          editable={!busy}
+          editable
           returnKeyType="send"
           onSubmitEditing={submitPrompt}
         />
-        <Pressable style={[styles.runButton, busy && styles.disabled]} onPress={submitPrompt} disabled={busy}>
+        <Pressable style={styles.runButton} onPress={submitPrompt}>
           {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.runText}>发送</Text>}
         </Pressable>
       </View>

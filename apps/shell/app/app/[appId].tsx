@@ -1,6 +1,6 @@
 import { useLocalSearchParams, router } from 'expo-router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View, Platform } from 'react-native';
 import type { AppRecord, QueryStateResponse } from '@liveuiagent/app-spec';
 import { agentPost } from '../../src/agentApi';
 import { DynamicAppRenderer } from '../../src/DynamicAppRenderer';
@@ -43,7 +43,7 @@ export default function GeneratedAppScreen() {
         actionId,
         eventPayload,
         clientState: {},
-        platform: 'ios',
+        platform: Platform.OS,
       });
       const messages = requiredArray<string>(data.messages, 'action response missing messages');
       setMessage(requiredText(messages[0], 'action response missing first message'));

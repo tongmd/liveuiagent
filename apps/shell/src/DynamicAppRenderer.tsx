@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import type { AppRecord, A2UIMessage, A2UISurfaceSpec } from '@liveuiagent/app-spec';
 
@@ -122,6 +122,11 @@ function resolveActionContext(data: Record<string, any>, context: unknown): Reco
 export function DynamicAppRenderer({ app, onAction, busy }: RendererProps) {
   const model = useMemo(() => buildSurfaceModel(app), [app]);
   const [data, setData] = useState<Record<string, any>>(() => JSON.parse(JSON.stringify(model.data)));
+
+  // A committed server revision is authoritative after an action or reopen.
+  useEffect(() => {
+    setData(JSON.parse(JSON.stringify(model.data)));
+  }, [model]);
 
   function mutateData(mutator: (draft: Record<string, any>) => void) {
     setData((current) => {
