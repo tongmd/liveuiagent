@@ -6830,6 +6830,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         rejectedPermissions,
       }, rejectedPermissions.length ? 'rejected' : 'ok') as { ok: boolean; rejectedPermissions: string[] };
       if (!safety.ok) throw httpError(`unsupported permission: ${safety.rejectedPermissions.join(', ')}`, 403);
+      if (!appWorldBridge && permissions.some(permission => permission.startsWith('tool.appworld.') && permission !== 'tool.appworld.db.snapshot')) {
+        throw httpError('this app requires an AppWorld bridge; local execution cannot substitute for connected business data', 501);
+      }
 
       const rawPayload = extractPayload(input.eventPayload);
       // 行内实体按钮携带的精确目标(名字+id):流向 grounding 契约与执行器,
