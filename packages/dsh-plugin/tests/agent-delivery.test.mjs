@@ -39,3 +39,9 @@ test('ordinary local application keeps startup-only rules and needs no host acti
   const result=await validateBrowserDelivery('<html><body><button>Count</button><script>document.querySelector("button").onclick=()=>{};</script></body></html>');
   assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.scope,'browser-startup');assert.equal(result.agentAction,undefined);
 });
+
+test('an input-change SDK call cannot masquerade as a working primary submit action', async () => {
+  const html=app('output.textContent="No service call from submit";').replace('</script>', 'document.querySelector("textarea").oninput=()=>window.liveuiagent.ai(document.querySelector("textarea").value,{}).catch(()=>{});</script>');
+  const result=await check(html);
+  assert.equal(result.ok,false);assert(result.errors.some(error=>error.code==='agent_action_before_submit'));
+});

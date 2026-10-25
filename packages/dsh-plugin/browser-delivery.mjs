@@ -44,7 +44,7 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
     await page.exposeFunction('__deliveryViolation', (key, message) => { if (key === channel) add('browser_policy_violation', message); });
     if (requireAgentAction) await page.exposeFunction('__deliveryAgentAction', (key, prompt, context) => {
       if (key !== channel) throw Error('Invalid delivery bridge channel');
-      if (!actionPhase) { add('agent_action_on_startup', 'Do not call the service bridge during startup; call it from the explicit user action'); throw Error('Service actions require an explicit user action'); }
+      if (!actionPhase) { add('agent_action_before_submit', 'Call the host service from the bound primary submit action, not startup or input-change handlers'); throw Error('Service actions require an explicit user action'); }
       agentCalls.push({ prompt, context });
       return { ok: false, text: serviceError, error: serviceError, data: { ok: false, error: serviceError } };
     });
@@ -74,8 +74,7 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
     });
     if (!visible) add('browser_empty_page', 'Application has no visible content after startup');
     if (requireAgentAction && !errors.length) {
-      actionPhase = true;
-      try { actionVerification = await verifyAgentAction(frame, syntheticRequest, serviceError, agentCalls); }
+      try { actionVerification = await verifyAgentAction(frame, syntheticRequest, serviceError, agentCalls, () => { actionPhase = true; }); }
       catch (error) { add('agent_action_contract', error.message); }
     }
   } catch (error) {
@@ -109,7 +108,7 @@ function installDeliverySdk(channel, agentEnabled) {
   addEventListener('securitypolicyviolation', event => parent.postMessage({ channel, violation: 'Blocked ' + event.violatedDirective }, '*'));
 }
 
-async function verifyAgentAction(frame, request, serviceError, calls) {
+async function verifyAgentAction(frame, request, serviceError, calls, beginAction) {
   const binding = await frame.evaluate(() => {
     const visible = node => { const r = node.getBoundingClientRect(), s = getComputedStyle(node); return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden'; };
     const candidates = new Set();
@@ -145,6 +144,7 @@ async function verifyAgentAction(frame, request, serviceError, calls) {
   await input.click({ clickCount: 3 }); await input.press('Backspace'); await input.type(request);
   const button = await frame.$('[data-delivery-primary="true"]');
   if (await button.evaluate(node => node.disabled)) throw Error('The primary action stayed disabled after entering the current task; enable a usable submit control.');
+  beginAction();
   await button.click();
   const deadline = Date.now() + 3500;
   let after = '';
