@@ -6,7 +6,6 @@ LiveUIAgent is an open-source runtime for personalized applications. Describe wh
 
 ![LiveUIAgent application workflow](assets/overview.png)
 
-Corresponding author: Tao Xie.
 
 ## Get Started
 
