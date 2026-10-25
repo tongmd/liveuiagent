@@ -15,7 +15,7 @@ test('Native DSH uses distinct private role directories, bounded concurrency and
   const root=await fs.mkdtemp(path.join(os.tmpdir(),'native-dsh-test-'));let active=0,max=0;const dirs:string[]=[];const received:any[]=[];
   const transport=createDshNativeInference({root,projectRoot:process.cwd(),command:'unit',maxConcurrent:2,provider:{apiBase:'http://unit',apiKey:'private-unit'},runnerFactory:async config=>{
     assert.deepEqual(config.passEnv,[]);assert.ok(config.args.includes('--patch'));
-    return {async run(input){dirs.push(input.work);received.push(input);assert.equal((await fs.stat(input.home)).mode&0o777,0o700);active++;max=Math.max(max,active);await new Promise(r=>setTimeout(r,15));active--;return{answer:'{"state":{"count":2}}'};},async dispose(){}};
+    return {async run(input){assert.notEqual(input.provider?.apiKey,'private-unit');assert.ok(input.provider?.apiBase.startsWith('http://127.0.0.1:'));assert.ok(!input.task.includes('private-unit'));dirs.push(input.work);received.push(input);assert.equal((await fs.stat(input.home)).mode&0o777,0o700);active++;max=Math.max(max,active);await new Promise(r=>setTimeout(r,15));active--;return{answer:'{"state":{"count":2}}'};},async dispose(){}};
   }});
   try{const results=await Promise.all(Array.from({length:4},()=>transport.chatCompletion(request)));assert.equal(max,2);assert.equal(new Set(dirs).size,4);assert.equal(received.length,4);assert.ok(received.every(x=>x.task.endsWith(JSON.stringify(request))));assert.equal(results[0].execution.delivery,'native');assert.deepEqual(await fs.readdir(root),[]);}finally{await transport.dispose();await fs.rm(root,{recursive:true,force:true});}
 });
