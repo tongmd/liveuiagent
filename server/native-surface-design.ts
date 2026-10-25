@@ -9,7 +9,6 @@ export type SemanticSurfaceDesign = {
   sectionOrder: Array<'summary' | 'records' | 'composer'>;
   layout: {fields: 'paired-short' | 'stacked'; records: 'cards' | 'compact'};
   headings: {records: string; composer: string};
-  fieldLabels: Record<string, string>;
   recordFields: string[];
 };
 
@@ -33,25 +32,15 @@ function choice<T extends string>(value: unknown, allowed: readonly T[]): T {
   if (typeof value !== 'string' || !allowed.includes(value as T)) throw Error(`Design choice must be one of: ${allowed.join(', ')}`);
   return value as T;
 }
-function label(raw: unknown, min = 1): string {
-  if (typeof raw !== 'string' || raw !== raw.trim() || raw.length < min || raw.length > 18 || /[\d\n\r<>]|\{\{|\}\}/u.test(raw)) {
+function label(raw: unknown): string {
+  if (typeof raw !== 'string' || raw !== raw.trim() || raw.length < 1 || raw.length > 18 || /[\d\n\r<>]|\{\{|\}\}/u.test(raw)) {
     throw Error('Design labels must be plain human text of 1-18 characters, without numeric facts, markup or bindings');
   }
   return raw;
 }
-function labels(raw: unknown, known: string[], min: number): Record<string, string> {
-  const values = object(raw);
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(values)) {
-    if (!known.includes(key)) throw Error('Design label references an unknown slot or action');
-    result[key] = label(value, min);
-  }
-  return result;
-}
-
 /** The only model-facing design grammar. It cannot declare controls or bindings. */
 export function validateSemanticSurfaceDesign(raw: unknown, contract: SurfaceContract): SemanticSurfaceDesign {
-  const value = object(raw, ['schemaVersion', 'sectionOrder', 'layout', 'headings', 'fieldLabels', 'recordFields']);
+  const value = object(raw, ['schemaVersion', 'sectionOrder', 'layout', 'headings', 'recordFields']);
   if (value.schemaVersion !== 1) throw Error('Design schemaVersion must be 1');
   if (!Array.isArray(value.sectionOrder) || value.sectionOrder.length !== 3 || new Set(value.sectionOrder).size !== 3) {
     throw Error('Design sectionOrder must contain summary, records and composer exactly once');
@@ -67,17 +56,16 @@ export function validateSemanticSurfaceDesign(raw: unknown, contract: SurfaceCon
     schemaVersion: 1, sectionOrder,
     layout: {fields: choice(layout.fields, ['paired-short', 'stacked']), records: choice(layout.records, ['cards', 'compact'])},
     headings: {records: label(headings.records), composer: label(headings.composer)},
-    fieldLabels: labels(value.fieldLabels, contract.businessFields.map(field => field.name), 2),
     recordFields: value.recordFields as string[],
   };
 }
 
 export const semanticSurfaceDesignPolicy = [
   'Design the semantic layout, style and human copy of this consumer app. The host compiles its controls from the supplied validated business fields and actions.',
-  'Return ONLY JSON with exactly these required keys: {"schemaVersion":1,"sectionOrder":["summary","records","composer"],"layout":{"fields":"paired-short","records":"cards"},"headings":{"records":"...","composer":"..."},"fieldLabels":{},"recordFields":[]}.',
-  'sectionOrder is any permutation containing summary, records and composer exactly once. Choose field layout paired-short or stacked; records style cards or compact. Layout is a phone-width single column, never a desktop table.',
-  'Use intention-specific labels in the same language as the user. headings are required. fieldLabels is an optional map of label overrides, keyed ONLY by exact supplied slot names; an empty map keeps the already model-designed business labels. It never adds, removes or disables any control. Action labels and operation verbs are fixed by the verified action contract; do not output actionLabels or rename an operation.',
-  'All labels are plain human text of 1-18 characters (field labels at least 2); no digits, values, dates, percentages, markup, bindings, internal jargon or claims of success. Do not repeat the app name. Action labels are taken directly from the supplied action purpose and cannot be changed here.',
+  'Return ONLY JSON with exactly these required keys: {"schemaVersion":1,"sectionOrder":["summary","composer","records"],"layout":{"fields":"paired-short","records":"cards"},"headings":{"records":"...","composer":"..."},"recordFields":[]}.',
+  'sectionOrder is any permutation containing summary, records and composer exactly once. Choose field layout paired-short or stacked; records style cards or compact. Layout is a phone-width single column, never a desktop table. For frequent additions or edits, put composer before a potentially long records list so inputs stay easy to reach; review-focused apps may put records first. Choose the actual order for this intention.',
+  'Use intention-specific section headings in the same language as the user. Business field labels and action labels/operation verbs come directly from the verified contract. Do not output fieldLabels or actionLabels, rename a control, or change what it means.',
+  'Section headings are plain human text of 1-18 characters; no digits, values, dates, percentages, markup, bindings, internal jargon or claims of success. Do not repeat the app name. Action labels are taken directly from the supplied action purpose and cannot be changed here.',
   'recordFields is an ordered subset of supplied persistedStateFields names to display beside each real entity. These values are local preferences/targets, not external service facts. Unknown/null remains Not set; never invent a value.',
   'Do NOT output components, component IDs, field declarations, options, paths, events, contexts, entity identity or executable code. The host always exposes every real typed business field exactly once, every action, real entity title/detail, result and computed stats. Per-item actions use exact host-selected row identity and consumed slots. Your design cannot replace these requirements.',
 ].join('\n');
@@ -100,7 +88,8 @@ export function compileSemanticSurface(raw: unknown, contract: SurfaceContract):
   };
   const hero = add('hero', 'StatBlock', {label: {path: '/draft/statLabel'}, value: {path: '/draft/statValue'}});
   const stats = add('stats', 'StatGrid', {path: '/stats'});
-  add('summary', 'Column', {children: [hero, stats]});
+  const result = add('result', 'Text', {text: {path: '/draft/result'}, variant: 'body'});
+  add('summary', 'Column', {children: [hero, stats, result]});
   const title = add('item_title', 'Text', {text: {path: 'title'}, variant: 'h3'});
   const detail = add('item_detail', 'Text', {text: {path: 'detail'}, variant: 'caption'});
   const badge = add('item_group', 'Badge', {text: {path: 'tag'}});
@@ -116,7 +105,6 @@ export function compileSemanticSurface(raw: unknown, contract: SurfaceContract):
   const list = add('items', 'List', {children: {componentId: item, path: '/entities'}});
   const listHeading = add('records_heading', 'SectionHeading', {title: design.headings.records});
   add('records', 'Column', {children: [listHeading, list]});
-  const result = add('result', 'Text', {text: {path: '/draft/result'}, variant: 'body'});
   const composerHeading = add('composer_heading', 'SectionHeading', {title: design.headings.composer});
   const fieldRows: string[] = [];
   let pair: string[] = [];
@@ -125,7 +113,7 @@ export function compileSemanticSurface(raw: unknown, contract: SurfaceContract):
     const variant = ({date: 'date', select: 'choice', boolean: 'toggle', number: 'stepper', text: 'longText', string: 'shortText'} as const)[field.type ?? 'string'];
     if (!variant) throw Error('Unknown business field type');
     // Options and required stay in the host business contract; the existing validator injects options.
-    const id = add(`field_${index}`, 'TextField', {label: design.fieldLabels[field.name] ?? field.label, value: {path: `/draft/slots/${field.name}`}, variant});
+    const id = add(`field_${index}`, 'TextField', {label: field.label, value: {path: `/draft/slots/${field.name}`}, variant});
     if (design.layout.fields === 'paired-short' && ['shortText', 'date', 'stepper'].includes(variant)) {
       pair.push(id); if (pair.length === 2) flush();
     } else { flush(); fieldRows.push(id); }
@@ -135,6 +123,6 @@ export function compileSemanticSurface(raw: unknown, contract: SurfaceContract):
   actions.forEach((action, index) => { if (action.perItem !== true) composerButtons.push(button(action, index, false, composerButtons.length === 0)); });
   // Each button occupies its own ordinary vertical row; long labels never require a wide toolbar.
   add('composer', 'Column', {children: [composerHeading, ...fieldRows, ...composerButtons]});
-  components.unshift({id: 'overview', component: 'Column', children: [...design.sectionOrder, result]});
+  components.unshift({id: 'overview', component: 'Column', children: [...design.sectionOrder]});
   return {design, components};
 }

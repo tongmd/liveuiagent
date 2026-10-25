@@ -19,7 +19,7 @@ const actions: SurfaceContract['actions'] = [
   {actionId: 'actions.finish.run', label: 'Finish session', perItem: true, consumedSlots: []},
 ];
 const contract = {businessFields: fields, actions, persistedStateFields: fields};
-const design = () => ({schemaVersion: 1, sectionOrder: ['summary', 'records', 'composer'], layout: {fields: 'paired-short', records: 'cards'}, headings: {records: 'Study sessions', composer: 'New session'}, fieldLabels: {}, recordFields: ['minutes', 'enabled']});
+const design = () => ({schemaVersion: 1, sectionOrder: ['summary', 'composer', 'records'], layout: {fields: 'paired-short', records: 'cards'}, headings: {records: 'Study sessions', composer: 'New session'}, recordFields: ['minutes', 'enabled']});
 const reply = (value: unknown) => ({choices: [{message: {content: JSON.stringify(value)}}]});
 function checked(raw = design(), input: SurfaceContract = contract) {
   const compiled = compileSemanticSurface(raw, input);
@@ -41,12 +41,17 @@ function graph(nodes: Array<Record<string, any>>) {
 test('compiler removes the four actual defect classes: graph, unique slots, all actions and per-item scope', () => {
   const {components, nodes} = checked(); graph(components);
   graph(checked({...design(),recordFields:fields.map(field=>field.name)}).components);
+  assert.ok(components.find(node=>node.id==='summary')!.children.includes('result'));
+  assert.equal(components.filter(node=>node.text?.path==='/draft/result').length,1,'one actual result binding lives in summary, not duplicated after a long list');
+  assert.equal(components[0].children.includes('result'),false);
   const inputs = components.filter(node => node.component === 'TextField');
+  assert.deepEqual(inputs.map(node => node.label), fields.map(field => field.label), 'verified business labels cannot be renamed by a second model');
   assert.deepEqual(inputs.map(node => node.value.path), fields.map(field => `/draft/slots/${field.name}`));
   assert.deepEqual(inputs.map(node => node.variant), ['shortText', 'stepper', 'date', 'toggle', 'choice', 'longText']);
   assert.ok(inputs.every(node => !node.disabled && !node.hidden && !node.readOnly));
   assert.deepEqual(nodes.find(node => node.id === 'd_field_4')!.options, fields[4].options, 'host injects the actual typed choices');
   const buttons = components.filter(node => node.component === 'Button');
+  for(const button of buttons) assert.equal(components.find(node=>node.id===button.child)!.text,actions.find(action=>action.actionId===button.action.event.name)!.label);
   assert.deepEqual(buttons.map(node => node.action.event.name).sort(), actions.map(action => action.actionId).sort());
   assert.equal(components.find(node => node.id === 'composer')!.children.filter((id: string) => id.startsWith('action_')).length, 1);
   assert.equal(components.find(node => node.id === 'item_body')!.children.filter((id: string) => id.startsWith('action_')).length, 3);
@@ -60,6 +65,7 @@ test('compiler removes the four actual defect classes: graph, unique slots, all 
 });
 
 test('all cardinalities and semantic layout choices compile complete trees; no model omission removes controls', () => {
+  assert.equal(checked({...design(),sectionOrder:['records','summary','composer']}).components[0].children[0],'records','review-oriented records-first order stays supported');
   for (let count = 1; count <= 6; count++) for (let actionCount = 1; actionCount <= 4; actionCount++) for (const records of ['cards', 'compact']) {
     const input = {...contract, businessFields: fields.slice(0, count), actions: actions.slice(0, actionCount).map(action => ({...action, ...(action.perItem ? {consumedSlots: []} : {})}))};
     const value = {...design(), sectionOrder: ['composer', 'summary', 'records'], layout: {fields: 'stacked', records}, recordFields: []};
@@ -75,7 +81,7 @@ test('strict semantic grammar rejects missing keys, duplicate order, legacy tree
   for (const key of Object.keys(design())) { const value: any = design(); delete value[key]; variants.push(value); }
   variants.push({...design(), sectionOrder: ['summary', 'records', 'records']}, {...design(), sectionOrder: ['summary', 'records', 'unknown']}, {...design(), layout: {fields: 'desktop', records: 'cards'}}, {...design(), fieldLabels: {not_declared: 'Unknown field'}}, {...design(), fieldLabels: {topic: {path: '/owner'}}}, {...design(), recordFields: ['owner']}, {...design(), recordFields: ['minutes', 'minutes']}, {...design(), headings: {records: 'Total $99', composer: 'New session'}}, {...design(), actionLabels: {'actions.remove.run':'Check'}}, {...design(), events: {run: 'execute'}}, {...design(), layout: {fields: 'stacked', records: 'cards', hidden: true}});
   for (const value of variants) assert.throws(() => validateSemanticSurfaceDesign(value, contract));
-  assert.throws(() => checked({...design(), fieldLabels: {topic: 'prompt'}}), /strict validator/);
+  assert.throws(() => checked({...design(), fieldLabels: {topic: 'Quantity'}}), /requires exactly/, 'even plausible renaming of a verified field is rejected');
 });
 
 test('strict design is the only inference path, bounded semantic repair retains the same fields/actions and no extra calls', async () => {
