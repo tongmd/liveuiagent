@@ -5685,6 +5685,7 @@ export async function runAppWorldGrounding(input: {
   // The ablation keeps planning/catalog access but supplies no external facts.
   // Guard the shared executor as well as its current callers.
   if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') return null;
+  const turnTime = `Actual host time for this turn: ${new Date().toISOString()} (UTC). For an action completed or logged now, when the user gives no date, use this current date unless a real service clock or explicitly supplied user timezone establishes a different current date. Prefer a current clock returned by the actual service when available. A timestamp on another record, cached application text or client-provided claim is not the current clock. Never borrow another item's historical date for a new completion or log entry.`;
   const permissionSet = new Set(input.permissions);
   const blockedApis = /signup|login|logout|verify|verification|password|delete_account/i;
   const capabilities = (await input.bridge.getCapabilities()).filter((tool) =>
@@ -5739,6 +5740,7 @@ export async function runAppWorldGrounding(input: {
     label: 'Grounding Requirement Agent',
     llm: input.llm,
     system: [
+        turnTime,
       `You analyze a GUI form submission for the generated app "${input.appName}" BEFORE execution.`,
       ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
       `Wired services this turn can write to: ${wiredServices}.`,
@@ -5789,6 +5791,7 @@ export async function runAppWorldGrounding(input: {
         label: 'AppWorld Grounding Agent',
         llm: input.llm,
         system: [
+        turnTime,
           `You are the backend workflow agent for the generated app "${input.appName}".`,
           ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
           'A user submitted a GUI form. Ground their request in REAL API calls against the available APIs below, then summarize.',
@@ -5885,6 +5888,7 @@ export async function runAppWorldGrounding(input: {
               llm: input.llm,
               temperature: 0,
               system: [
+        turnTime,
                 'You are the Write Verifier for real API calls a backend agent is about to make on behalf of a GUI submission.',
                 'Check ONLY the arguments, against the user request and goal: (1) every amount must trace to a submitted value, a value read earlier this turn, or goal.expectedNumbers (use the expectedNumbers value VERBATIM for computed shares — a bill split share = total ÷ ALL participants including the payer; the payer is owed, never owing; NEVER a placeholder like 0.01); (2) names/titles the user provided must be used VERBATIM (no renaming, translating, date prefixes, or concatenated form fields); (3) an update must REPLACE the field content, not append, unless the user asked to add; (4) a change aimed at one named object must not touch its siblings; (5) no UI component ids (d_b1, slot_2) inside names or contents.',
                 'DUPLICATE & TURN-SCOPE gate: reject the batch with {"approved": false, "reject": true, "reason": "<why>"} when (a) previousCalls already show a successful create of the same object (same bill/record, matching amounts or title) and the batch re-creates it WITHOUT first deleting the stale copy, or (b) the batch DELETES or re-records an object whose id does NOT trace to a create in previousCalls (i.e. it predates this turn) and the user request does not explicitly ask to remove or correct that record, or (c) the batch COMPLETES/closes/checks-off an item whose name is NOT mentioned in the user request or targetEntity — completing unmentioned siblings corrupts per-item state. Reject ONLY for these three cases.',
@@ -5961,6 +5965,7 @@ export async function runAppWorldGrounding(input: {
       label: 'Grounding Evaluator Agent',
       llm: input.llm,
       system: [
+        turnTime,
         'You are an INDEPENDENT evaluator for a generated app backend turn. You did not execute it; judge only from the evidence.',
         'Decide whether the executed real API calls and the user-visible result fulfill the user request and the goal contract.',
         'Respond ONLY with JSON: {"pass": true|false, "deficiencies": ["<concrete, actionable gap>", ...]}.',
