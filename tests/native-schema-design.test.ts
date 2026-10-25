@@ -15,7 +15,7 @@ test('selected public request schemas refine optional editable coverage without 
  assert.equal(refined.appName,design.appName);assert.equal(refined.presentation,design.presentation);assert.deepEqual(refined.services,design.services);assert.equal(refined.slots[3].name,'repeat_delay');assert.equal(refined.slots[3].required,false);assert.deepEqual(refined.actions[1].consumedSlots,['new_time','week_days','entry_label','repeat_delay']);assert.equal((refined as any).permissions,undefined);
 });
 test('refinement rejects any attempted service/name/permission widening instead of falling back locally',async()=>{
- const design=await initial();for(const extra of [{services:['other']},{appName:'Renamed'},{permissions:['*']}]){let calls=0;await assert.rejects(refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async()=>{calls++;return reply({...refinement(),...extra});}}}),/only declared output fields/);assert.equal(calls,1);}
+ const design=await initial();for(const extra of [{services:['other']},{appName:'Renamed'},{permissions:['*']}]){let calls=0;await assert.rejects(refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async()=>{calls++;return reply({...refinement(),...extra});}}}),/only declared output fields/);assert.equal(calls,2);}
  assert.equal(design.slots.length,3);
 });
 test('same strict normalization rejects invalid refinements including required/type/collisions/row indices/cardinality',async()=>{
@@ -24,7 +24,7 @@ test('same strict normalization rejects invalid refinements including required/t
 });
 test('actual Native planning locks original service choice and rejects a bad schema refinement before any UI or execution',async()=>{
  let descriptions=0,catalogs=0,modelCalls=0;const bridge:any={getAppDescriptions:async()=>{descriptions++;return[{name:'chronicle',description:'Public weekday scheduling service'}];},getCapabilities:async()=>{catalogs++;return capabilities;},callTool:()=>{throw Error('No execution authorized');}};
- await assert.rejects(planAgentApp(need,{model:'fixture',chatCompletion:async request=>{modelCalls++;if(request.messages[0].content.includes('You refine a Native application design'))return reply({...refinement(),services:['other']});return reply(raw());}},bridge),/only declared output fields/);assert.equal(modelCalls,2);assert.equal(descriptions,1);assert.equal(catalogs,1);
+ await assert.rejects(planAgentApp(need,{model:'fixture',chatCompletion:async request=>{modelCalls++;if(request.messages[0].content.includes('You refine a Native application design'))return reply({...refinement(),services:['other']});return reply(raw());}},bridge),/only declared output fields/);assert.equal(modelCalls,3);assert.equal(descriptions,1);assert.equal(catalogs,1);
 });
 test('local designs skip refinement and bounded catalogs reject unresolved/oversize/absent selected contracts before inference',async()=>{
  const design=await initial();design.services=[];let calls=0;assert.equal(await refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async()=>{calls++;throw Error('unreachable');}}}),design);assert.equal(calls,0);
@@ -69,4 +69,31 @@ test('normalized internal keys remain forbidden in model output after same-shape
  for(const mutate of [(d:any)=>d.slots[0].name='new_time',(d:any)=>d.actions[1].consumedSlots=['new_time']]){
   const design=await initial();await assert.rejects(refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async request=>{const current=JSON.parse(request.messages[1].content).currentDesign;mutate(current);return reply(current);}}}),/only declared output fields/);
  }
+});
+
+test('one contract repair preserves full original inputs and actual invalid output without loosening strict keys',async()=>{
+ const design=await initial();const before=structuredClone(design);const invalid=refinement();(invalid.actions[0]as any).consumedSlotIndices=[0,2];const packets:any[]=[];const roles:string[]=[];
+ const result=await refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async(request,options)=>{roles.push(options!.roleLabel!);const packet=JSON.parse(request.messages[1].content);packets.push(packet);assert.match(request.messages[0].content,/completely OMIT consumedSlotIndices, even \[\]/);assert.match(request.messages[0].content,/globally mandatory in the shared form/);assert.match(request.messages[0].content,/original app purpose, not hypothetical future requests/);return reply(packets.length===1?invalid:refinement());}}});
+ assert.deepEqual(roles,['Schema-aware Business Slot Agent','Schema-aware Business Slot Contract Repair']);assert.equal(packets.length,2);const{contractRepair,...original}=packets[1];assert.deepEqual(original,packets[0]);assert.deepEqual(contractRepair.invalidOutput,invalid);assert.match(contractRepair.validationMessage,/Non-item/);assert.equal(result.slots.length,4);assert.deepEqual(result.services,design.services);assert.equal(result.appName,design.appName);assert.deepEqual(design,before);
+});
+test('two invalid contracts fail closed without a third call or local key dropping',async()=>{
+ const design=await initial();let calls=0;await assert.rejects(refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async()=>{calls++;const invalid=refinement();(invalid.actions[0]as any).consumedSlotIndices=[];return reply(invalid);}}}),/Non-item/);assert.equal(calls,2);
+});
+test('transport timeout parse errors and explicit refusals never trigger design repair',async()=>{
+ const design=await initial();for(const response of [()=>{throw Error('transport unavailable');},()=>{throw Object.assign(Error('timeout'),{code:'dsh_native_timeout'});},()=>({choices:[{message:{content:'not JSON'}}]}),()=>({choices:[{message:{refusal:'Cannot comply'}}]}),()=>reply({refusal:'Cannot comply'}),()=>reply({proceed:false}),()=>reply({pass:false}),()=>reply({reject:true}),()=>reply({status:'rejected'})]){
+  let calls=0;await assert.rejects(refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async()=>{calls++;return response();}}}));assert.equal(calls,1);
+ }
+});
+test('repair shares the original short role budget and shorter inherited deadline',async t=>{
+ const {withActionDeadline}=await import('../server/action-deadline.js');const previous=process.env.LIVEUIAGENT_ORCHESTRATOR_TIMEOUT_MS;process.env.LIVEUIAGENT_ORCHESTRATOR_TIMEOUT_MS='120';t.after(()=>previous===undefined?delete process.env.LIVEUIAGENT_ORCHESTRATOR_TIMEOUT_MS:process.env.LIVEUIAGENT_ORCHESTRATOR_TIMEOUT_MS=previous);
+ const design=await initial();const budgets:number[]=[];let calls=0;
+ await assert.rejects(withActionDeadline(Date.now()+100,()=>refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async(_request,options)=>{budgets.push(options!.timeoutMs);calls++;if(calls===1){await new Promise(r=>setTimeout(r,35));const invalid=refinement();(invalid.actions[0]as any).consumedSlotIndices=[];return reply(invalid);}return new Promise(()=>{});}}})),/deadline/);
+ assert.equal(calls,2);assert(budgets[0]<=100);assert(budgets[1]<budgets[0]-20);assert(budgets[1]<80);
+});
+
+test('without an inherited action deadline both design attempts still share one original role timeout',async t=>{
+ const previous=process.env.LIVEUIAGENT_ORCHESTRATOR_TIMEOUT_MS;process.env.LIVEUIAGENT_ORCHESTRATOR_TIMEOUT_MS='100';t.after(()=>previous===undefined?delete process.env.LIVEUIAGENT_ORCHESTRATOR_TIMEOUT_MS:process.env.LIVEUIAGENT_ORCHESTRATOR_TIMEOUT_MS=previous);
+ const design=await initial();const budgets:number[]=[];let calls=0;
+ await assert.rejects(refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async(_request,options)=>{calls++;budgets.push(options!.timeoutMs);if(calls===1){await new Promise(r=>setTimeout(r,35));const invalid=refinement();(invalid.actions[0]as any).consumedSlotIndices=[];return reply(invalid);}return new Promise(()=>{});}}}),/deadline/);
+ assert.equal(calls,2);assert(budgets[0]<=100);assert(budgets[1]<budgets[0]-20);assert(budgets[1]<80);
 });
