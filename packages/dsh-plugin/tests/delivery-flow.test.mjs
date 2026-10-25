@@ -18,7 +18,7 @@ async function fixture(t, runner, options = {}) {
     assert(response.ok, `HTTP ${response.status}`); return response.json();
   };
   const finished = async id => {
-    const deadline = Date.now()+10000;
+    const deadline = Date.now()+60000;
     while (Date.now()<deadline) { const job=await api('jobs/'+id); if (!['queued','running'].includes(job.status)) return job; await new Promise(resolve=>setTimeout(resolve,10)); }
     assert.fail('job did not finish');
   };
@@ -89,4 +89,28 @@ test('generation deadline preserves valid delivery without unnecessary repair', 
   assert.equal(calls, 1);
   assert.equal(aborts, 1);
   assert.equal((await f.api('state')).apps.length, 1);
+});
+
+test('browser startup error is repaired once before publication', async t => {
+  let calls=0;
+  const f=await fixture(t,{async run({work,onEvent,task}) {
+    calls++; onEvent({type:'tool_call',name:'write_file'});
+    if(calls===2) assert.match(task,/browser_script_error/);
+    await writeFile(path.join(work,'index.html'),html(calls===1?'missingElement.textContent="broken";':'document.querySelector("button").onclick=()=>{};'));
+    await writeFile(path.join(work,'app.json'),'{"name":"Counter"}'); return {};
+  }});
+  const job=await f.api('generate','POST',{prompt:'Make a counter'});
+  assert.equal((await f.finished(job.id)).status,'done');
+  assert.equal(calls,2);
+});
+test('persistent browser startup errors never publish', async t => {
+  let calls=0;
+  const f=await fixture(t,{async run({work,onEvent}) {
+    calls++; onEvent({type:'tool_call',name:'write_file'});
+    await writeFile(path.join(work,'index.html'),html('throw Error("Startup failed");'));
+    await writeFile(path.join(work,'app.json'),'{"name":"Broken"}'); return {};
+  }});
+  const job=await f.api('generate','POST',{prompt:'Make an app'});
+  assert.equal((await f.finished(job.id)).status,'error');
+  assert.equal(calls,2); assert.equal((await f.api('state')).apps.length,0);
 });

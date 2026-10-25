@@ -22,7 +22,8 @@
   },
   "license": "Apache-2.0",
   "dependencies": {
-    "@deepseek-ai/schemastery": "3.18.4"
+    "@deepseek-ai/schemastery": "3.18.4",
+    "puppeteer-core": "^25.1.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.4",

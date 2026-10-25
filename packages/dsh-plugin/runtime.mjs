@@ -4,6 +4,7 @@ import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { buildTask } from './prompts.mjs';
 import { validateDelivery } from './delivery.mjs';
+import { validateBrowserDelivery } from './browser-delivery.mjs';
 import { resolveJobModel } from './model-config.mjs';
 
 /** Create one operator's LiveUIAgent application service; the Cordis entry owns HTTP authentication. */
@@ -161,6 +162,18 @@ async function outputFile(work, name, maxBytes) {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxBytes) throw new Error('DSH returned an invalid app file');
   return fs.readFile(file, 'utf8');
 }
+async function verifyDelivery(work, job) {
+  const delivery = await validateDelivery(work);
+  if (!delivery.ok || closed || job.status === 'cancelled') return delivery;
+  const controller = new AbortController();
+  running.set(job.id, controller);
+  try {
+    const browser = await validateBrowserDelivery(delivery.html, { chrome: config.chrome, signal: controller.signal });
+    job.browserValidation = browser;
+    (job.browserValidationAttempts ??= []).push(browser);
+    return browser.ok ? delivery : { ok: false, errors: browser.errors };
+  } finally { running.delete(job.id); }
+}
 async function execute({ a, job, context, provider }) {
   const work = path.join(a.dir, 'runs', job.id, 'work');
   const home = path.join(a.dir, 'runs', job.id, 'dsh-home');
@@ -192,8 +205,9 @@ async function execute({ a, job, context, provider }) {
       catch (error) { if (!job.timedOut || job.status === 'cancelled') throw error; generationError = error; }
       if (job.status === 'cancelled') return;
       job.phase = 'validate'; job.stage = '校验应用文件与脚本'; await save(a);
-      let delivery = await validateDelivery(work);
+      let delivery = await verifyDelivery(work, job);
       if (closed || job.status === 'cancelled') return;
+      if (!delivery.ok && delivery.errors.some(error => error.code === 'browser_unavailable')) throw new Error('浏览器交付检查不可用：' + delivery.errors.map(error => error.message).join('; '));
       if (!delivery.ok) {
         job.phase = 'repair'; job.stage = '修复交付文件'; job.repairAttempts = 1; await save(a);
         const repairTask = task + '\n\nDELIVERY REPAIR ONLY (one attempt, 120 seconds). Existing files are the current draft. Do not redesign or research. Fix these host validation errors: ' + JSON.stringify(delivery.errors) + '. Write app.json first if missing, accurately describing only implemented features. Fix inline JavaScript syntax and preserve the user request and stored data. Finish immediately after writing the corrected files.';
@@ -201,7 +215,7 @@ async function execute({ a, job, context, provider }) {
         catch (error) { if (!job.timedOut || job.status === 'cancelled') throw error; }
         if (job.status === 'cancelled') return;
         job.phase = 'validate'; job.stage = '复查修复结果'; await save(a);
-        delivery = await validateDelivery(work);
+        delivery = await verifyDelivery(work, job);
       }
       job.deliveryValidation = { ok: delivery.ok, errors: delivery.errors };
       if (!delivery.ok) throw new Error('应用交付校验未通过：' + delivery.errors.map(e => e.message).join('; '));

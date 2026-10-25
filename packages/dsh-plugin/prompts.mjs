@@ -36,7 +36,7 @@ app.json: {"name":"short app name","description":"one useful sentence","accent":
 "features":["implemented function",...],"checks":["checks you actually ran",...]}.
 Before finishing, extract inline scripts and run node --check; repair syntax errors. Run one focused
 business-logic check. Inspect event handlers. Do not create DOM mocks or exhaustive test suites.
-After these checks pass, update the metadata already written and finish promptly; the host separately runs browser checks.
+After these checks pass, update the metadata already written and finish promptly; the host separately checks browser startup and script errors; this does not verify business workflows.
 Never claim a browser test unless you actually ran a browser.
 
 MEMORY

@@ -23,7 +23,7 @@ async function fixture(t, runner, options = {}) {
     return { status: res.status, data: await res.json() };
   }
   async function finished(id) {
-    const deadline = Date.now() + 5000;
+    const deadline = Date.now() + 60000;
     for (;;) {
       const { data } = await api('jobs/' + id);
       if (!['queued', 'running'].includes(data.status)) return data;
@@ -148,7 +148,7 @@ test('symlinked model output is rejected before publication', async t => {
   assert.deepEqual((await f.api('state')).data.apps, []);
 });
 
-test('cancelling during final output staging cannot publish a completed application', { timeout: 8000 }, async t => {
+test('cancelling during final output staging cannot publish a completed application', { timeout: 60000 }, async t => {
   const f = await fixture(t, writer());
   let staged;
   let release;
