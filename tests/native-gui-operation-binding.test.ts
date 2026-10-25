@@ -18,7 +18,7 @@ test('single button binding remains explicit, enabled and row-scoped; obsolete d
  for(const action of [undefined,{kind:'click'},{kind:'click',target:'e1'},{kind:'click',target:'e99'}])assert.throws(()=>resolveControlPreparation({...p,action},i));
  (i.snapshot.buttons[0] as any).disabled=true;assert.throws(()=>resolveControlPreparation(p,i),/enabled/);delete (i.snapshot.buttons[0] as any).disabled;
  i.snapshot.buttons[0].contextText='Row A\namount18.5';p.operation.rowContextQuote='Row A\namount18.5';assert.equal(resolveControlPreparation(p,i).kind,'click');
- assert.throws(()=>resolveControlPreparation({...p,action:{kind:'done',reason:'Done'}},i),/Terminal operation/);
+ assert.deepEqual(resolveControlPreparation({...p,action:{kind:'done',reason:'Done'}},i),{kind:'done',reason:'Done'});
  const terminal={...p,fields:[],operation:{},action:{kind:'unsupported',reason:'Missing requested control'}};assert.equal(resolveControlPreparation(terminal,i).kind,'unsupported');
  assert.match(GUI_INTERACTION_SYSTEM,/operation:\{rowContextQuote\?\}/);assert.match(GUI_INTERACTION_SYSTEM,/action.target is the only control binding/);assert.doesNotMatch(GUI_INTERACTION_SYSTEM,/operation:\{quote,target/);
 });
