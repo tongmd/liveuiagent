@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { createAppWorldBridge } from './appworld-bridge.js';
-import { planAgentApp, runAppWorldGrounding } from './liveuiagent.js';
+import { planAppWorldToolPermissions, runAppWorldGrounding } from './liveuiagent.js';
 import { runtimeError, type HarnessId } from './runtime-settings.js';
 
 const PREFIX = 'dsh_';
@@ -244,7 +244,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       const planKey=JSON.stringify([userOf(req),appId,saved.app.revision,saved.app.description]);
       if(!toolPlans.has(planKey)){
         if(toolPlans.size>=1000)toolPlans.delete(toolPlans.keys().next().value!);
-        const pending=planAgentApp([saved.app.name,saved.app.description].join('\n'),llm,toolBridge).then(plan=>plan.toolCapabilities.map(t=>t.permission));
+        const pending=planAppWorldToolPermissions([saved.app.name,saved.app.description].join('\n'),llm,toolBridge);
         toolPlans.set(planKey,pending);pending.catch(()=>toolPlans.delete(planKey));
       }
       const permissions=await toolPlans.get(planKey)!;

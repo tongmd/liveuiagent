@@ -2180,6 +2180,17 @@ function makeAgentResult(input: {
   };
 }
 
+// DSH already owns its HTML UI. Reuse the native semantic service selector,
+// without spending another model call designing an unrelated icon/UI package.
+export async function planAppWorldToolPermissions(prompt: string, llm: LlmRuntimeConfig | undefined, appWorld: AppWorldBridge) {
+  const tokens=semanticTokens(prompt,8),subject=readableSubject(prompt,tokens),clauses=splitPromptClauses(prompt);
+  const focus=englishSubjectPhrase(prompt)||cleanupCandidate(clauses[0]||subject||tokens[0]||'Content')||subject||tokens[0]||'Content';
+  const resultFocus=cleanupCandidate(clauses[1]||subject||'Next step')||subject||'Next step';
+  const slotDesign=await makeBusinessFields(prompt,subject,tokens,{focus,resultFocus},llm,await appWorld.getAppDescriptions());
+  const services=new Set(slotDesign.services);
+  return (await appWorld.getCapabilities()).filter(tool=>tool.source==='appworld'&&(tool.appName==='__meta__'||services.has(tool.appName))).map(tool=>tool.permission);
+}
+
 export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWorld?: AppWorldBridge | null, knownPeople?: Array<{ name: string; email?: string; phone?: string }>): Promise<AgentPlan> {
   const tokens = semanticTokens(prompt, 8);
   const subject = readableSubject(prompt, tokens);
