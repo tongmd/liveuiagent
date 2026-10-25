@@ -42,7 +42,8 @@ export class NativeWorkflow {
         const output = await this.options.call(node, input, 'plan');
         if (output.proceed !== true) throw new Error(`agent ${node.id} rejected: ${String(output.reason || 'no approval')}`);
         if (typeof output.instructions !== 'string' || !output.instructions.trim() || typeof output.expectedOutcome !== 'string' || !output.expectedOutcome.trim() || !Array.isArray(output.constraints) || output.constraints.some(x => typeof x !== 'string')) throw new Error(`agent ${node.id} returned invalid handoff`);
-        const handoff = { agentId: node.id, role: String(node.role || node.name || node.id), instructions: output.instructions.slice(0, 2400), constraints: output.constraints.map(x => String(x).slice(0, 500)).slice(0, 12), expectedOutcome: output.expectedOutcome.slice(0, 1200) };
+        if (output.instructions.length > 2400 || output.expectedOutcome.length > 1200 || output.constraints.length > 12 || output.constraints.some((x: string) => x.length > 500)) throw new Error(`agent ${node.id} exceeded handoff limits; contract was not truncated`);
+        const handoff = { agentId: node.id, role: String(node.role || node.name || node.id), instructions: output.instructions, constraints: output.constraints.map(String), expectedOutcome: output.expectedOutcome };
         this.handoffs.push(handoff);
         this.record('plan', node.id, 'ok', undefined, handoff);
       } catch (error) { this.record('plan', node.id, 'failed', undefined, { error: String(error) }); throw error; }
