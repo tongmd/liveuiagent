@@ -1,3 +1,4 @@
+import {createNativeInputCapture} from './native-input-capture.js';
 import {nativeStructuredJsonPolicyMetadata} from './native-structured-json-policy.js';
 import {persistNativeInferenceDiagnostic} from './native-inference-diagnostics.js';
 import fs from 'node:fs/promises';
@@ -39,6 +40,8 @@ type Config = {
   root: string;
   projectRoot: string;
   diagnosticRoot?: string;
+  /** Opt-in private host request capture, sibling of this adapter task root only. */
+  diagnosticInputRoot?: string;
   command: string;
   args?: string[];
   provider?: {apiBase:string;apiKey:string};
@@ -75,6 +78,7 @@ export function createDshNativeInference(config:Config) {
   if(!config.command.trim())throw new Error('Native DSH command required');
   const maxConcurrent=config.maxConcurrent??4;
   if(!Number.isInteger(maxConcurrent)||maxConcurrent<1||maxConcurrent>8)throw new Error('Native DSH maxConcurrent must be 1–8');
+  const inputCapture=createNativeInputCapture(config.root,config.diagnosticInputRoot);
   let active=0;
   let closed=false;
   const running=new Set<AbortController>();
@@ -94,6 +98,9 @@ export function createDshNativeInference(config:Config) {
     maxConcurrent,
     async chatCompletion(request:Record<string,unknown>,options?:{timeoutMs:number;roleLabel?:string;provider?:{apiBase:string;apiKey:string}}) {
       if(closed)throw transportError('Native DSH transport is closed','dsh_native_closed');
+      // Freeze exactly the JSON wire value once before any queued awaits.
+      // Capture and relay must not observe a caller mutating the original object.
+      request=JSON.parse(JSON.stringify(request));
       const task=nativeDshTask(request,config.maxRequestBytes);
       const budget=Math.min(options?.timeoutMs??config.timeoutMs??120000,config.timeoutMs??120000);
       if(!Number.isFinite(budget)||budget<=0)throw transportError('Native DSH deadline expired','dsh_native_timeout');
@@ -134,6 +141,7 @@ export function createDshNativeInference(config:Config) {
         runner=await factory({command:config.command,args,passEnv:[],isolatedHome:true});
         controller.signal.throwIfAborted();
         const provider=options?.provider??config.provider;
+        if(config.diagnosticInputRoot)diagnostic.inputCapture=await inputCapture.capture(id,request,provider?.apiKey);
         if(provider)relay=await createNativeDshRelay({provider,request,signal:controller.signal});
         controller.signal.throwIfAborted();
         const result=await runner!.run({work,home,task,model:String(request.model),provider:relay?.provider,signal:controller.signal,onDiagnostic(event){
