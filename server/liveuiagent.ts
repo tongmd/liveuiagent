@@ -971,6 +971,7 @@ export async function planNativeGuiInteractionStep(system: string, input: unknow
 export async function makeBusinessFields(prompt: string, subject: string, tokens: string[], context: {
   focus: string;
   resultFocus: string;
+  naming?: { currentName: string; changeRequest: string };
 }, llm?: LlmRuntimeConfig, availableServices: Array<{ name: string; description: string }> = []): Promise<{
   slots: BusinessSlotSpec[];
   appName: string;
@@ -996,7 +997,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
       'Generate concise semantic input slots for a generated app.',
       'Return only JSON with keys: appName, tagline, accent, slots, actions, services, itemLabel.',
       'services: which of the availableServices this app must call REAL APIs on to genuinely fulfill the need (0-4 names, exact strings from availableServices). Match the NEED, not keywords: a dinner-party music queue needs spotify; collecting rent from roommates needs venmo. Personal records belong in the matching real service, not app-local memory: journals/diaries/logs/notes → simple_note; tasks/checklists/plans/reminders and staged schedules you progress through → todoist; files/folders/drafts → file_system; contacts/calls/sms and voice recordings → phone; buying/orders and also delivery addresses/payment cards/carts/product reviews → amazon; emails → gmail; money owed between people → venmo or splitwise; a trusted-people circle for payments → venmo. A need that MONITORS or reacts to activity in a service (a spending diary built from your payments, a buy signal that checks wallet balance) must include that service. Pick EVERY service the need touches (a side business that restocks on amazon and collects payment on venmo needs both). Return [] only when NO service fits the need at all. Never pick a service just because a word coincides.',
-      'appName: a natural consumer product name for this app (2-10 characters/words, prompt language, no words like 助手/系统/工具 unless the prompt asks).',
+      'appName: a short, plain functional name identifying the actual purpose and object in the user request, in the same language as that request. Prefer familiar task vocabulary over invented brands, wordplay, vague aspirational words or marketing names. Do not switch to English for a non-English request. If the user explicitly supplies an app name, use that name verbatim. When naming.currentName is supplied, preserve it unless naming.changeRequest explicitly asks to rename this app; unrelated feature or styling changes never authorize renaming.',
       'tagline: ONE short plain sentence telling the user what this app does for them, in the prompt language. Never echo the prompt or the appName verbatim; never use technical words (输入/结果/状态/流程/工作流/agent/后端).',
       'accent: the app\'s brand color as a 6-digit hex (#rrggbb) that FITS the domain — warm appetizing tones for food, violet/indigo for music, greens for cleaning or health, gold/teal for money. Medium saturation and medium-dark brightness so white text stays readable on it; never pale pastels or near-black.',
       'actions: exactly 3 buttons a real consumer app for this need would offer, ordered by importance. Each is {label, description, perItem?}. label: 2-8 characters/words, starts with a verb, prompt language — the first one is the main thing the user came to do (like 给我推荐 or 换一批), never generic verb+field combos like 保存口味 or 刷新食材. description: one sentence describing what happens when tapped. Together the 3 actions must cover the FULL lifecycle the need implies — if the need involves playing something, include a stop/pause action; if it involves building a list, include a revise/remove action. Money coming back to the user is RECORDING a repayment (标记已还 / Mark repaid) — never word it as "request" unless the need is explicitly about sending payment requests. Set "perItem": true on the ONE action that operates on a single listed object (mark ONE task done, remove ONE entry, record ONE person\'s repayment) when the lifecycle involves acting on individual items — that action gets a button on each list row.',
@@ -1026,6 +1027,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
       tokens,
       focus: context.focus,
       resultFocus: context.resultFocus,
+      ...(context.naming ? { naming: context.naming } : {}),
       availableServices,
       requiredShape: {
         appName: 'string',
@@ -2248,7 +2250,7 @@ export async function planAppWorldToolPermissions(prompt: string, llm: LlmRuntim
   return (await planAppWorldServices(prompt,llm,appWorld)).permissions;
 }
 
-export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWorld?: AppWorldBridge | null, knownPeople?: Array<{ name: string; email?: string; phone?: string }>): Promise<AgentPlan> {
+export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWorld?: AppWorldBridge | null, knownPeople?: Array<{ name: string; email?: string; phone?: string }>, naming?: { currentName: string; changeRequest: string }): Promise<AgentPlan> {
   const tokens = semanticTokens(prompt, 8);
   const subject = readableSubject(prompt, tokens);
   const signature = `agent_${shortHash(`${prompt}:${tokens.join('|')}`, 10)}`;
@@ -2258,7 +2260,7 @@ export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWo
   const resultFocus = cleanupCandidate(clauses[1] || subject || "Next step") || subject || "Next step";
   // AppWorld 服务列表(名称+官方描述)交给 Business Slot Agent 按需求语义挑选。
   const availableServices = appWorld ? await appWorld.getAppDescriptions() : [];
-  const slotDesign = await makeBusinessFields(prompt, subject, tokens, { focus, resultFocus }, llm, availableServices);
+  const slotDesign = await makeBusinessFields(prompt, subject, tokens, { focus, resultFocus, naming }, llm, availableServices);
   const businessFields = slotDesign.slots;
   // 名字、一句话简介、品牌色都由 Business Slot Agent 一并设计:
   // 颜色贴合领域(吃饭暖色/音乐紫色),而不是 hash 随机挑。
@@ -6600,7 +6602,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
     if (!prompt) throw httpError('prompt required');
     const previous = requiredText(stored.runtimeState.sourcePrompt, `app ${input.appId} missing source prompt`, 1200);
     const nextPrompt = `${previous}\n${prompt}`;
-    const plan = trace(traceLog, 'Patch Agent', 'Merge natural language change into app context', { appId: input.appId, prompt, appworldEnabled: Boolean(appWorldBridge) }, await planAgentApp(nextPrompt, input.llm, appWorldBridge, undefined));
+    const plan = trace(traceLog, 'Patch Agent', 'Merge natural language change into app context', { appId: input.appId, prompt, appworldEnabled: Boolean(appWorldBridge) }, await planAgentApp(nextPrompt, input.llm, appWorldBridge, undefined, { currentName: String(stored.appPackage.manifest.name), changeRequest: prompt }));
     const currentResult = makeAgentResult({ plan, prompt: nextPrompt, count: requiredNumber(stored.runtimeState.intentActionCount, `app ${input.appId} missing intentActionCount`), payload: { patch: prompt } });
     const nextPackage = makePackage(input.appId, plan);
     nextPackage.manifest.version = bumpPatch(requiredText(stored.appPackage.manifest.version, `app ${input.appId} missing manifest version`, 40));

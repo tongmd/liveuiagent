@@ -33,6 +33,7 @@ window.liveuiagent.download(filename, content, mimeType) downloads an export. St
 Use plain JavaScript and local state for deterministic operations; only call AI for genuine AI tasks.
 
 METADATA
+Use a short, plain functional name that identifies the actual purpose and object, in the same language as the user request. Prefer familiar task vocabulary over invented brands, wordplay, vague aspirational words or marketing names. Do not switch to English for a non-English request. If the user explicitly supplies an app name, use it verbatim. When revising an existing app, preserve its existing name unless the current user request explicitly asks to rename it; feature or styling changes do not authorize renaming.
 app.json: {"name":"short app name","description":"one useful sentence","accent":"#hexcolor",
 "features":["implemented function",...],"checks":["checks you actually ran",...]}.
 Before finishing, extract inline scripts and run node --check; repair syntax errors. Run one focused
