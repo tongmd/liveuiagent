@@ -275,14 +275,14 @@ export function evaluateRenderedGui(input: { appPackage: AppPackage; appId?: str
     && String((component.text as Record<string, unknown>).path || '') === '/draft/result');
   const semanticFieldCount = fieldLabels.filter((label) => !isGenericVisibleFieldLabel(label)).length;
   const noInternalCopy = visibleTexts.every((text) => !isInternalStateText(text));
-  const noOvercrowded = metrics.textFieldCount <= 6 && metrics.buttonCount <= 4 && metrics.visibleTextLength <= 2600;
+  const noOvercrowded = metrics.textFieldCount <= 6 && metrics.buttonCount <= 6 && metrics.visibleTextLength <= 2600;
   const noOversizedPrimaryText = metrics.maxHighEmphasisTextLength <= 48;
   const fieldLabelsAreReadable = metrics.maxFieldLabelLength <= 18 && fieldLabels.every((label) => !isGenericVisibleFieldLabel(label));
   const actionLabelsAreReadable = metrics.maxButtonTextLength <= 18 && buttonTexts.every((text) => text.length > 0);
   const checks = {
     hasPrimaryInput: allTextFields.length > 0,
     hasPrimaryAction: allButtons.length > 0,
-    hasContentAction: allButtons.length > 1,
+    hasContentAction: actionBoundButtons.length === allButtons.length && allButtons.length > 0,
     hasVisiblePreviewAction: defaultIds.some((id) => allButtons.some((button) => button.id === id)),
     hasInputNearTop: firstFieldIndex >= 0 && firstFieldIndex < 12,
     noWorkbenchCopy: noInternalCopy,
@@ -290,7 +290,7 @@ export function evaluateRenderedGui(input: { appPackage: AppPackage; appId?: str
     everyPageHasInteractionLogic: actionBoundButtons.length === allButtons.length && allButtons.length > 0,
     hasA2uiSurface: true,
     hasResultBlock,
-    hasSemanticInputSlots: semanticFieldCount >= 3,
+    hasSemanticInputSlots: semanticFieldCount>=1 && semanticFieldCount<=6 && semanticFieldCount === allTextFields.length,
     everyButtonRoutesToAction: actionBoundButtons.length === allButtons.length && allButtons.length > 0,
     everyButtonHasContext: contextBoundButtons.length === allButtons.length && allButtons.length > 0,
     defaultRenderHasUsableFlow: firstFieldIndex >= 0 && firstButtonIndex > firstFieldIndex && hasResultBlock,
@@ -310,7 +310,7 @@ export function evaluateRenderedGui(input: { appPackage: AppPackage; appId?: str
   addFinding(checks.hasPrimaryInput, 'Rendered GUI has no editable input slot.', true);
   addFinding(checks.hasPrimaryAction, 'Rendered GUI has no visible action button.', true);
   addFinding(checks.hasResultBlock, 'Rendered GUI has no visible result block.', true);
-  addFinding(checks.hasSemanticInputSlots, 'Rendered GUI exposes fewer than three semantic input slots.', true);
+  addFinding(checks.hasSemanticInputSlots, 'Rendered GUI must expose 1-6 semantic input slots.', true);
   addFinding(checks.everyButtonRoutesToAction, 'One or more visible buttons do not route to a package action.', true);
   addFinding(checks.everyButtonHasContext, 'One or more visible buttons do not carry action context.', true);
   addFinding(checks.defaultRenderHasUsableFlow, 'Default render does not present input before action with visible result feedback.', true);

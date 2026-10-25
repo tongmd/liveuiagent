@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {planAgentApp} from '../server/liveuiagent.js';
 import {actionDeadlineError} from '../server/action-deadline.js';
 
-const slots={appName:'Shelves',tagline:'Track your reading',accent:'#426b57',slots:[{label:'Book title',type:'string'},{label:'Reading shelf',type:'string'},{label:'Finish date',type:'date'}],actions:[{label:'Move book',description:'Move a book between shelves'},{label:'Finish book',description:'Finish a book with verdict'},{label:'Remove book',description:'Remove a book from a shelf'}],services:[],itemLabel:'Book',glyph:'📚',metric:'',metricLabel:'Books',collection:'Shelves',tileTagline:'Your reading shelves',actionVerb:'Open'};
+const slots={appName:'Shelves',tagline:'Track your reading',accent:'#426b57',slots:[{label:'Book title',type:'string',required:false},{label:'Reading shelf',type:'string',required:false},{label:'Finish date',type:'date',required:false}],actions:[{label:'Move book',description:'Move a book between shelves'},{label:'Finish book',description:'Finish a book with verdict'},{label:'Remove book',description:'Remove a book from a shelf'}],services:[],itemLabel:'Book',glyph:'📚',metric:'',metricLabel:'Books',collection:'Shelves',tileTagline:'Your reading shelves',actionVerb:'Open'};
 async function failPlanning(error:Error) {
  let orchestratorCalls=0;
  const llm={model:'fixture',chatCompletion:async(request:any)=>{

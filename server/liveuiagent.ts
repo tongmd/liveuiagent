@@ -1010,17 +1010,17 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
       'appName: a short, plain functional name identifying the actual purpose and object in the user request, in the same language as that request. Prefer familiar task vocabulary over invented brands, wordplay, vague aspirational words or marketing names. Do not switch to English for a non-English request. If the user explicitly supplies an app name, use that name verbatim. When naming.currentName is supplied, preserve it unless naming.changeRequest explicitly asks to rename this app; unrelated feature or styling changes never authorize renaming.',
       'tagline: ONE short plain sentence telling the user what this app does for them, in the prompt language. Never echo the prompt or the appName verbatim; never use technical words (输入/结果/状态/流程/工作流/agent/后端).',
       'accent: the app\'s brand color as a 6-digit hex (#rrggbb) that FITS the domain — warm appetizing tones for food, violet/indigo for music, greens for cleaning or health, gold/teal for money. Medium saturation and medium-dark brightness so white text stays readable on it; never pale pastels or near-black.',
-      'actions: exactly 3 buttons a real consumer app for this need would offer, ordered by importance. Each is {label, description, perItem?}. label: 2-8 characters/words, starts with a verb, prompt language — the first one is the main thing the user came to do (like 给我推荐 or 换一批), never generic verb+field combos like 保存口味 or 刷新食材. description: one sentence describing what happens when tapped. Together the 3 actions must cover the FULL lifecycle the need implies — if the need involves playing something, include a stop/pause action; if it involves building a list, include a revise/remove action. Money coming back to the user is RECORDING a repayment (标记已还 / Mark repaid) — never word it as "request" unless the need is explicitly about sending payment requests. Set "perItem": true on the ONE action that operates on a single listed object (mark ONE task done, remove ONE entry, record ONE person\'s repayment) when the lifecycle involves acting on individual items — that action gets a button on each list row.',
+      'actions: between 1 and 4 buttons a real consumer app for this need would offer, ordered by importance. Each is {label, description, perItem?}. label: 2-8 characters/words, starts with a verb, prompt language — the first one is the main thing the user came to do (like 给我推荐 or 换一批), never generic verb+field combos like 保存口味 or 刷新食材. description: one sentence describing what happens when tapped. Together the declared actions must cover the FULL lifecycle the need implies — if the need involves playing something, include a stop/pause action; if it involves building a list, include a revise/remove action. Money coming back to the user is RECORDING a repayment (标记已还 / Mark repaid) — never word it as "request" unless the need is explicitly about sending payment requests. Set "perItem": true on the ONE action that operates on a single listed object (mark ONE task done, remove ONE entry, record ONE person\'s repayment) when the lifecycle involves acting on individual items — that action gets a button on each list row.',
       'ACTION AFFORDANCES: derive only operations required by the original need. When that need requires both new objects and changing existing values, make the existing-object update explicit in an action label and description, or clearly label a shared create/update action and describe its target-selection semantics. Never assume Add silently updates an existing object. Monitoring/checking values does not save a new target. A conditional later operation needs its own clear existing action and target identity; do not invent extra functionality or broaden service permissions. The actual inputs and selected row must express new values, not only display old ones.',
       'Each slot must be a user-visible instruction slot for a persistent app workflow.',
       'TASK INPUT COVERAGE: derive slots from the user operations before preferences. For each requested create/add/edit operation, include how the user identifies the object and supplies each explicitly user-controlled business value (including values set separately for each object). Existing listed-row identity may supply the target of an item action, but never a new value the user must enter. A global default or rule cannot replace a per-object value. Do not infer that saved/existing items make their editable values unnecessary.',
-      'Allocate the 3-6 slots to core task inputs first; remove optional settings to make room. Monitoring, discovery and editing are different operations: settings for when/how to check do not provide a way to add or change an object. Cover the requested lifecycle with reachable inputs and actions, including an empty-list entry path where the user must create or add items. Do not turn every app into a generic Request field.',
+      'Allocate the 1-6 slots to core task inputs first; remove optional settings to make room. Monitoring, discovery and editing are different operations: settings for when/how to check do not provide a way to add or change an object. Cover the requested lifecycle with reachable inputs and actions, including an empty-list entry path where the user must create or add items. Do not turn every app into a generic Request field.',
       'Mark required only the inputs needed to perform a requested business operation; optional preferences and settings must remain optional. Order object identity and core editable values before optional preferences. If a row action already carries the existing object identity, do not add a redundant required identity slot just to repeat that selection.',
-      'If the prompt is terse (e.g. "每天吃什么"), expand the use case yourself like a product designer: design the 3-6 inputs a daily-use consumer app for that need would ask for (preferences, constraints, context, adjustments). hintLabels are optional hints, not requirements.',
+      'If the prompt is terse (e.g. "每天吃什么"), expand the use case yourself like a product designer: design only the 1-6 inputs actually needed a daily-use consumer app for that need would ask for (preferences, constraints, context, adjustments). hintLabels are optional hints, not requirements.',
       'Do not return generic labels such as prompt, context, state, nextStep, result, input, output, feedback, or notes.',
       'Do not mention internal workflow fields.',
       'Prefer the actual user task vocabulary from the prompt, in the same language as the prompt.',
-      'Return between 3 and 6 slots.',
+      'Return between 1 and 6 slots based on actual task needs; do not pad with preferences to meet a quota.',
       'Every slot with type "select" must carry its own non-empty options array of {label, value} objects, with 2 to 5 mutually exclusive choices drawn from the user task vocabulary; label is in the prompt language and value is a lowercase ascii slug. A select slot without options is rejected.',
       'If a slot has no natural closed choice set, use type "string" or "text" instead of "select".',
       'itemLabel: the short singular noun for ONE row this app would list or fetch from a real service (e.g. "Mac 型号", "vacuum", "flight", "song") — used as a gallery-widget label. Empty string only if this app has no listable real-world items (a pure settings/status app).',
@@ -1068,6 +1068,8 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
     }
   }
   const rawSlots = Array.isArray(response.slots) ? response.slots : [];
+  if(rawSlots.length<1||rawSlots.length>6)throw new Error('Business Slot Agent must return 1-6 slots');
+  if(!Array.isArray(response.actions)||response.actions.length<1||response.actions.length>4)throw new Error('Business Slot Agent must return 1-4 actions');
   const normalized = rawSlots.map((slot: Record<string, unknown>, index: number) => {
     const label = compactLabel(requiredText(slot?.label ?? hintLabels[index], `business slot ${index + 1} missing label`, 24), 16);
     if (isGenericVisibleFieldLabel(label)) throw new Error(`Business Slot Agent returned generic label: ${label}`);
@@ -1075,23 +1077,24 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
       ? slot.type
       : fieldTypeFromLabel(label, prompt);
     const options = type === 'select' ? sanitizeSlotOptions(slot?.options, label) : undefined;
+    if(typeof slot?.required!=='boolean')throw new Error(`business slot ${index+1} required must be boolean`);
     return {
       name: fieldNameFromLabel(label, index),
       label,
       type,
-      required: Boolean(index === 0 || slot?.required),
+      required: slot.required,
       placeholder: typeof slot?.placeholder === 'string' ? compactText(slot.placeholder, 60) : (type === 'select' ? undefined : `Enter ${label}`),
       helpText: typeof slot?.helpText === 'string' ? compactText(slot.helpText, 90) : `Save as an editable field for ${subject}.`,
       ...(options ? { options } : {}),
     } satisfies BusinessSlotSpec;
   }).filter((slot: BusinessSlotSpec, index: number, list: BusinessSlotSpec[]) => list.findIndex((candidate: BusinessSlotSpec) => candidate.name === slot.name) === index);
-  if (normalized.length < 3) throw new Error(`Business Slot Agent must return at least 3 slots for ${subject}`);
-  const actions = (Array.isArray(response.actions) ? response.actions : []).slice(0, 3).map((item: Record<string, unknown>, index: number) => ({
+  if (normalized.length < 1) throw new Error(`Business Slot Agent must return at least 1 slot for ${subject}`);
+  const actions = response.actions.map((item: Record<string, unknown>, index: number) => ({
     label: compactLabel(requiredText(item?.label, `Business Slot Agent action ${index + 1} missing label`, 24), 14),
     description: compactText(requiredText(item?.description, `Business Slot Agent action ${index + 1} missing description`, 220), 90),
     perItem: item?.perItem === true,
   }));
-  if (actions.length < 3) throw new Error(`Business Slot Agent must return 3 actions for ${subject}`);
+
   const accent = String(response.accent ?? '').trim().toLowerCase();
   if (!/^#[0-9a-f]{6}$/.test(accent)) throw new Error(`Business Slot Agent returned invalid accent: ${accent || '(empty)'}`);
   // 域选择是 agent 决策(按需求语义),严格校验:未知服务名直接失败,无关键词兜底。
@@ -2120,49 +2123,9 @@ function makeProposal(input: {
   };
 }
 
-function makeFunctions(drafts: Array<{ verb: string; target: string; label: string; description: string; perItem?: boolean }>, signature: string): AgentFunction[] {
-  const schedulerClass: AgentFunction['schedulerClass'][] = ['reasoning', 'balanced', 'balanced'];
-  return [
-    {
-      id: 'agent_turn_1',
-      label: drafts[0].label,
-      verb: drafts[0].verb,
-      target: drafts[0].target,
-      capability: `agent.app.turn.${signature}.1`,
-      description: drafts[0].description,
-      entryAgent: 'agents.orchestrator',
-      agentChain: [],
-      handoffs: [],
-      schedulerClass: schedulerClass[0],
-      ...(drafts[0].perItem ? { perItem: true } : {}),
-    },
-    {
-      id: 'agent_turn_2',
-      label: drafts[1].label,
-      verb: drafts[1].verb,
-      target: drafts[1].target,
-      capability: `agent.app.turn.${signature}.2`,
-      description: drafts[1].description,
-      entryAgent: 'agents.orchestrator',
-      agentChain: [],
-      handoffs: [],
-      schedulerClass: schedulerClass[1],
-      ...(drafts[1].perItem ? { perItem: true } : {}),
-    },
-    {
-      id: 'agent_turn_3',
-      label: drafts[2].label,
-      verb: drafts[2].verb,
-      target: drafts[2].target,
-      capability: `agent.app.turn.${signature}.3`,
-      description: drafts[2].description,
-      entryAgent: 'agents.orchestrator',
-      agentChain: [],
-      handoffs: [],
-      schedulerClass: schedulerClass[2],
-      ...(drafts[2].perItem ? { perItem: true } : {}),
-    },
-  ];
+export function makeFunctions(drafts: Array<{ verb: string; target: string; label: string; description: string; perItem?: boolean }>, signature: string): AgentFunction[] {
+ if(drafts.length<1||drafts.length>4)throw new Error('Native functions require 1-4 declared actions');
+ return drafts.map((draft,index)=>({id:`agent_turn_${index+1}`,label:draft.label,verb:draft.verb,target:draft.target,capability:`agent.app.turn.${signature}.${index+1}`,description:draft.description,entryAgent:'agents.orchestrator',agentChain:[],handoffs:[],schedulerClass:index===0?'reasoning':'balanced',...(draft.perItem?{perItem:true}:{})}));
 }
 
 function wireFunctionsWithOrchestration(functions: AgentFunction[], orchestration: AgentOrchestrationPlan): AgentFunction[] {
@@ -2292,8 +2255,10 @@ export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWo
     compactLabel(businessFields[3]?.label || resultFocus || "Next step", 6),
   ];
   // 按钮文案同样由 agent 设计:动词+槽位名的公式化标签(保存口味/刷新食材)不像真实应用。
-  const actionDrafts = deriveActionDrafts(prompt, subject, tokens, businessFields).map((draft, index) => ({
-    ...draft,
+  const legacyDrafts = deriveActionDrafts(prompt, subject, tokens, businessFields);
+  const actionDrafts = slotDesign.actions.map((action, index) => ({
+    verb: legacyDrafts[index]?.verb || action.label,
+    target: legacyDrafts[index]?.target || businessFields[0].label,
     label: slotDesign.actions[index].label,
     description: slotDesign.actions[index].description,
     ...(slotDesign.actions[index].perItem ? { perItem: true } : {}),
@@ -3348,9 +3313,6 @@ export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ na
   // composer 至少一个顶层按钮:行内按钮在实体为空时不可达,不能是动作的唯一入口。
   for (const slot of rowContextSlots) if (!boundSlots.has(slot)) return reject(`row action slot "${slot}" needs its editable composer TextField`);
   if (!fieldCount) return reject('missing at least one TextField input');
-  // 与 QA 门(validateA2uiSurfaceQuality ≥3 语义槽位)同一条线:设计器只放 1-2 个
-  // 输入位会在生成后段被 QA 抛死且不进重试环 —— 在这里拦下并给精确拒因。
-  if (fieldCount < Math.min(3, slotSet.size)) return reject(`only ${fieldCount} input(s) designed — expose at least ${Math.min(3, slotSet.size)} of the ${slotSet.size} business slots, each with the variant its type requires`);
   if (opts.requireWidgets) {
     const missing = opts.slots.filter((slot) => !boundSlots.has(slot.name)).map((slot) => slot.name);
     if (missing.length) return reject(`missing editable composer input(s) for declared business slots: ${missing.join(', ')}; labels or result text do not substitute for inputs`);
@@ -3397,8 +3359,8 @@ function makeA2uiSurface(plan: A2uiPlan, actionIds: string[], currentState: Retu
   const workflowId = 'workflow_tab';
   const rightRailId = 'right_rail';
   const buttonsRowId = 'action_buttons_row';
-  const businessFields = plan.interaction.businessFields.slice(0, 6);
-  if (businessFields.length < 3) throw new Error(`A2UI plan ${plan.signature} missing semantic business fields`);
+  const businessFields = plan.interaction.businessFields;
+  if (businessFields.length < 1 || businessFields.length > 6) throw new Error(`A2UI plan ${plan.signature} missing semantic business fields`);
   const businessFieldComponentIds = businessFields.map((field) => `slot_${field.name}`);
   const primaryField = plan.interaction.primaryFieldName;
   const secondaryField = plan.interaction.secondaryFieldName;
@@ -3987,8 +3949,7 @@ function makeSectionComponent(args: {
 }): UiComponent {
   const { section, plan, result, interaction, actionButtons, detailItems } = args;
   const primaryActionId = plan.functions[0].id;
-  const secondaryActionId = plan.functions[1].id;
-  const tertiaryActionId = plan.functions[2].id;
+  const secondaryActionId = plan.functions[1]?.id;
   if (section.role === 'identity') {
     return {
       id: section.id,
@@ -4038,7 +3999,7 @@ function makeSectionComponent(args: {
         submitLabel: plan.functions[0].label,
         fieldGroups: [...interaction.fieldGroups],
         progressFields: [interaction.primaryFieldName, interaction.secondaryFieldName],
-        requiredFields: [interaction.primaryFieldName],
+        requiredFields: interaction.businessFields.filter(field=>field.required===true).map(field=>field.name),
         showProgress: false,
         showFieldHelp: true,
         showGroupDescriptions: false,
@@ -4102,7 +4063,7 @@ function makeSectionComponent(args: {
         },
       },
       events: {
-        onUpdate: `actions.${secondaryActionId}.run`,
+        ...(secondaryActionId?{onUpdate: `actions.${secondaryActionId}.run`}:{}),
       },
     };
   }
@@ -4696,8 +4657,8 @@ function validateA2uiSurfaceQuality(surface: A2UISurfaceSpec) {
   }
   const textFields = components.filter((component) => component.component === 'TextField');
   const visibleTextFields = textFields.filter((component) => !isGenericVisibleFieldLabel(String(component.label || '')));
-  if (visibleTextFields.length < 3) {
-    throw new Error(`A2UI surface ${surface.surfaceId} must expose at least three semantic business input slots`);
+  if (visibleTextFields.length < 1 || visibleTextFields.length > 6) {
+    throw new Error(`A2UI surface ${surface.surfaceId} must expose 1-6 semantic business input slots`);
   }
   for (const component of components) {
     if (component.component === 'TextField') {
