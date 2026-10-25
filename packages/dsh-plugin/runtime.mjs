@@ -127,6 +127,7 @@ async function pump() {
   } finally { pumping = false; }
 }
 async function invokeDsh(a, job, work, home, task, provider, budget = JOB_TIMEOUT) {
+  if (closed || job.status === 'cancelled') throw new Error('Task cancelled');
   job.timedOut = false;
   const controller = new AbortController();
   running.set(job.id, controller);
@@ -192,6 +193,7 @@ async function execute({ a, job, context, provider }) {
       if (job.status === 'cancelled') return;
       job.phase = 'validate'; job.stage = '校验应用文件与脚本'; await save(a);
       let delivery = await validateDelivery(work);
+      if (closed || job.status === 'cancelled') return;
       if (!delivery.ok) {
         job.phase = 'repair'; job.stage = '修复交付文件'; job.repairAttempts = 1; await save(a);
         const repairTask = task + '\n\nDELIVERY REPAIR ONLY (one attempt, 120 seconds). Existing files are the current draft. Do not redesign or research. Fix these host validation errors: ' + JSON.stringify(delivery.errors) + '. Write app.json first if missing, accurately describing only implemented features. Fix inline JavaScript syntax and preserve the user request and stored data. Finish immediately after writing the corrected files.';
