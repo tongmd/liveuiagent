@@ -41,7 +41,9 @@ test('host completed actions survive store recreation, keep actual results, and 
   const grounded:any={calls:[],goal:{objective:'Read records'},attempts:[],evaluation:{pass:true,deficiencies:[]},summary:'Observed note',entities:[{name:'Book'}],stats:[]};
   const job=createHostActionStore(db).save('alice','dsh_app',grounded,'chosen-model');
   assert.equal(job.status,'done');assert.equal(job.execution.actionRuntime,'host-appworld');
-  assert.equal(job.result.text,'Observed note');
+  assert.equal(job.result.text,'Observed note');assert.equal(job.result.ok,true);assert.equal(job.result.status,'succeeded');
+  const rejected=createHostActionStore(db).save('alice','dsh_app',{...grounded,evaluation:{pass:false,deficiencies:['Read-back absent']}},'chosen-model');
+  assert.equal(rejected.status,'done');assert.equal(rejected.result.ok,false);assert.equal(rejected.result.status,'not_verified');assert.equal(rejected.result.error,'Read-back absent');assert.deepEqual(rejected.result.data.entities,grounded.entities);assert.equal(rejected.evidence.trace[0].status,'rejected');
   assert.deepEqual(createHostActionStore(db).load('alice',job.id),job);
   assert.equal(createHostActionStore(db).load('bob',job.id),undefined);
  }finally{db.close();}

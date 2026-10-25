@@ -24,9 +24,11 @@ export function createHostActionStore(db: Database.Database) {
   return {
     save(owner:string,appId:string,grounded:NonNullable<Awaited<ReturnType<typeof runAppWorldGrounding>>>,model:string) {
       const createdAt=new Date().toISOString();
+      const ok=grounded.evaluation?.pass===true;
+      const failure=ok?undefined:(grounded.evaluation?.deficiencies?.filter(Boolean).join('; ')||'The independent review did not verify the requested outcome');
       const job={id:'host_'+randomUUID(),appId,status:'done',createdAt,finishedAt:createdAt,
         execution:{harness:'dsh',actionRuntime:'host-appworld',model},
-        result:{text:grounded.summary,data:{entities:grounded.entities,stats:grounded.stats,evaluation:grounded.evaluation}},
+        result:{ok,status:ok?'succeeded':'not_verified',...(failure?{error:failure,code:'appworld_goal_not_verified'}:{}),text:ok?grounded.summary:'Operation not verified: '+failure+'. '+grounded.summary,data:{entities:grounded.entities,stats:grounded.stats,evaluation:grounded.evaluation}},
         evidence:dshToolEvidence(appId,grounded)};
       db.prepare('INSERT INTO complete_host_actions VALUES (?,?,?,?,?)').run(owner,job.id,appId,JSON.stringify(job),createdAt);
       return job;
@@ -55,7 +57,7 @@ export function dshGroundingPayload(request: string, context: unknown, eventPayl
 
 export function dshServiceContext(services: Array<{name:string;description:string}>) {
   return {connectedServices:services.map(({name,description})=>({name,description})),
-    serviceExecutionContract:'For functionality involving a connected service, use await window.liveuiagent.ai(prompt, context) from the relevant user action and render its returned text/data. This host bridge executes real service APIs. Pass the complete user inputs and intended operation in prompt/context. Browser storage may keep UI preferences or caches; it must not pretend to read or mutate external service records. Do not hardcode sample results or claim success before the host call completes. Show host errors honestly.'};
+    serviceExecutionContract:'For functionality involving a connected service, use await window.liveuiagent.ai(prompt, context) from the relevant user action and render its returned text/data. Check response.ok: only response.ok === true confirms a verified service outcome; false or missing ok must never become a success message. Display response.error/status when not verified and retain observed data without automatically retrying mutations. This host bridge executes real service APIs. Pass the complete user inputs and intended operation in prompt/context. Browser storage may keep UI preferences or caches; it must not pretend to read or mutate external service records. Do not hardcode sample results or claim success before the host call completes. Show host errors honestly.'};
 }
 
 // This trace describes the actual native requirement/execute/review workflow,
