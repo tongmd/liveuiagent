@@ -8,6 +8,7 @@ import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import { createEvaluatorArtifacts } from './evaluator-artifacts.js';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
@@ -51,6 +52,12 @@ const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
+app.get('/agent/identity', (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const owner = requestUser(req);
+  if (!owner) return res.status(401).json({error:'An authenticated owner is required for persisted drafts'});
+  return res.json({ownerScope:createHash('sha256').update('liveui-native-draft-v1\0'+owner).digest('hex')});
+});
 app.get('/health',(_req,res)=>res.json({status:'ok',service:'liveuiagent',...(process.env.LIVEUIBENCH_RUN_ID?{benchmarkRunId:process.env.LIVEUIBENCH_RUN_ID}:{})}));
 const evaluatorArtifacts=createEvaluatorArtifacts(process.env.LIVEUI_EVALUATION_DIR || path.join(path.dirname(dbPath),'evaluations'),requestUser);
 evaluatorArtifacts.install(app);
