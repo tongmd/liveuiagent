@@ -13,7 +13,7 @@ const input=()=>({appId:'owned',harness:'dsh',model:'fixture-selected',userMessa
 function bindFixture(proposal:any,context:any){
  if(!Array.isArray(proposal?.fields)||!proposal.action)return proposal;
  const selected=context.snapshot.buttons.find((b:any)=>b.target===proposal.action.target);
- return {...proposal,operation:{quote:context.userMessage,...(proposal.action.kind==='click'?{target:proposal.action.target,...(selected?.contextText?{rowContextQuote:selected.contextText}:{})}:{})},fields:proposal.fields.map((d:any)=>({...d,binding:d.decision==='set'?'current':'unspecified'}))};
+ return {...proposal,operation:{quote:context.userMessage,...(proposal.action.kind==='click'?{...(selected?.contextText?{rowContextQuote:selected.contextText}:{})}:{})},fields:proposal.fields.map((d:any)=>({...d,binding:d.decision==='set'?'current':'unspecified'}))};
 }
 function resolveFixturePreparation(proposal:any,context:any){return resolveControlPreparation(bindFixture(proposal,context),context);}
 async function setup(t:any,overrides:any={}){
