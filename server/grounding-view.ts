@@ -8,14 +8,15 @@ export type GroundingViewContext = {
   viewResourceBudget?: ReturnType<typeof nativeViewBudget>;
   perItemActions: Array<{ id: string; label: string }>;
 };
-export function groundingViewContext(pkg: any): GroundingViewContext | undefined {
+export function groundingViewContext(pkg: any, options?: {compiledNativeBudget: true}): GroundingViewContext | undefined {
   const intent = pkg?.manifest?.intent;
   const itemLabel = typeof intent?.itemLabel === 'string' ? intent.itemLabel.trim() : '';
   const primaryMembership=intent?.primaryMembership===undefined?undefined:parsePrimaryMembership(intent.primaryMembership);
   if (!itemLabel && primaryMembership===undefined) return undefined;
   const collectionLabel = typeof intent?.presentation?.collection === 'string' ? intent.presentation.collection.trim() : '';
   const surface=pkg?.ui?.meta?.a2ui;
-  const viewResourceBudget=surface?nativeViewBudget(surface,pkg.ui.meta.hostCommand):undefined;
+  // Host opt-in only: legacy/emitted graphs are not this compiled-view budget contract.
+  const viewResourceBudget=options?.compiledNativeBudget===true&&surface?nativeViewBudget(surface,pkg.ui.meta.hostCommand):undefined;
   return {itemLabel,...(viewResourceBudget?{viewResourceBudget}:{}),...(primaryMembership ? {primaryMembership} : {}),...(collectionLabel ? {collectionLabel} : {}),perItemActions:Object.entries(pkg?.actions?.actions ?? {})
     .filter(([, action]: [string, any]) => action?.perItem === true)
     .map(([id, action]: [string, any]) => ({id,label:String(action.label || id)}))};

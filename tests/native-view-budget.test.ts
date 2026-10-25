@@ -1,3 +1,4 @@
+import {groundingViewContext} from '../server/grounding-view.js';
 import {hostCommandComponents} from '../server/native-host-command.js';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {nativeViewBudget} from '../server/native-view-budget.js';
@@ -21,4 +22,15 @@ test('unknown graph, dangling or cyclic bindings, malformed host descriptor fail
 test('UTF8 encoded view has its own bound even when controls and visible label text fit',()=>{
  const f=viewFixture(1);const nodes=f.surface.messages[0].updateComponents.components;for(const node of nodes)if(node.component==='TextField'&&!String(node.id).startsWith('host_')){node.variant='choice';node.options=Array.from({length:300},()=>({label:'Choice',value:'界'.repeat(1000)}));}
  assert.throws(()=>nativeViewBudget(f.surface,f.descriptor),/encoding/);assert.equal(f.surface.initialData.entities.length,1);
+});
+
+test('budget metadata requires explicit compiled Native host opt-in; unknown legacy graphs are not silently validated',()=>{
+ const f=viewFixture(25);const pkg:any={manifest:{intent:{itemLabel:'Entry'}},actions:{actions:{}},ui:{meta:{a2ui:f.surface,hostCommand:f.descriptor}}};
+ assert.equal(groundingViewContext(pkg)?.viewResourceBudget,undefined);
+ assert.equal(groundingViewContext(pkg,{compiledNativeBudget:true})?.viewResourceBudget?.rows,25);
+ pkg.ui.meta.a2ui.messages[0].updateComponents.components.find((n:any)=>n.id==='d_item_title').component='Tabs';
+ assert.equal(groundingViewContext(pkg)?.viewResourceBudget,undefined);
+ assert.throws(()=>groundingViewContext(pkg,{compiledNativeBudget:true}),/unknown/);
+ // Actual authoritative publication still invokes the same strict graph checker.
+ assert.throws(()=>nativeViewBudget(pkg.ui.meta.a2ui,f.descriptor),/unknown/);
 });

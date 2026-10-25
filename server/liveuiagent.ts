@@ -5402,6 +5402,10 @@ function enrichAppRecord(stored: StoredApp): StoredApp {
   return stored;
 }
 
+function hasCompiledNativeView(stored:StoredApp):boolean {
+  return stored.surfaceMode !== 'emitted' && Array.isArray((stored.appPackage.ui as any)?.meta?.designedOverview);
+}
+
 function projectionCapacityCheck(stored:StoredApp,turn?:{actionId:string;payload:Record<string,any>;isCommand:boolean}) {
   return (proposal:{entities:unknown[];stats:Array<{label:string;value:string}>;summary:string;appStateCalls:Array<Record<string,any>>}):string[]=>{
     try {
@@ -7076,8 +7080,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
               payload: {},
               appName: String(appPackage.manifest.name),
               appPurpose: plan.sourcePrompt,
-              viewContext: groundingViewContext(appPackage),
-              projectionCapacity:projectionCapacityCheck(stored),
+              viewContext: groundingViewContext(appPackage,hasCompiledNativeView(stored)?{compiledNativeBudget:true}:undefined),
+              projectionCapacity:hasCompiledNativeView(stored)?projectionCapacityCheck(stored):undefined,
               actionLabel: "First open",
               actionDescription: 'Read-only initial load: read the actual primary membership store according to primaryMembership. For app_local, list the authenticated owner/app records first; an empty local collection remains empty even when global discovery returns objects. For service_collection read actual collection membership; discovery is only explicitly requested browsing, never saved membership. Verify all collection stats against those members. Make NO write calls.',
               llm: input.llm,
@@ -7309,8 +7313,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             targetEntity,
             appName: String(stored.appPackage.manifest.name || input.appId),
             appPurpose: String(stored.appPackage.manifest.intent?.sourcePrompt || ''),
-            viewContext: groundingViewContext(stored.appPackage),
-            projectionCapacity:projectionCapacityCheck(stored,{actionId,payload:rawPayload,isCommand}),
+            viewContext: groundingViewContext(stored.appPackage,hasCompiledNativeView(stored)?{compiledNativeBudget:true}:undefined),
+            projectionCapacity:hasCompiledNativeView(stored)?projectionCapacityCheck(stored,{actionId,payload:rawPayload,isCommand}):undefined,
             priorProjection: { entities: Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : [], stats: Array.isArray(stored.runtimeState.entityStats) ? stored.runtimeState.entityStats : [] },
             actionLabel: String(action.label || ''),
             actionDescription: String(action.description || ''),
