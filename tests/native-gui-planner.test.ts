@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import http from 'node:http';
-import {createGuiInteractionPlanner,validateInteractionInput,validateInteractionStep,resolveControlPreparation} from '../server/gui-interaction-planner.js';
+import {createGuiInteractionPlanner,validateInteractionInput,validateInteractionStep,resolveControlPreparation,GUI_INTERACTION_SYSTEM} from '../server/gui-interaction-planner.js';
 import {planNativeGuiInteractionStep} from '../server/liveuiagent.js';
 import {withActionDeadline,remainingActionMs} from '../server/action-deadline.js';
 const view={visibleText:'Books',fields:[{target:'e1',label:'Book title',type:'text',value:'',required:true},{target:'e2',label:'Shelf',type:'select-one',value:'todo',options:[{label:'To read',value:'todo'},{label:'Finished',value:'done'}]},{target:'e3',label:'Finished',type:'checkbox',value:'on',checked:false}],buttons:[{target:'e4',label:'Add book',actionId:'record.add',contextText:'Piranesi — To read'}]};
@@ -80,4 +80,20 @@ test('preparation preserves optional keep and handles explicit clear, false, zer
  const context={userMessage:'Clear note and turn alerts off; set count to 0',snapshot:{visibleText:'Current count 0',fields:[{target:'e1',label:'Note',type:'text',value:'old'},{target:'e2',label:'Alerts',type:'switch',value:'true',checked:true},{target:'e3',label:'Count',type:'number',value:'0.0'},{target:'e4',label:'Optional',type:'text',value:'retain'}],buttons:[{target:'e5',label:'Save',actionId:'save'}]}};
  const p={fields:[{target:'e1',decision:'set',value:'',source:'user',quote:'Clear note'},{target:'e2',decision:'set',checked:false,source:'user',quote:'alerts off'},{target:'e3',decision:'set',value:'0',source:'user',quote:'0'},{target:'e4',decision:'keep'}],action:{kind:'click',target:'e5'}};
  assert.deepEqual(resolveControlPreparation(p,context),{kind:'fill',target:'e1',value:''});context.snapshot.fields[0].value='';assert.deepEqual(resolveControlPreparation(p,context),{kind:'check',target:'e2',checked:false});context.snapshot.fields[1].checked=false;assert.deepEqual(resolveControlPreparation(p,context),{kind:'click',target:'e5'});assert.equal(context.snapshot.fields[3].value,'retain');
+});
+
+test('sequential ordinary form policy preserves precise unsupported and no invented optional data boundaries',()=>{
+ assert.match(GUI_INTERACTION_SYSTEM,/multiple items does not by itself require a bulk or atomic action/);
+ assert.match(GUI_INTERACTION_SYSTEM,/observing each confirmed result/);
+ assert.match(GUI_INTERACTION_SYSTEM,/never repeat an already confirmed mutation/);
+ assert.match(GUI_INTERACTION_SYSTEM,/empty list lacks collection capability/);
+ assert.match(GUI_INTERACTION_SYSTEM,/explicitly required bulk or atomic operation cannot be replaced/);
+ assert.match(GUI_INTERACTION_SYSTEM,/Optional unspecified amount.date fields must remain unchanged/);
+ assert.match(GUI_INTERACTION_SYSTEM,/Never automatically resend a mutation whose outcome is unknown/);
+ const context={userMessage:'Create Alpha and Beta',snapshot:{visibleText:'Items empty',fields:[{target:'e1',label:'Name',type:'text',value:''},{target:'e2',label:'Optional amount',type:'number',value:'0'}],buttons:[{target:'e3',label:'Create',actionId:'create'}]}};
+ const p={fields:[{target:'e1',decision:'set',value:'Alpha',source:'user',quote:'Alpha'},{target:'e2',decision:'keep'}],action:{kind:'click',target:'e3'}};
+ assert.deepEqual(resolveControlPreparation(p,context),{kind:'fill',target:'e1',value:'Alpha'});
+ context.snapshot.fields[0].value='Alpha';assert.deepEqual(resolveControlPreparation(p,context),{kind:'click',target:'e3'});
+ assert.equal(context.snapshot.fields[1].value,'0');
+ assert.equal(resolveControlPreparation({...p,action:{kind:'unsupported',reason:'An atomic transaction is explicitly required but no atomic control exists'}},context).kind,'unsupported');
 });
