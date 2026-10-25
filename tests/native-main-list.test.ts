@@ -42,10 +42,9 @@ async function runtimeFixture(t:any){
 }
 
 test('actual runtime commits verified empty rows through reopen, but failed or omitted rows preserve prior data',async t=>{
- const f=await runtimeFixture(t);
  const malformed:any={malformed_blank:[{name:''}],malformed_null:[null],malformed_primitive:['not an entity'],malformed_array:[[]],malformed_nonstring:[{name:42}],malformed_mixed:[{name:'Valid row'},{name:''}]};
  for(const mode of ['verified','retain','failed','missing','review_failed',...Object.keys(malformed)]){
-  f.reset();let decision=0;const captures:any[]=[];
+  const f=await runtimeFixture(t);let decision=0;const captures:any[]=[];
   const chatCompletion=async(request:any)=>{const sys=request.messages[0].content,input=JSON.parse(request.messages[1].content.split("\n")[0]);captures.push({sys,input});
    if(sys.includes('You analyze a GUI'))return reply({objective:'Read actual current parcels',...(mode==='retain'?{projectionPolicy:'retain_existing'}:{}),deliverables:['Current parcel list']});
    if(sys.includes('You are an INDEPENDENT evaluator'))return reply({pass:mode!=='failed',deficiencies:mode==='failed'?['Full current list could not be verified']:[]});
@@ -62,9 +61,8 @@ test('actual runtime commits verified empty rows through reopen, but failed or o
 });
 
 test('repair round must explicitly return its own empty list before clearing persisted rows',async t=>{
- const f=await runtimeFixture(t);
  for(const secondRound of ['missing','explicit']){
-  f.reset();let decisions=0,reviews=0;
+  const f=await runtimeFixture(t);let decisions=0,reviews=0;
   const chatCompletion=async(request:any)=>{const sys=request.messages[0].content;
    if(sys.includes('You analyze a GUI'))return reply({objective:'Read actual current parcels',deliverables:['Current parcel list']});
    if(sys.includes('You are an INDEPENDENT evaluator')){reviews++;return reply({pass:reviews>1,deficiencies:reviews===1?['Recheck the primary-list projection']:[]});}

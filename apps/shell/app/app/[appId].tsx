@@ -50,6 +50,8 @@ export default function GeneratedAppScreen() {
       await refresh();
     } catch (err) {
       setMessage(`操作失败：${(err as Error).message}`);
+      // Read current recovery state only; never repeat the failed action.
+      await refresh().catch(() => {});
     } finally {
       setBusy(false);
     }

@@ -138,7 +138,7 @@ export function DynamicAppRenderer({ app, onAction, busy }: RendererProps) {
       const next = JSON.parse(JSON.stringify(model.data));
       // A poll is not a submitted command. Preserve its visible draft while the
       // same host-issued request remains current; only a new committed nonce clears it.
-      if(next.hostCommand?.requestId && next.hostCommand.requestId===current.hostCommand?.requestId && typeof current.hostCommand.draft==='string')next.hostCommand.draft=current.hostCommand.draft;
+      if(next.hostCommand?.requestId && (next.hostCommand.requestId===current.hostCommand?.requestId||next.hostCommand.renewedFrom===current.hostCommand?.requestId) && typeof current.hostCommand.draft==='string')next.hostCommand.draft=current.hostCommand.draft;
       return next;
     });
   }, [model]);
@@ -240,11 +240,12 @@ function RenderA2UI({ model, componentId, data, rootData = data, busy, mutateDat
     const event = requiredObject<any>(action.event, `Button ${component.id} missing action event`);
     const actionName = requiredText(event.name, `Button ${component.id} missing action name`);
     const payload = resolveActionContext(data, event.context, rootData);
+    const disabled = busy || (component.disabled !== undefined && resolvePath(data,component.disabled) === true);
     return (
       <Pressable
-        disabled={busy}
+        disabled={disabled}
         onPress={() => onAction(actionName, { ...payload, sourceComponentId: component.id })}
-        style={[component.variant === 'primary' ? styles.primaryButton : styles.button, busy && styles.disabled]}
+        style={[component.variant === 'primary' ? styles.primaryButton : styles.button, disabled && styles.disabled]}
       >
         {childIds(component).map((childId) => (
           <RenderA2UI key={childId} {...{ model, componentId: childId, data, rootData, busy, mutateData, onAction }} />

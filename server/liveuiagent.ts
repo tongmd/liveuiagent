@@ -1,7 +1,7 @@
 import {opaqueIdentity} from './opaque-identity.js';
 import {authorizedGroundingCapabilities,nativeActionContext,nativeActionContextPolicy} from './native-action-context.js';
 import {NativeCommandReceipts,type CommandReceiptBinding} from './native-command-receipts.js';
-import {HOST_COMMAND_ACTION,parseHostCommandEvent,businessSurfaceWithoutHostCommand,appendHostCommand,assertHostCommandDescriptor,hostCommandDescriptor} from './native-host-command.js';
+import {HOST_COMMAND_ACTION,HOST_COMMAND_PREPARE,parseHostCommandPrepareEvent,parseHostCommandEvent,businessSurfaceWithoutHostCommand,appendHostCommand,assertHostCommandDescriptor,hostCommandDescriptor} from './native-host-command.js';
 import {hostCommandRoute,stageHostCommandResult} from './native-host-command-runtime.js';
 import {markNativeActionNotStarted,normalizeNativeActionId,hostNativeActionNotStartedProof} from './native-action-not-started.js';
 import { assertSurfaceContract, compileSemanticSurface, semanticSurfaceDesignPolicy, type SemanticSurfaceDesign } from './native-surface-design.js';
@@ -5385,7 +5385,7 @@ function enrichAppRecord(stored: StoredApp): StoredApp {
   if((stored.appPackage.ui.meta as any).hostCommand!==undefined){
     assertHostCommandDescriptor((stored.appPackage.ui.meta as any).hostCommand);
     if(typeof stored.runtimeState.hostCommandRequestId!=='string')throw Error('host command app missing persisted request nonce');
-    a2ui=appendHostCommand(a2ui,actions,stored.runtimeState.hostCommandRequestId).surface as A2UISurfaceSpec;
+    a2ui=appendHostCommand(a2ui,actions,stored.runtimeState.hostCommandRequestId,stored.runtimeState.hostCommandPrepareAllowed!==true,typeof stored.runtimeState.hostCommandRenewedFrom==='string'?stored.runtimeState.hostCommandRenewedFrom:null).surface as A2UISurfaceSpec;
   }
   const uiMeta = requiredObject<Record<string, unknown>>(stored.appPackage.ui.meta, `app ${stored.appId} missing ui meta while enriching`);
   stored.appPackage.ui = {
@@ -7128,6 +7128,17 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const stored = getOwnedApp(db, input.appId, String(input.user || '').trim().slice(0, 60));
       if (!stored) throw httpError(`app not found: ${input.appId}`, 404);
       const actionId = normalizeActionId(input.actionId);
+      if(actionId===HOST_COMMAND_PREPARE){
+        businessSurfaceWithoutHostCommand(stored.appPackage.ui.meta.a2ui,(stored.appPackage.ui.meta as any).hostCommand);
+        const event=parseHostCommandPrepareEvent(input.eventPayload),owner=String(input.user||'').trim();
+        if(!owner)throw httpError('authenticated owner required',403);
+        commandReceipts.assertAppResolved(owner,stored.appId);
+        const prior=commandReceipts.lookup({owner,appId:stored.appId,requestId:event.previousRequestId});
+        if(prior?.state!=='failed'||stored.runtimeState.hostCommandPrepareAllowed!==true||event.previousRequestId!==stored.runtimeState.hostCommandRequestId)throw httpError('New request is available only after this command was proven not started.',409);
+        stored.runtimeState={...stored.runtimeState,hostCommandRequestId:randomUUID(),hostCommandPrepareAllowed:false,hostCommandRenewedFrom:event.previousRequestId};
+        saveStoredApp(db,options.registryRoot,stored);
+        return {appPackage:stored.appPackage,appData:stored.data,runtimeState:stored.runtimeState,messages:['New request ready. Review your draft and press Execute.'],trace:[]};
+      }
       const isCommand = actionId === HOST_COMMAND_ACTION;
       const commandEvent = isCommand ? parseHostCommandEvent(input.eventPayload) : undefined;
       if(isCommand) businessSurfaceWithoutHostCommand(stored.appPackage.ui.meta.a2ui, (stored.appPackage.ui.meta as any).hostCommand);
@@ -7433,7 +7444,13 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         });
         if(receiptBinding){
           if(!nativeExecutionStarted&&!hostNativeActionNotStartedProof(error))markNativeActionNotStarted(error,{executionId:nativeWorkflow?.executionId??randomUUID(),appId:input.appId,actionId:input.actionId,eventPayload:input.eventPayload});
-          commandReceipts.fail(receiptBinding,error);
+          const receiptState=commandReceipts.fail(receiptBinding,error);
+          if(receiptState==='unknown')db.prepare("UPDATE agent_apps SET runtime_state_json=json_set(runtime_state_json,'$.hostCommandPrepareAllowed',json('false')) WHERE app_id=? AND owner=? AND json_type(package_json,'$.ui.meta.hostCommand')='object'").run(input.appId,receiptBinding.owner);
+          if(receiptState==='failed'&&receiptBinding.actionId===HOST_COMMAND_ACTION){
+            // Only the WeakMap-proof-derived failed receipt enables this read-only
+            // affordance. No nonce is changed and no business request is retried.
+            db.prepare("UPDATE agent_apps SET runtime_state_json=json_set(runtime_state_json,'$.hostCommandPrepareAllowed',json('true')) WHERE app_id=? AND owner=?").run(input.appId,receiptBinding.owner);
+          }
         }
         throw error;
       } finally {

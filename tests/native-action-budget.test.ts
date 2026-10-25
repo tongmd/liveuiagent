@@ -33,13 +33,14 @@ test('runtime action shares server budget across roles and cannot start its loca
  assert.equal(calls,3);assert.deepEqual(budgets,[100,60,20]);assert.deepEqual(stored(),before);
 });
 
-test('late reviewer cannot commit, no automatic execution retry; app lock releases for next independent turn',async t=>{
+test('late reviewer cannot commit; durable uncertainty gate blocks a new independent turn',async t=>{
  const {invoke,stored}=setup(t,100);let now=1000,executions=0,reviews=0;const before=stored();t.mock.method(Date,'now',()=>now);
  await assert.rejects(invoke(async(req:any)=>{const s=req.messages[0].content;if(s.includes('backend agent'))executions++;if(s.includes('independently verify')){reviews++;now+=101;}return response(req);}),(e:any)=>e.code==='action_deadline_exceeded'&&e.status===504);
  assert.equal(executions,1);assert.equal(reviews,1);assert.deepEqual(stored(),before);
- // A new explicit action gets a new budget, not an automatic retry of the old turn.
- const result=await invoke(async(req:any)=>{if(req.messages[0].content.includes('backend agent'))executions++;return response(req);});
- assert.equal(executions,2);assert.equal(result.workflowExecution.status,'completed');assert.notDeepEqual(stored(),before);
+ // This fixture has no business tools, but executor entry is not a host proof of
+ // zero dispatch. Preserve uncertainty until a separately reviewed evidence path exists.
+ await assert.rejects(invoke(async(req:any)=>{if(req.messages[0].content.includes('backend agent'))executions++;return response(req);}),/native_command_unresolved/);
+ assert.equal(executions,1);assert.deepEqual(stored(),before);
 });
 
 test('parent deadline only shortens host action budget and client JSON cannot extend it',async t=>{
@@ -58,7 +59,7 @@ test('real elapsed inference timeout cannot commit its late result or replay the
  }),(e:any)=>e.code==='action_deadline_exceeded'&&e.status===504);
  assert.ok(Date.now()-started<3000,'server total deadline is bounded rather than child 60s timeout');
  await new Promise(r=>setTimeout(r,1800));assert.equal(lateFinished,true);assert.equal(executionCalls,1);assert.deepEqual(stored(),before);
- const next=await invoke(async(req:any)=>response(req));assert.equal(next.workflowExecution.status,'completed');
+ let extraCalls=0;await assert.rejects(invoke(async(req:any)=>{extraCalls++;return response(req);}),/native_command_unresolved/);assert.equal(extraCalls,0);assert.deepEqual(stored(),before);
 });
 
 test('default Native action owns a sixteen minute budget independent of client JSON',async t=>{

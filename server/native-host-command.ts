@@ -1,15 +1,16 @@
 import {randomUUID} from 'node:crypto';
 /** Host-only candidate protocol. Not installed into generated packages yet. */
 export const HOST_COMMAND_ACTION = 'host.app.command';
+export const HOST_COMMAND_PREPARE = 'host.app.command.prepare';
 const PREFIX = 'host_app_command_';
 export const HOST_COMMAND_MAX_BYTES = 8192;
 export type HostCommandDescriptor = {
-  schemaVersion: 1; actionId: typeof HOST_COMMAND_ACTION;
+  schemaVersion: 1; actionId: typeof HOST_COMMAND_ACTION; prepareActionId:typeof HOST_COMMAND_PREPARE;
   containerId: 'host_app_command_container'; inputId: 'host_app_command_input';
-  buttonId: 'host_app_command_execute'; inputPath: '/hostCommand/draft'; requestIdPath:'/hostCommand/requestId';
+  buttonId: 'host_app_command_execute'; prepareButtonId:'host_app_command_prepare'; inputPath: '/hostCommand/draft'; requestIdPath:'/hostCommand/requestId';
 };
-export const hostCommandDescriptor = (): HostCommandDescriptor => ({schemaVersion:1,actionId:HOST_COMMAND_ACTION,
-  containerId:'host_app_command_container',inputId:'host_app_command_input',buttonId:'host_app_command_execute',inputPath:'/hostCommand/draft',requestIdPath:'/hostCommand/requestId'});
+export const hostCommandDescriptor = (): HostCommandDescriptor => ({schemaVersion:1,actionId:HOST_COMMAND_ACTION,prepareActionId:HOST_COMMAND_PREPARE,
+  containerId:'host_app_command_container',inputId:'host_app_command_input',buttonId:'host_app_command_execute',prepareButtonId:'host_app_command_prepare',inputPath:'/hostCommand/draft',requestIdPath:'/hostCommand/requestId'});
 const fail = (reason: string): never => {throw new Error(`host_command_contract: ${reason}`);};
 function object(value: unknown): Record<string, any> {
   if(!value || typeof value!=='object' || Array.isArray(value))return fail('object required');
@@ -32,18 +33,20 @@ export function assertHostCommandDescriptor(raw:unknown):asserts raw is HostComm
 export function hostCommandComponents(): Record<string,any>[] {
  const d=hostCommandDescriptor();
  return [
-  {id:d.containerId,component:'Column',children:[d.inputId,d.buttonId],align:'stretch'},
+  {id:d.containerId,component:'Column',children:[d.inputId,d.buttonId,d.prepareButtonId],align:'stretch'},
   {id:d.inputId,component:'TextField',label:'Ask this app',value:{path:d.inputPath},variant:'longText'},
   {id:PREFIX+'execute_label',component:'Text',text:'Execute'},
   {id:d.buttonId,component:'Button',child:PREFIX+'execute_label',action:{event:{name:d.actionId,context:{command:{path:d.inputPath},requestId:{path:d.requestIdPath}}}}},
+  {id:PREFIX+'prepare_label',component:'Text',text:'New request'},
+  {id:d.prepareButtonId,component:'Button',child:PREFIX+'prepare_label',disabled:{path:'/hostCommand/prepareDisabled'},action:{event:{name:d.prepareActionId,context:{previousRequestId:{path:d.requestIdPath}}}}},
  ];
 }
 function assertNoReserved(value:unknown, structuralKey?:string):void {
  if(typeof value==='string') {
-  if(['id','action','actionId','name','path','child','children'].includes(structuralKey??'') && (value===HOST_COMMAND_ACTION || value.startsWith(PREFIX) || value==='/hostCommand' || value.startsWith('/hostCommand/')))fail('reserved namespace collision');
+  if(['id','action','actionId','name','path','child','children'].includes(structuralKey??'') && ((value===HOST_COMMAND_ACTION||value===HOST_COMMAND_PREPARE) || value.startsWith(PREFIX) || value==='/hostCommand' || value.startsWith('/hostCommand/')))fail('reserved namespace collision');
  } else if(value&&typeof value==='object') {
   for(const [key,child] of Object.entries(value)){
-   if(key==='hostCommand'||key===HOST_COMMAND_ACTION||key.startsWith(PREFIX))fail('reserved namespace collision');
+   if(key==='hostCommand'||(key===HOST_COMMAND_ACTION||key===HOST_COMMAND_PREPARE)||key.startsWith(PREFIX))fail('reserved namespace collision');
    assertNoReserved(child,Array.isArray(value)?structuralKey:key);
   }
  }
@@ -56,7 +59,7 @@ function assertSurfaceNamespace(surfaceInput:unknown){
 }
 /** Append host controls to the known root column after model validation. Does not
  * alter business actions, slots or permissions and never accepts model host metadata. */
-export function appendHostCommand(surfaceInput:unknown, businessActions:unknown, requestId:string = randomUUID()):{surface:Record<string,any>;descriptor:HostCommandDescriptor} {
+export function appendHostCommand(surfaceInput:unknown, businessActions:unknown, requestId:string = randomUUID(), prepareDisabled=true, renewedFrom:string|null=null):{surface:Record<string,any>;descriptor:HostCommandDescriptor} {
  assertSurfaceNamespace(surfaceInput);assertNoReserved(businessActions);
  const surface=structuredClone(object(surfaceInput));
  const updates=object(surface).messages;
@@ -72,12 +75,12 @@ export function appendHostCommand(surfaceInput:unknown, businessActions:unknown,
  if(root?.component!=='Card'||column?.component!=='Column'||!Array.isArray(column.children))return fail('known root card/column required');
  column.children.push(hostCommandDescriptor().containerId);
  components.push(...hostCommandComponents());
- const data=object(surface.initialData);surface.initialData={...data,hostCommand:{draft:'',requestId}};
+ const data=object(surface.initialData);surface.initialData={...data,hostCommand:{draft:'',requestId,prepareDisabled,renewedFrom}};
  for(const message of updates)if(message?.updateDataModel){
   if(!equal(message.updateDataModel.value,data))return fail('surface/data-model mismatch');
   message.updateDataModel.value=structuredClone(surface.initialData);
  }
- const actionMap=object(surface.actionMap);surface.actionMap={...actionMap,[HOST_COMMAND_ACTION]:{actionId:HOST_COMMAND_ACTION,payloadSource:'event.context'}};
+ const actionMap=object(surface.actionMap);surface.actionMap={...actionMap,[HOST_COMMAND_ACTION]:{actionId:HOST_COMMAND_ACTION,payloadSource:'event.context'},[HOST_COMMAND_PREPARE]:{actionId:HOST_COMMAND_PREPARE,payloadSource:'event.context'}};
  return {surface,descriptor:hostCommandDescriptor()};
 }
 /** Return the untouched business portion for existing strict model validators.
@@ -94,13 +97,15 @@ export function businessSurfaceWithoutHostCommand(surfaceInput:unknown,rawDescri
  if(root?.component!=='Card'||column?.component!=='Column'||!Array.isArray(column.children)||column.children.at(-1)!==d.containerId||column.children.filter((id:any)=>id===d.containerId).length!==1)return fail('host block must be root reachable');
  column.children.pop();
  groups[0].updateComponents.components=components.filter(node=>!String(node.id).startsWith(PREFIX));
- const state=exact(surface.initialData.hostCommand,['draft','requestId']);if(typeof state.draft!=='string'||typeof state.requestId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(state.requestId))return fail('draft must be text');
+ const state=exact(surface.initialData.hostCommand,['draft','requestId','prepareDisabled','renewedFrom']);if(typeof state.prepareDisabled!=='boolean'||!(state.renewedFrom===null||typeof state.renewedFrom==='string')||typeof state.draft!=='string'||typeof state.requestId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(state.requestId))return fail('draft must be text');
  delete surface.initialData.hostCommand;
  for(const message of surface.messages)if(message?.updateDataModel){
   if(!equal(message.updateDataModel.value,{...surface.initialData,hostCommand:state}))return fail('surface/data-model mismatch');
   delete message.updateDataModel.value.hostCommand;
  }
  if(!equal(surface.actionMap?.[HOST_COMMAND_ACTION],{actionId:HOST_COMMAND_ACTION,payloadSource:'event.context'}))return fail('host action map modified');
+ if(!equal(surface.actionMap?.[HOST_COMMAND_PREPARE],{actionId:HOST_COMMAND_PREPARE,payloadSource:'event.context'}))return fail('host prepare action map modified');
+ delete surface.actionMap[HOST_COMMAND_PREPARE];
  delete surface.actionMap[HOST_COMMAND_ACTION];
  assertSurfaceNamespace(surface);
  return surface;
@@ -113,4 +118,10 @@ export function parseHostCommandEvent(raw:unknown):{command:string;requestId:str
  if(event.sourceComponentId!==hostCommandDescriptor().buttonId)fail('invalid source component');
  if(typeof event.requestId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.requestId))fail('transport request id required');
  return {command:event.command,requestId:event.requestId,sourceComponentId:event.sourceComponentId};
+}
+
+export function parseHostCommandPrepareEvent(raw:unknown):{previousRequestId:string;sourceComponentId:string}{
+ const event=exact(raw,['previousRequestId','sourceComponentId']);
+ if(event.sourceComponentId!==hostCommandDescriptor().prepareButtonId||typeof event.previousRequestId!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.previousRequestId))return fail('invalid explicit new-request event');
+ return {previousRequestId:event.previousRequestId,sourceComponentId:event.sourceComponentId};
 }
