@@ -49,6 +49,13 @@ export function createHostActionStore(db: Database.Database) {
       db.prepare('INSERT INTO complete_host_actions VALUES (?,?,?,?,?)').run(owner,job.id,appId,JSON.stringify(job),createdAt);
       return job;
     },
+    fail(owner:string,appId:string,model:string,error:{message:string;code:string},services:string[]) {
+      const createdAt=new Date().toISOString();
+      const job={id:'host_'+randomUUID(),appId,status:'error',createdAt,finishedAt:createdAt,error:error.message,code:error.code,
+        execution:{harness:'dsh',actionRuntime:'host-appworld',model},selectedServices:services};
+      db.prepare('INSERT INTO complete_host_actions VALUES (?,?,?,?,?)').run(owner,job.id,appId,JSON.stringify(job),createdAt);
+      return job;
+    },
     load(owner:string,id:string) {
       const row=db.prepare('SELECT result_json FROM complete_host_actions WHERE owner=? AND job_id=?').get(owner,id) as {result_json:string}|undefined;
       return row?JSON.parse(row.result_json):undefined;
@@ -273,6 +280,11 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       }
       const permissions=servicePlan.permissions;
       const grounded=await runAppWorldGrounding({bridge:toolBridge,permissions,payload:groundingPayload,appName:saved.app.name,appPurpose:saved.app.description,llm});
+      if(!grounded && servicePlan.services.length){
+        const failure=runtimeError('Connected service execution produced no completed real API calls; no outcome was verified','dsh_tool_execution_empty',502);
+        const failed=hostActions.fail(userOf(req),appId,selected.model,failure,servicePlan.services);
+        throw Object.assign(failure,{trace:[{agent:'Host service executor',step:'Connected service action failed',status:'error',jobId:failed.id,message:failure.message}]});
+      }
       if(grounded) {
         if(!grounded.calls.length)throw runtimeError('No real business API call completed','dsh_tool_execution_empty',502);
         // Real execution and independent review are complete. Persist the host
