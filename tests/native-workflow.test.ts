@@ -110,7 +110,7 @@ test('compact role contracts are validated in Unicode characters and never silen
     const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {},
       call: async () => { calls++; return { proceed: true, instructions: 'Act', constraints: [], expectedOutcome: 'Verified', ...invalid }; } });
     await assert.rejects(workflow.plan({ originalRequest: 'untouched' }), /exceeded handoff limits; contract was not truncated/);
-    assert.equal(workflow.handoffs.length, 0); assert.equal(calls, 1);
+    assert.equal(workflow.handoffs.length, 0); assert.equal(calls, 2, 'one bounded schema repair then fail without truncation');
   }
   const exact = { proceed: true, instructions: '💧'.repeat(600), constraints: Array(4).fill('字'.repeat(100)), expectedOutcome: '字'.repeat(200) };
   const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {}, call: async () => exact });
@@ -148,4 +148,61 @@ test('independent reviewer retains complete observed results and staged business
   assert.equal(observed.outcome.proposedRuntimeState.orchestration, undefined);
   assert.ok(outcome.proposedRuntimeState.orchestration);
   assert.equal(observed.outcome.contextProjection.stateField, 'proposedRuntimeState');
+});
+
+test('one real HTTP contract repair preserves the full original context and original validation failure', async () => {
+  const records: WorkflowRecord[] = []; const requests: any[] = [];
+  const originalRequest = { text: 'FULL-BEGIN-' + 'unchanged-request-'.repeat(3000) + '-FULL-END', targetId: 7 };
+  const invalidOutput = { proceed: true, instructions: 'x'.repeat(601), constraints: ['Never duplicate a write'], expectedOutcome: 'Verified target' };
+  const validOutput = { proceed: true, instructions: 'Use the original targetId and preserve its safety constraints.', constraints: ['Never duplicate a write'], expectedOutcome: 'Verified target' };
+  const server = http.createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    const request = JSON.parse(raw); requests.push(request);
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(request.node.id === chain[0] && !request.input.contractRepair ? invalidOutput : validOutput));
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: r => records.push(r),
+      call: async (node, input) => (await fetch(`http://127.0.0.1:${(server.address() as any).port}`, { method: 'POST', body: JSON.stringify({ node, input }) })).json() as any });
+    const contracts = await workflow.plan({ originalRequest, permissions: ['real.write'], currentState: { entities: [{ id: 7, name: 'Actual target' }], history: ['complete prior history'] } });
+    assert.equal(requests.length, chain.length + 1); assert.equal(contracts.length, chain.length);
+    assert.equal(requests[1].node.id, requests[0].node.id);
+    assert.deepEqual(requests[1].input.context, requests[0].input.context);
+    assert.deepEqual(requests[1].input.context.originalRequest, originalRequest);
+    assert.deepEqual(requests[1].input.context.permissions, ['real.write']);
+    assert.deepEqual(requests[1].input.upstream, requests[0].input.upstream);
+    assert.deepEqual(requests[1].input.contractRepair.previousInvalidOutput, invalidOutput);
+    assert.notEqual(requests[1].input.modelInvocationId, requests[0].input.modelInvocationId);
+    assert.deepEqual(requests[1].input.contractRepair.constraints, { instructionsUnicodeCharacters: 600, constraintsCount: 4, constraintUnicodeCharacters: 100, expectedOutcomeUnicodeCharacters: 200 });
+    assert.match(requests[1].input.contractRepair.validationErrors.join(';'), /601/);
+    const invalidAudit = records.find(r => r.stage === 'contract_validation' && r.status === 'failed')!;
+    assert.deepEqual((invalidAudit.output as any).invalidOutput, invalidOutput);
+    assert.match((invalidAudit.output as any).error, /contract was not truncated/);
+    assert.equal(records.filter(r => r.stage === 'plan_repair' && r.status === 'ok').length, 1);
+    assert.equal(contracts[0].instructions, validOutput.instructions);
+  } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test('two invalid plan contracts fail after exactly one read-only repair and no business execution', async () => {
+  let calls = 0, businessWrites = 0; const records: WorkflowRecord[] = [];
+  const invalidOutput = { proceed: true, instructions: 'x'.repeat(601), constraints: [], expectedOutcome: 'Target' };
+  const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: r => records.push(r), call: async () => { calls++; return invalidOutput; } });
+  await assert.rejects(async () => { await workflow.plan({ originalRequest: 'Write once' }); businessWrites++; }, /contract was not truncated/);
+  assert.equal(calls, 2); assert.equal(businessWrites, 0); assert.equal(workflow.handoffs.length, 0);
+  assert.equal(records.filter(r => r.stage === 'contract_validation' && r.status === 'failed').length, 1);
+  assert.equal(records.filter(r => r.stage === 'plan_repair' && r.status === 'failed').length, 1);
+  assert.equal(records.filter(r => r.stage === 'plan' && r.status === 'failed').length, 1);
+});
+
+test('explicit refusal, transport failure and independent review rejection are never repaired', async () => {
+  for (const scenario of ['refusal', 'transport', 'review']) {
+    let calls = 0; const records: WorkflowRecord[] = [];
+    const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: r => records.push(r), call: async () => {
+      calls++; if (scenario === 'transport') throw new Error('Transport unavailable');
+      return scenario === 'review' ? { pass: false, reason: 'Missing actual evidence' } : { proceed: false, reason: 'No permission', instructions: 'x'.repeat(601) };
+    } });
+    await assert.rejects(scenario === 'review' ? workflow.review({ toolResults: [] }) : workflow.plan({ originalRequest: 'Write once' }), /No permission|Transport unavailable|Missing actual evidence/);
+    assert.equal(calls, 1); assert.equal(records.filter(r => r.stage === 'plan_repair').length, 0);
+  }
 });

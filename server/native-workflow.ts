@@ -20,6 +20,29 @@ export function projectNativeRoleContext(context: Record<string, unknown>, state
   } };
 }
 
+function validateRoleContract(output: Record<string, unknown>) {
+  const errors: string[] = [];
+  if (!output || typeof output !== 'object' || Array.isArray(output)) return ['Response must be one JSON object'];
+  if (output.proceed !== true) errors.push('proceed must be boolean true for an approved plan; never replace an actual refusal with approval');
+  if (typeof output.instructions !== 'string' || !output.instructions.trim()) errors.push('instructions must be a non-empty string');
+  else if (Array.from(output.instructions).length > 600) errors.push(`instructions exceeds 600 Unicode characters (received ${Array.from(output.instructions).length})`);
+  if (typeof output.expectedOutcome !== 'string' || !output.expectedOutcome.trim()) errors.push('expectedOutcome must be a non-empty string');
+  else if (Array.from(output.expectedOutcome).length > 200) errors.push(`expectedOutcome exceeds 200 Unicode characters (received ${Array.from(output.expectedOutcome).length})`);
+  if (!Array.isArray(output.constraints)) errors.push('constraints must be an array');
+  else {
+    if (output.constraints.length > 4) errors.push(`constraints exceeds 4 entries (received ${output.constraints.length})`);
+    output.constraints.forEach((value, index) => {
+      if (typeof value !== 'string') errors.push(`constraints[${index}] must be a string`);
+      else if (Array.from(value).length > 100) errors.push(`constraints[${index}] exceeds 100 Unicode characters (received ${Array.from(value).length})`);
+    });
+  }
+  return errors;
+}
+
+function contractValidationError(nodeId: string, errors: string[]) {
+  return new Error(`agent ${nodeId} exceeded handoff limits; contract was not truncated; invalid handoff: ${errors.join('; ')}`);
+}
+
 /** Executes model workers as read-only collaborators. Only the host executor may
  * call tools or commit state. A rejected/failed worker never retries business writes. */
 export class NativeWorkflow {
@@ -57,15 +80,40 @@ export class NativeWorkflow {
     for (const [index, node] of this.nodes.entries()) {
       const input = { modelInvocationId: randomUUID(), model: node.model, context: roleContext, upstream: this.handoffs.slice(), incomingHandoff: index ? this.options.handoffEdges[index - 1] : null };
       this.record('plan', node.id, 'running', input);
+      let output: Record<string, unknown> | undefined;
       try {
-        const output = await this.options.call(node, input, 'plan');
-        if (output.proceed !== true) throw new Error(`agent ${node.id} rejected: ${String(output.reason || 'no approval')}`);
-        if (typeof output.instructions !== 'string' || !output.instructions.trim() || typeof output.expectedOutcome !== 'string' || !output.expectedOutcome.trim() || !Array.isArray(output.constraints) || output.constraints.some(x => typeof x !== 'string')) throw new Error(`agent ${node.id} returned invalid handoff`);
-        if (Array.from(output.instructions).length > 600 || Array.from(output.expectedOutcome).length > 200 || output.constraints.length > 4 || output.constraints.some((x: string) => Array.from(x).length > 100)) throw new Error(`agent ${node.id} exceeded handoff limits; contract was not truncated`);
-        const handoff = { agentId: node.id, role: String(node.role || node.name || node.id), instructions: output.instructions, constraints: output.constraints.map(String), expectedOutcome: output.expectedOutcome };
+        output = await this.options.call(node, input, 'plan');
+        // An explicit policy or feasibility refusal is final. Repair is only a
+        // bounded, read-only schema/length correction, never an approval retry.
+        if (output?.proceed === false) throw new Error(`agent ${node.id} rejected: ${String(output.reason || 'no approval')}`);
+        let errors = validateRoleContract(output);
+        if (errors.length) {
+          const originalError = contractValidationError(node.id, errors);
+          this.record('contract_validation', node.id, 'running', input);
+          this.record('contract_validation', node.id, 'failed', undefined, { error: originalError.message, validationErrors: errors, invalidOutput: output });
+          const repairInput = { ...input, modelInvocationId: randomUUID(), contractRepair: {
+            attempt: 1, maxAttempts: 1, validationErrors: errors, previousInvalidOutput: output,
+            constraints: { instructionsUnicodeCharacters: 600, constraintsCount: 4, constraintUnicodeCharacters: 100, expectedOutcomeUnicodeCharacters: 200 },
+            instruction: 'Repair only this same role contract schema/length. Use the complete unchanged original request, permissions, context, role and upstream below. Return concise role-specific incremental instructions, not a copy of upstream. Preserve every safety constraint; do not claim execution, change permissions, erase a refusal or fabricate evidence. If the role should refuse, return proceed:false. This is the only repair attempt; oversized output fails rather than being truncated.',
+          } };
+          this.record('plan_repair', node.id, 'running', repairInput);
+          let repairResponseReceived = false;
+          try {
+            output = await this.options.call(node, repairInput, 'plan');
+            repairResponseReceived = true;
+            if (output?.proceed === false) throw new Error(`agent ${node.id} rejected: ${String(output.reason || 'no approval')}`);
+            errors = validateRoleContract(output);
+            if (errors.length) throw contractValidationError(node.id, errors);
+            this.record('plan_repair', node.id, 'ok', undefined, { repairedOutput: output });
+          } catch (error) {
+            this.record('plan_repair', node.id, 'failed', undefined, { error: String(error), invalidOutput: repairResponseReceived ? output : undefined, responseReceived: repairResponseReceived });
+            throw error;
+          }
+        }
+        const handoff = { agentId: node.id, role: String(node.role || node.name || node.id), instructions: output.instructions as string, constraints: (output.constraints as string[]).map(String), expectedOutcome: output.expectedOutcome as string };
         this.handoffs.push(handoff);
         this.record('plan', node.id, 'ok', undefined, handoff);
-      } catch (error) { this.record('plan', node.id, 'failed', undefined, { error: String(error) }); throw error; }
+      } catch (error) { this.record('plan', node.id, 'failed', undefined, { error: String(error), modelOutput: output }); throw error; }
     }
     return this.handoffs;
   }
