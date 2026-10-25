@@ -3,6 +3,8 @@ import type Database from 'better-sqlite3';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import { createAppWorldBridge } from './appworld-bridge.js';
+import { planAgentApp, runAppWorldGrounding } from './liveuiagent.js';
 import { runtimeError, type HarnessId } from './runtime-settings.js';
 
 const PREFIX = 'dsh_';
@@ -23,6 +25,10 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
   harnessFor?: (req: express.Request, appId?: string) => HarnessId;
   executionOf?: (req: express.Request) => { model?: string; provider?: { apiBase: string; apiKey: string } };
 } = {}) {
+  const toolBridge = createAppWorldBridge(process.cwd());
+  const jobEvidence = new Map<string, any>();
+  const toolPlans = new Map<string, Promise<string[]>>();
+  const evidenceKey = (req: express.Request, id: string) => JSON.stringify([userOf(req), id]);
   const configuredBase = process.env.LIVEUIAGENT_DSH_API_BASE?.trim();
   const userPrefix = process.env.LIVEUI_DSH_USER_PREFIX?.trim() || '';
   const emptyAccountRoot = process.env.LIVEUI_DSH_EMPTY_ACCOUNT_ROOT?.trim() || '';
@@ -84,6 +90,12 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     const r = await fetch(new URL(route, apiBase), {method,headers:{'X-LiveUIAgent-User':upstreamOwner,...(method !== 'GET' ? {'Content-Type':'application/json'} : {})},body:data === undefined ? undefined : JSON.stringify(data),signal:AbortSignal.timeout(35000)});
     const value: any = await r.json();
     if (!r.ok) throw Object.assign(error(value.error || 'The app service is temporarily unavailable',r.status), {code:value.code});
+    // Upstream/model-generated evidence is never an authority.
+    delete value.evidence;
+    if (route.startsWith('jobs/')) {
+      const evidence=jobEvidence.get(evidenceKey(req,route.slice(5)));
+      if(evidence)value.evidence=evidence;
+    }
     return value;
   }
   async function capabilities(req: express.Request) {
@@ -128,7 +140,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     const presentation = {glyph:a.name.slice(0,1),accent:color,tagline:a.description.slice(0,32),metric:'',metricLabel:'',collection:a.name,actionVerb:'Open',live:true,rows:0};
     const preview = {accent:color,chips:a.features || [],metrics:[],sampleRecords:[],presentation,widget:{kind:'entities',items:(a.features||[]).slice(0,4).map((name:string,i:number)=>({id:'feature_'+i,name,detail:'Open the app to use this feature'})),stats:[],itemLabel:'Features'}};
     const manifest = {schemaVersion:'0.1.0',appId,name:a.name,description:a.description,icon:'assets/icon.svg',entry:'pages.home',platforms:['web'],layoutModes:['phone','tablet','desktop'],permissions:['storage.app','llm.call'],version:String(a.revision),intent:{agentApp:true,kind:'complete_app',presentation}};
-    return {appId,name:a.name,description:a.description,version:String(a.revision),icon:'assets/icon.svg',status:'ready',records:0,updatedAt:a.updatedAt || a.createdAt,preview,completeApp:{id:a.id,revision:a.revision},appPackage:{manifest,ui:{meta:{a2ui}},actions:{actions:{}},assets:{icon:{svg:icon}},dataSchema:{collections:{}},agents:{},memory:{}},appData:{},runtimeState:{}};
+    return {appId,name:a.name,description:a.description,version:String(a.revision),icon:'assets/icon.svg',status:'ready',records:0,updatedAt:a.updatedAt || a.createdAt,preview,completeApp:{id:a.id,revision:a.revision},appPackage:{manifest,ui:{meta:{a2ui,agentWorkflow:[{actionRoutes:[{actionId:'agent.invoke',endpoint:'/agent/complete/apps/'+appId+'/action'}]}]}},actions:{actions:{'agent.invoke':{id:'agent.invoke',type:'agent',steps:[{capability:'agent.backend'}]}}},assets:{icon:{svg:icon}},dataSchema:{collections:{}},agents:{},memory:{}},appData:{},runtimeState:{}};
   }
   async function merge(req: express.Request, result: any) {
     let s:any;try{s=await dsh(req,'state');rememberMetadata(userOf(req),s.apps);}catch(e:any){if(e.code==='dsh_workspace_initialization_failed'||e.code==='dsh_workspace_identity_invalid')throw e;s={apps:(db.prepare('SELECT info_json FROM complete_apps WHERE owner=?').all(userOf(req)) as any[]).map(r=>JSON.parse(r.info_json))};}
@@ -173,14 +185,34 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
   async function action(req: express.Request, appId: string, body=req.body) {
     const id = internalId(appId);
     if (!id) throw error('App not found',404);
-    await dsh(req,'apps/'+id);
+    const saved=await dsh(req,'apps/'+id);
     const selected = await execution(req);
+    let evidence:any;let groundedContext:any;
+    if(toolBridge && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off') {
+      const llm=llmOf(req);
+      const planKey=JSON.stringify([userOf(req),appId,saved.app.revision,saved.app.description]);
+      if(!toolPlans.has(planKey)){
+        if(toolPlans.size>=1000)toolPlans.delete(toolPlans.keys().next().value!);
+        const pending=planAgentApp([saved.app.name,saved.app.description].join('\n'),llm,toolBridge).then(plan=>plan.toolCapabilities.map(t=>t.permission));
+        toolPlans.set(planKey,pending);pending.catch(()=>toolPlans.delete(planKey));
+      }
+      const permissions=await toolPlans.get(planKey)!;
+      const grounded=await runAppWorldGrounding({bridge:toolBridge,permissions,payload:{request:String(body?.prompt||body?.actionId||''),...(body?.eventPayload||{})},appName:saved.app.name,appPurpose:saved.app.description,llm});
+      if(grounded) {
+        if(!grounded.calls.length)throw runtimeError('No real business API call completed','dsh_tool_execution_empty',502);
+        const toolResults=Object.fromEntries(grounded.calls.map((call,i)=>[call.tool.id+'#'+(i+1),call]));
+        const toolDbChanges=grounded.calls.flatMap(call=>call.dbChanges?.changedApps||[]);
+        evidence={schemaVersion:1,appId,trace:[{agent:'AppWorld Grounding Agent',step:'Execute GUI action',status:'done',output:{goal:grounded.goal,evaluation:grounded.evaluation}}],toolResults,toolDbChanges};
+        groundedContext={summary:grounded.summary,entities:grounded.entities,stats:grounded.stats,evaluation:grounded.evaluation,instruction:'Render these actual executed results. Do not repeat API mutations or claim unobserved outcomes.'};
+      }
+    }
     const job = await dsh(req,'apps/'+id+'/action','POST',{
       prompt:withOutputLanguage(body?.prompt || body?.actionId),
-      context:{...body?.context,eventPayload:body?.eventPayload,personalContext:personal.recall(userOf(req),appId)},
+      context:{...body?.context,eventPayload:body?.eventPayload,personalContext:personal.recall(userOf(req),appId),...(groundedContext?{executedTools:groundedContext}:{})},
       ...selected,
     });
-    return {...job,execution:{harness:'dsh',model:job.model || selected.model}};
+    if(evidence){if(jobEvidence.size>=1000)jobEvidence.delete(jobEvidence.keys().next().value!);jobEvidence.set(evidenceKey(req,job.id),evidence);}
+    return {...job,...(evidence?{evidence}:{}),execution:{harness:'dsh',model:job.model || selected.model}};
   }
   function checkAppHarness(req: express.Request, appId: string) { options.harnessFor?.(req,appId); }
   function install(app: express.Express) {
@@ -224,7 +256,8 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       await new Promise(resolve=>setTimeout(resolve,1000));current=await dsh(req,'jobs/'+job.id);
     }
     if(current.status!=='done')throw runtimeError(current.error||'Application AI action did not complete','evaluator_action_failed',502);
-    return current.result;
+    const {evidence: _untrusted, ...result}=current.result||{};
+    return {...result,...(current.evidence?{evidence:current.evidence}:{})};
   }
   return {merge,install,capabilities,loadApp,saveStore,evaluateAction,configured:Boolean(apiBase)};
 }

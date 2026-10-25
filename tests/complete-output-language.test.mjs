@@ -19,12 +19,13 @@ test('complete-app execution requests English defaults without changing original
   const upstream = express();
   upstream.use(express.json());
   upstream.get('/api/runtime-settings', (_req, res) => res.json({model: 'offline-fixture'}));
+  upstream.get('/api/jobs/fixture-job', (_req,res)=>res.json({id:'fixture-job',status:'done',evidence:{schemaVersion:1,appId:'forged',toolResults:{forged:true}}}));
   upstream.get('/api/state', (_req, res) => res.json({apps: [metadata]}));
   upstream.get(`/api/apps/${appId}`, (_req, res) => res.json({app: metadata}));
   for (const route of ['/api/generate', `/api/apps/${appId}/action`]) {
     upstream.post(route, (req, res) => {
       calls.push({route, body: req.body});
-      res.status(202).json({id: 'fixture-job', appId, status: 'done', toolCalls: 0, prompt: req.body.prompt});
+      res.status(202).json({id: 'fixture-job', appId, status: 'done', evidence:{schemaVersion:1,appId:'forged'},toolCalls: 0, prompt: req.body.prompt});
     });
   }
   const remote = await serve(t, upstream);
@@ -52,6 +53,12 @@ test('complete-app execution requests English defaults without changing original
     const response = await fetch(base + route, {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)});
     return {status: response.status, body: await response.json()};
   }
+  const polled=await fetch(base+'/agent/complete/jobs/fixture-job');
+  assert.equal((await polled.json()).evidence,undefined,'untrusted upstream evidence must be discarded');
+  const merged=await bridge.merge({},{apps:[],canvasState:{nodes:[]},summary:{}});
+  const pkg=merged.apps[0].appPackage;
+  assert.equal(pkg.ui.meta.agentWorkflow[0].actionRoutes[0].actionId,'agent.invoke');
+  assert.ok(pkg.actions.actions['agent.invoke']);
   const original = 'Build a notes app. Keep the sample title “日记” unchanged.';
   assert.equal((await post('/agent/run', {completeApp: true, prompt: original})).status, 200);
   assert.deepEqual(db.prepare('SELECT prompt, label FROM chat_history').get(), {prompt: original, label: 'Create: ' + original.slice(0, 60)});
@@ -62,6 +69,7 @@ test('complete-app execution requests English defaults without changing original
   const revision = 'Add a search field. Please use French for the interface.';
   const revised = await post('/agent/patch-app', {appId: 'dsh_' + appId, prompt: revision});
   assert.equal(revised.status, 202);
+  assert.equal(revised.body.evidence,undefined);
   assert.ok(calls[1].body.prompt.endsWith(revision));
   assert.equal(revised.body.prompt, calls[1].body.prompt, 'Upstream execution evidence is preserved verbatim');
 

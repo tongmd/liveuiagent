@@ -2180,7 +2180,7 @@ function makeAgentResult(input: {
   };
 }
 
-async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWorld?: AppWorldBridge | null, knownPeople?: Array<{ name: string; email?: string; phone?: string }>): Promise<AgentPlan> {
+export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWorld?: AppWorldBridge | null, knownPeople?: Array<{ name: string; email?: string; phone?: string }>): Promise<AgentPlan> {
   const tokens = semanticTokens(prompt, 8);
   const subject = readableSubject(prompt, tokens);
   const signature = `agent_${shortHash(`${prompt}:${tokens.join('|')}`, 10)}`;
@@ -5650,7 +5650,7 @@ async function runToolStep(step: Record<string, unknown>, payload: Record<string
 // self-improve: a requirement agent derives a goal contract, the executor
 // grounds it one call at a time, an independent evaluator judges the evidence,
 // and the executor gets one bounded round to fix the deficiencies it found.
-async function runAppWorldGrounding(input: {
+export async function runAppWorldGrounding(input: {
   bridge: AppWorldBridge;
   permissions: string[];
   payload: Record<string, unknown>;
