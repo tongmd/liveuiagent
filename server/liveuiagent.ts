@@ -5973,6 +5973,8 @@ export async function runAppWorldGrounding(input: {
   fields?: Array<{ label: string; value: string; valueState?: 'empty_string' | 'null' }>;
   appName: string;
   appPurpose?: string;
+  // Actual user command, never synthesized action/field labels. Presentation only.
+  currentUserCommand?: string;
   viewContext?: GroundingViewContext;
   // Last verified UI projection only: not fresh world evidence or business authorization.
   priorProjection?: { entities: unknown[]; stats: unknown[] };
@@ -5991,6 +5993,10 @@ export async function runAppWorldGrounding(input: {
   // Guard the shared executor as well as its current callers.
   if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') return null;
   remainingActionMs();
+  const presentationLanguage = input.currentUserCommand?.trim()
+    ? { source: 'current_user_command', text: input.currentUserCommand }
+    : { source: 'original_app_purpose', text: input.appPurpose ?? '' };
+  const presentationLanguagePolicy = 'For user-facing summary, detail and aggregate labels, follow the language of presentationLanguage.text (including any explicit user language instruction there). This is the actual current user command when present, otherwise the complete original app purpose. Synthetic action/field labels, app names, previous summaries and API response language are NOT language authority. Preserve proper names, enum values, numeric values and opaque IDs exactly; do not translate facts. This presentation rule does not change business goals, permissions or evidence requirements.';
   const hostNow = new Date().toISOString();
   let serviceClock: Awaited<ReturnType<NonNullable<AppWorldBridge['getClock']>>> = null;
   try { serviceClock = await input.bridge?.getClock?.() ?? null; } catch { /* Actual host UTC is the fallback. */ }
@@ -6036,6 +6042,7 @@ export async function runAppWorldGrounding(input: {
     llm: input.llm,
     system: [
         turnTime,
+      presentationLanguagePolicy,
       `You analyze a GUI form submission for the generated app "${input.appName}" BEFORE execution.`,
         groundingViewPolicy,
         primaryMembershipPolicy,
@@ -6050,7 +6057,7 @@ export async function runAppWorldGrounding(input: {
       'expectedNumbers: compute every number the request implies but does not state — a bill split share = total ÷ ALL participants INCLUDING the payer (e.g. "186.45 / 3 = 62.15 per person"). Label each derived number with its scope (this event share, repayment amount, or final cumulative balance) and show its arithmetic in the value. A new event share is an INCREMENT, not the final cumulative balance; derive a final balance only from a fresh existing balance plus the signed change. Never assume the existing balance is zero. Use [] when nothing is derived.',
       'When a targetEntity is given, reference exactly that logical business target by its name/id, never authorize a broader business batch. If its backend record packs multiple units, express only the requested subset outcome with all untargeted units preserved under the shared representation-only partition policy; do not invent a same-backend-record requirement.',
     ].join('\n'),
-    user: JSON.stringify({ userRequest, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}) }),
+    user: JSON.stringify({ presentationLanguage, userRequest, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}) }),
   }) as Record<string, any>;
   const goal = {
     projectionPolicy: parseProjectionPolicy(goalRaw?.projectionPolicy),
@@ -6177,10 +6184,12 @@ export async function runAppWorldGrounding(input: {
           'Real-world objects must read like a human made them: never put UI component ids (d_b1, slot_2) or binding paths into names, titles, file names or contents of anything you create.',
           'previousTurns (if given) is the compressed record of this app\'s earlier turns: use it to interpret continuations (a "new batch" action must avoid re-creating what a previous turn already made; a correction turn targets the object a previous turn created) — but current world state still comes from THIS turn\'s read calls, never from previousTurns.',
           'Your final summary MUST quote the exact entity names from the user request and API responses (e.g. the playlist title you created).',
-          'Write summary and every entities name/detail in the SAME language as the user request (Chinese request → Chinese text; entity proper names stay as returned by the API). User-facing text must never contain internal words or key-value dumps (state:, payload, backend, trace, debug, prompt:) — write plain consumer sentences.',
+          presentationLanguagePolicy,
+          'User-facing text must never contain internal words or key-value dumps (state:, payload, backend, trace, debug, prompt:) — write plain consumer sentences.',
           `Available APIs:\n${catalog}`,
         ].join('\n'),
         user: JSON.stringify({
+          presentationLanguage,
           userRequest,
           goal,
           ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities,
@@ -7379,6 +7388,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             appState,
             permissions: appWorldPermissions,
             payload: rawPayload,
+            currentUserCommand: commandEvent?.command,
             // 带标签的业务字段:agent 必须能分辨 36 是账单、12 是份额。
             // 目标实体置于首位:行内按钮回合的唯一业务输入就是"对这一个对象做该动作"。
             fields: [
