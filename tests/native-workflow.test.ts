@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { NativeWorkflow, type WorkflowRecord } from '../server/native-workflow.js';
+import { NativeWorkflow, NATIVE_INSTRUCTIONS_UNICODE_LIMIT, type WorkflowRecord } from '../server/native-workflow.js';
 
 const chain = ['agents.orchestrator', 'agents.action', 'agents.app', 'agents.data', 'agents.memory'];
 const specs = Object.fromEntries(chain.map(id => [id, { id, role: id.split('.')[1], purpose: `Execute ${id}` }]));
@@ -106,14 +106,14 @@ test('role projection omits only duplicate static graph and preserves full reque
 });
 
 test('compact role contracts are validated in Unicode characters and never silently truncated', async () => {
-  for (const invalid of [ { instructions: '文'.repeat(601) }, { constraints: Array(5).fill('one') }, { constraints: ['文'.repeat(101)] }, { expectedOutcome: '文'.repeat(201) } ]) {
+  for (const invalid of [ { instructions: '文'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1) }, { constraints: Array(5).fill('one') }, { constraints: ['文'.repeat(101)] }, { expectedOutcome: '文'.repeat(201) } ]) {
     let calls = 0;
     const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {},
       call: async () => { calls++; return { proceed: true, instructions: 'Act', constraints: [], expectedOutcome: 'Verified', ...invalid }; } });
     await assert.rejects(workflow.plan({ originalRequest: 'untouched' }), /exceeded handoff limits; contract was not truncated/);
     assert.equal(workflow.handoffs.length, 0); assert.equal(calls, 2, 'one bounded schema repair then fail without truncation');
   }
-  const exact = { proceed: true, instructions: '💧'.repeat(600), constraints: Array(4).fill('字'.repeat(100)), expectedOutcome: '字'.repeat(200) };
+  const exact = { proceed: true, instructions: '💧'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT), constraints: Array(4).fill('字'.repeat(100)), expectedOutcome: '字'.repeat(200) };
   const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {}, call: async () => exact });
   const result = await workflow.plan({ originalRequest: 'untouched' });
   assert.equal(result[0].instructions, exact.instructions); assert.deepEqual(result[0].constraints, exact.constraints); assert.equal(result[0].expectedOutcome, exact.expectedOutcome);
@@ -154,7 +154,7 @@ test('independent reviewer retains complete observed results and staged business
 test('one real HTTP contract repair preserves the full original context and original validation failure', async () => {
   const records: WorkflowRecord[] = []; const requests: any[] = [];
   const originalRequest = { text: 'FULL-BEGIN-' + 'unchanged-request-'.repeat(3000) + '-FULL-END', targetId: 7 };
-  const invalidOutput = { proceed: true, instructions: 'x'.repeat(601), constraints: ['Never duplicate a write'], expectedOutcome: 'Verified target' };
+  const invalidOutput = { proceed: true, instructions: 'x'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1), constraints: ['Never duplicate a write'], expectedOutcome: 'Verified target' };
   const validOutput = { proceed: true, instructions: 'Use the original targetId and preserve its safety constraints.', constraints: ['Never duplicate a write'], expectedOutcome: 'Verified target' };
   const server = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -175,8 +175,8 @@ test('one real HTTP contract repair preserves the full original context and orig
     assert.deepEqual(requests[1].input.upstream, requests[0].input.upstream);
     assert.deepEqual(requests[1].input.contractRepair.previousInvalidOutput, invalidOutput);
     assert.notEqual(requests[1].input.modelInvocationId, requests[0].input.modelInvocationId);
-    assert.deepEqual(requests[1].input.contractRepair.constraints, { instructionsUnicodeCharacters: 600, constraintsCount: 4, constraintUnicodeCharacters: 100, expectedOutcomeUnicodeCharacters: 200 });
-    assert.match(requests[1].input.contractRepair.validationErrors.join(';'), /601/);
+    assert.deepEqual(requests[1].input.contractRepair.constraints, { instructionsUnicodeCharacters: NATIVE_INSTRUCTIONS_UNICODE_LIMIT, constraintsCount: 4, constraintUnicodeCharacters: 100, expectedOutcomeUnicodeCharacters: 200 });
+    assert.ok(requests[1].input.contractRepair.validationErrors.join(';').includes(`received ${NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1}`));
     const invalidAudit = records.find(r => r.stage === 'contract_validation' && r.status === 'failed')!;
     assert.deepEqual((invalidAudit.output as any).invalidOutput, invalidOutput);
     assert.match((invalidAudit.output as any).error, /contract was not truncated/);
@@ -187,7 +187,7 @@ test('one real HTTP contract repair preserves the full original context and orig
 
 test('two invalid plan contracts fail after exactly one read-only repair and no business execution', async () => {
   let calls = 0, businessWrites = 0; const records: WorkflowRecord[] = [];
-  const invalidOutput = { proceed: true, instructions: 'x'.repeat(601), constraints: [], expectedOutcome: 'Target' };
+  const invalidOutput = { proceed: true, instructions: 'x'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1), constraints: [], expectedOutcome: 'Target' };
   const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: r => records.push(r), call: async () => { calls++; return invalidOutput; } });
   await assert.rejects(async () => { await workflow.plan({ originalRequest: 'Write once' }); businessWrites++; }, /contract was not truncated/);
   assert.equal(calls, 2); assert.equal(businessWrites, 0); assert.equal(workflow.handoffs.length, 0);
@@ -201,7 +201,7 @@ test('explicit refusal, transport failure and independent review rejection are n
     let calls = 0; const records: WorkflowRecord[] = [];
     const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: r => records.push(r), call: async () => {
       calls++; if (scenario === 'transport') throw new Error('Transport unavailable');
-      return scenario === 'review' ? { pass: false, reason: 'Missing actual evidence' } : { proceed: false, reason: 'No permission', instructions: 'x'.repeat(601) };
+      return scenario === 'review' ? { pass: false, reason: 'Missing actual evidence' } : { proceed: false, reason: 'No permission', instructions: 'x'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1) };
     } });
     await assert.rejects(scenario === 'review' ? workflow.review({ toolResults: [] }) : workflow.plan({ originalRequest: 'Write once' }), /No permission|Transport unavailable|Missing actual evidence/);
     assert.equal(calls, 1); assert.equal(records.filter(r => r.stage === 'plan_repair').length, 0);
@@ -222,7 +222,7 @@ test('a repair response without strict approval is rejected without a third call
   for (const approval of [false, 'false', 'true', null, undefined]) {
     let calls = 0;
     const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {}, call: async () => {
-      calls++; return calls === 1 ? { proceed: true, instructions: 'x'.repeat(601), constraints: [], expectedOutcome: 'Verified target' } : { proceed: approval, instructions: 'Concise', constraints: [], expectedOutcome: 'Verified target' };
+      calls++; return calls === 1 ? { proceed: true, instructions: 'x'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1), constraints: [], expectedOutcome: 'Verified target' } : { proceed: approval, instructions: 'Concise', constraints: [], expectedOutcome: 'Verified target' };
     } });
     await assert.rejects(workflow.plan({ originalRequest: 'Write once' }), /rejected/);
     assert.equal(calls, 2); assert.equal(workflow.handoffs.length, 0);
@@ -254,4 +254,17 @@ test('audit snapshots remain unchanged after business state, output and handoffs
   context.currentState.entities[0].name = 'Later business mutation';
   assert.deepEqual(workflow.steps.filter(r => r.stage === 'plan'), planHistory);
   assert.deepEqual(sink.filter(r => r.stage === 'plan'), sinkHistory);
+});
+
+
+test('657 Unicode instructions remain complete through real HTTP worker handoffs with original request and context unchanged',async t=>{
+ assert.equal(NATIVE_INSTRUCTIONS_UNICODE_LIMIT,2048);
+ const instruction='Follow the exact requested record, preserve other records, and verify the read-back. '.repeat(8).slice(0,657);assert.equal(Array.from(instruction).length,657);
+ const received:any[]=[];const originalRequest={text:'Original complete request '.repeat(200),target:'the same target',optional:false,value:0};
+ const server=http.createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const value=JSON.parse(raw);received.push(value);res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({proceed:true,instructions:instruction,constraints:['Do not duplicate writes'],expectedOutcome:'Actual requested target independently read back'}));});
+ await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(async()=>{server.closeAllConnections();await new Promise<void>(resolve=>server.close(()=>resolve()));});
+ const records:WorkflowRecord[]=[];const workflow=new NativeWorkflow({appId:'a',owner:'one',actionId:'save',chain,specs,handoffEdges:edges,record:entry=>records.push(entry),call:async(node,input)=>{const response=await fetch(`http://127.0.0.1:${(server.address()as any).port}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({node:node.id,input})});return response.json();}});
+ const handoffs=await workflow.plan({originalRequest,permissions:['exact.scope'],currentState:{businessValue:0,enabled:false}});assert.equal(received.length,chain.length);assert.equal(handoffs.length,chain.length);
+ for(const [index,packet]of received.entries()){assert.deepEqual(packet.input.context.originalRequest,originalRequest);assert.deepEqual(packet.input.context.currentState,{businessValue:0,enabled:false});assert.equal(packet.input.upstream.length,index);for(const prior of packet.input.upstream)assert.equal(prior.instructions,instruction);}
+ assert(handoffs.every(h=>h.instructions===instruction));assert.equal(records.filter(r=>r.stage==='plan_repair').length,0);assert.equal(records.filter(r=>r.stage==='plan'&&r.status==='ok').length,chain.length);
 });

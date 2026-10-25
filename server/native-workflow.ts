@@ -3,6 +3,9 @@ import { randomUUID } from 'node:crypto';
 
 export type WorkflowNode = { id: string; role?: string; name?: string; purpose?: string; model?: string; inputs?: unknown; outputs?: unknown; stateReads?: unknown; stateWrites?: unknown };
 export type WorkflowRecord = { executionId: string; appId: string; owner: string; actionId: string; stage: string; nodeId: string; status: 'running' | 'ok' | 'failed'; input?: unknown; output?: unknown; at: string; startedAt?: string; finishedAt?: string };
+/** Host implementation budget, not user intent or an authorization limit. */
+export const NATIVE_INSTRUCTIONS_UNICODE_LIMIT = 2048;
+
 type ModelCall = (node: WorkflowNode, input: Record<string, unknown>, mode: 'plan' | 'review') => Promise<Record<string, unknown>>;
 
 /** Omit only the reserved static graph already supplied through chain/specs.
@@ -26,7 +29,7 @@ function validateRoleContract(output: Record<string, unknown>) {
   if (!output || typeof output !== 'object' || Array.isArray(output)) return ['Response must be one JSON object'];
   if (output.proceed !== true) errors.push('proceed must be boolean true for an approved plan; never replace an actual refusal with approval');
   if (typeof output.instructions !== 'string' || !output.instructions.trim()) errors.push('instructions must be a non-empty string');
-  else if (Array.from(output.instructions).length > 600) errors.push(`instructions exceeds 600 Unicode characters (received ${Array.from(output.instructions).length})`);
+  else if (Array.from(output.instructions).length > NATIVE_INSTRUCTIONS_UNICODE_LIMIT) errors.push(`instructions exceeds ${NATIVE_INSTRUCTIONS_UNICODE_LIMIT} Unicode characters (received ${Array.from(output.instructions).length})`);
   if (typeof output.expectedOutcome !== 'string' || !output.expectedOutcome.trim()) errors.push('expectedOutcome must be a non-empty string');
   else if (Array.from(output.expectedOutcome).length > 200) errors.push(`expectedOutcome exceeds 200 Unicode characters (received ${Array.from(output.expectedOutcome).length})`);
   if (!Array.isArray(output.constraints)) errors.push('constraints must be an array');
@@ -94,7 +97,7 @@ export class NativeWorkflow {
           this.record('contract_validation', node.id, 'failed', undefined, { error: originalError.message, validationErrors: errors, invalidOutput: output });
           const repairInput = { ...input, modelInvocationId: randomUUID(), contractRepair: {
             attempt: 1, maxAttempts: 1, validationErrors: errors, previousInvalidOutput: output,
-            constraints: { instructionsUnicodeCharacters: 600, constraintsCount: 4, constraintUnicodeCharacters: 100, expectedOutcomeUnicodeCharacters: 200 },
+            constraints: { instructionsUnicodeCharacters: NATIVE_INSTRUCTIONS_UNICODE_LIMIT, constraintsCount: 4, constraintUnicodeCharacters: 100, expectedOutcomeUnicodeCharacters: 200 },
             instruction: 'Repair only this same role contract schema/length. Use the complete unchanged original request, permissions, context, role and upstream below. Return concise role-specific incremental instructions, not a copy of upstream. Preserve every safety constraint; do not claim execution, change permissions, erase a refusal or fabricate evidence. If the role should refuse, return proceed:false. This is the only repair attempt; oversized output fails rather than being truncated.',
           } };
           this.record('plan_repair', node.id, 'running', repairInput);
