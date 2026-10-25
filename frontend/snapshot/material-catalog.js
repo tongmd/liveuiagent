@@ -20,7 +20,6 @@
     document.body.classList.toggle('liveui-has-apps', cards.length > 0);
   }
   function mount() {
-    if ((new URLSearchParams(location.search).get('concept') || 'material') !== 'material') return;
     empty = document.createElement('section');
     empty.className = 'liveui-catalog-empty'; empty.hidden = true;
     empty.setAttribute('aria-label', 'Your apps');
