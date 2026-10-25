@@ -13,25 +13,29 @@ function sha(text:string){return createHash('sha256').update(text).digest('hex')
 function wire(value:unknown){return JSON.stringify(value);}
 function at(input:any,path:string){return path.slice(1).split('/').reduce((value,key)=>value&&Object.hasOwn(value,key)?value[key]:undefined,input);}
 function set(input:any,path:string,value:unknown){const keys=path.slice(1).split('/');const key=keys.pop()!;const parent=keys.reduce((value,key)=>value[key],input);parent[key]=value;}
-export type ReviewFactorReceipt={version:1;factored:boolean;sourceBytes:number;modelBytes:number;sourceSha256:string;modelSha256:string;aliases:Array<{path:string;sourcePath:string;sha256:string}>};
+export type ReviewFactorReceipt={version:1;sourceRepresentation:'model-wire-json';factored:boolean;sourceBytes:number;modelBytes:number;sourceSha256:string;modelSha256:string;aliases:Array<{path:string;sourcePath:string;sha256:string}>};
 /** Only two known host-owned duplicate locations may share the complete canonical
  * current-turn evidence. Arbitrary user objects and unequal values are untouched. */
 export function factorNativeReviewInput(original:Record<string,unknown>):{input:Record<string,unknown>;receipt:ReviewFactorReceipt}{
- const input=structuredClone(original);const before=wire(original);const aliases:ReviewFactorReceipt['aliases']=[];
- const evidence=at(original,canonicalPath);
- if(evidence&&typeof evidence==='object'&&!Object.hasOwn(original,'hostEvidenceFactorization')){
+ // Match the actual model transport boundary, not ephemeral JS prototypes or
+ // optional undefined properties that JSON.stringify never sends. Serialization
+ // errors still throw; the caller's original trace object is never rewritten.
+ const before=wire(original);const source:Record<string,unknown>=JSON.parse(before);
+ const input=structuredClone(source);const aliases:ReviewFactorReceipt['aliases']=[];
+ const evidence=at(source,canonicalPath);
+ if(evidence&&typeof evidence==='object'&&!Object.hasOwn(source,'hostEvidenceFactorization')){
   try{
    const bytes=canonical(evidence);
-   if(aliasPaths.every(path=>canonical(at(original,path))===bytes&&wire(at(original,path))===wire(evidence))){
+   if(aliasPaths.every(path=>canonical(at(source,path))===bytes&&wire(at(source,path))===wire(evidence))){
     const hash=sha(bytes);
     for(const path of aliasPaths){set(input,path,{hostSharedEvidence:{sourcePath:canonicalPath,sha256:hash}});aliases.push({path,sourcePath:canonicalPath,sha256:hash});}
     input.hostEvidenceFactorization={version:1,policy:'Exact shared copies, not omitted facts. Every alias denotes the entire unchanged canonical toolResults including every request, response, dbChanges and ordered call. This does not establish business success.',aliases};
    }
   }catch{/* Non-JSON/missing/different evidence remains fully inline. */}
  }
- const after=wire(input);const receipt:ReviewFactorReceipt={version:1,factored:aliases.length===2,sourceBytes:Buffer.byteLength(before),modelBytes:Buffer.byteLength(after),sourceSha256:sha(before),modelSha256:sha(after),aliases};
- // Fail closed if an implementation change ever loses even one input fact.
- if(!isDeepStrictEqual(restoreNativeReviewInput(input,receipt),original))throw Error('Native review factorization is not lossless');
+ const after=wire(input);const receipt:ReviewFactorReceipt={version:1,sourceRepresentation:'model-wire-json',factored:aliases.length===2,sourceBytes:Buffer.byteLength(before),modelBytes:Buffer.byteLength(after),sourceSha256:sha(before),modelSha256:sha(after),aliases};
+ // Fail closed if even one serialized model-input fact or wire byte is lost.
+ if(!isDeepStrictEqual(restoreNativeReviewInput(input,receipt),source))throw Error('Native review factorization is not lossless');
  return{input,receipt};
 }
 /** The caller supplies the host receipt, never a model/API-authored reference.

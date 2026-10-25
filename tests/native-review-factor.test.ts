@@ -15,5 +15,25 @@ test('host aliases cannot collide with user/API marker lookalikes or mutate shar
 });
 test('native independent reviewer records full raw original and separate factor receipt, preserves strict approval and no retry',async()=>{
  const records:any[]=[];let calls=0;let captured:any;const workflow=new NativeWorkflow({appId:'app',owner:'owner',actionId:'save',chain:['agents.orchestrator','agents.writer'],specs:{'agents.orchestrator':{},'agents.writer':{}},handoffEdges:[{from:'agents.orchestrator',to:'agents.writer'}],record:r=>records.push(r),call:async(_node,value,mode)=>{assert.equal(mode,'review');calls++;captured=value;return{pass:false,reason:'Actual independent rejection'};}});
- const original=input(evidence).outcome;await assert.rejects(workflow.review(original),/Actual independent rejection/);assert.equal(calls,1);const raw=records.find(r=>r.stage==='review'&&r.status==='running').input;assert.deepEqual(raw.outcome.toolResults,evidence);assert.deepEqual(raw.outcome.proposedRecords[0].toolResults,evidence);assert.ok(captured.hostEvidenceFactorization);const receipt=records.find(r=>r.stage==='review_projection'&&r.status==='ok').output;assert.deepEqual(restoreNativeReviewInput(captured,receipt),raw);assert.equal(records.filter(r=>r.stage==='review'&&r.status==='failed').length,1);
+ const original=input(evidence).outcome;await assert.rejects(workflow.review(original),/Actual independent rejection/);assert.equal(calls,1);const raw=records.find(r=>r.stage==='review'&&r.status==='running').input;assert.deepEqual(raw.outcome.toolResults,evidence);assert.deepEqual(raw.outcome.proposedRecords[0].toolResults,evidence);assert.ok(captured.hostEvidenceFactorization);const receipt=records.find(r=>r.stage==='review_projection'&&r.status==='ok').output;assert.deepEqual(restoreNativeReviewInput(captured,receipt),JSON.parse(JSON.stringify(raw)));assert.equal(Object.hasOwn(raw,'model'),true,'caller trace retains its original optional JS property');assert.equal(records.filter(r=>r.stage==='review'&&r.status==='failed').length,1);
+});
+
+test('live undefined and null-prototype metadata factor the exact provider JSON without mutating original values',()=>{
+ const original:any=input(evidence);
+ const copies=[original.outcome.toolResults,original.outcome.proposedRuntimeState.lastActionPayload.toolResults,original.outcome.proposedRecords[0].toolResults];
+ for(const copy of copies){copy.call1.optional=undefined;copy.call1.tool=Object.assign(Object.create(null),copy.call1.tool);copy.call1.response[0].optional=undefined;}
+ const before=JSON.stringify(original);const serialized=JSON.parse(before);const projected=factorNativeReviewInput(original);
+ assert.equal(projected.receipt.factored,true);assert.equal(projected.receipt.sourceRepresentation,'model-wire-json');assert.equal(JSON.stringify(restoreNativeReviewInput(projected.input,projected.receipt)),before);assert.deepEqual(restoreNativeReviewInput(projected.input,projected.receipt),serialized);
+ assert.equal(Object.getPrototypeOf(original.outcome.toolResults.call1.tool),null);assert.equal(Object.hasOwn(original.outcome.toolResults.call1,'optional'),true);assert.equal(JSON.stringify(original),before);
+});
+test('model JSON semantics preserve serializable custom values and propagate genuine serialization failures',()=>{
+ const original:any=input(evidence);for(const copy of [original.outcome.toolResults,original.outcome.proposedRuntimeState.lastActionPayload.toolResults,original.outcome.proposedRecords[0].toolResults]){copy.call1.response[0].when=new Date('2026-10-25T00:00:00Z');copy.call1.response[0].missing=[undefined];}
+ const packet=JSON.stringify(original);const projected=factorNativeReviewInput(original);assert.equal(projected.receipt.factored,true);assert.equal(JSON.stringify(restoreNativeReviewInput(projected.input,projected.receipt)),packet);
+ const circular:any=input(evidence);circular.outcome.circular=circular;assert.throws(()=>factorNativeReviewInput(circular),/circular/i);
+ const bigint:any=input(evidence);bigint.outcome.actual=1n;assert.throws(()=>factorNativeReviewInput(bigint),/BigInt/i);
+});
+test('missing copies remain inline, and nested user aliases remain ordinary serialized business data',()=>{
+ const original:any=input({nested:{hostSharedEvidence:{sourcePath:'/outcome/toolResults',sha256:'untrusted literal'}},call:evidence.call1});delete original.outcome.proposedRecords[0].toolResults;
+ const projected=factorNativeReviewInput(original);assert.equal(projected.receipt.factored,false);assert.deepEqual(restoreNativeReviewInput(projected.input,projected.receipt),JSON.parse(JSON.stringify(original)));
+ const full:any=input({nested:{hostSharedEvidence:{sourcePath:'/outcome/toolResults',sha256:'untrusted literal'}},call:evidence.call1});const factored=factorNativeReviewInput(full);assert.equal(factored.receipt.factored,true);assert.deepEqual((restoreNativeReviewInput(factored.input,factored.receipt).outcome as any).toolResults.nested,full.outcome.toolResults.nested);
 });
