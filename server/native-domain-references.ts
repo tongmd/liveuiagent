@@ -31,7 +31,11 @@ function typedIdentity(value:RawField){
  * do not filter/reindex state declarations before calling this function. */
 export function canonicalizeDomainReferences(rawSlots:unknown,rawStates:unknown,normalizedSlots:readonly DomainField[],normalizedStates:readonly DomainField[]){
  if(!Array.isArray(rawSlots)||rawSlots.length<1||rawSlots.length>6||!Array.isArray(rawStates)||rawStates.length>12||normalizedSlots.length!==rawSlots.length||normalizedStates.length!==rawStates.length)throw Error('Domain reference cardinality or normalization mapping mismatch');
- const slots=rawSlots.map(raw=>field(raw,true));
+ // Existing input normalization remains the authority for non-referenced
+ // controls. A wider historical input shape is not newly rejected here, but
+ // it cannot serve as a strictly legal exact declaration reference.
+ const slotErrors=new Map<number,string>();
+ const slots=rawSlots.map((raw,index)=>{try{return field(raw,true);}catch(error){slotErrors.set(index,String((error as Error).message));return undefined;}});
  const states=rawStates.map(raw=>field(raw,false));
  domainFieldUnion(normalizedSlots,[]);// Never bypass the existing input gate.
  const inputNames=new Map(normalizedSlots.map((value,index)=>[value.name,index]));
@@ -42,16 +46,18 @@ export function canonicalizeDomainReferences(rawSlots:unknown,rawStates:unknown,
   if(stateNames.has(normalized.name))throw Error('Duplicate declarations inside persistedDomainFields');
   stateNames.add(normalized.name);
   if(normalized.type!==states[index].type)throw Error('State normalization changed the explicit type');
-  const exactRawMatches=slots.map((value,inputIndex)=>({inputIndex,identity:JSON.stringify(typedIdentity(value))})).filter(value=>value.identity===JSON.stringify(typedIdentity(states[index])));
+  const exactRawMatches=slots.flatMap((value,inputIndex)=>value?[{inputIndex,identity:JSON.stringify(typedIdentity(value))}]:[]).filter(value=>value.identity===JSON.stringify(typedIdentity(states[index])));
   if(exactRawMatches.length>1)throw Error('Ambiguous complete raw input identity');
   const rawMatch=exactRawMatches[0]?.inputIndex;
   const isIndexFallback=rawMatch!==undefined&&/^slot_\d+$/.test(normalizedSlots[rawMatch].name)&&/^domain_\d+$/.test(normalized.name);
   const inputIndex=isIndexFallback?rawMatch:inputNames.get(normalized.name);
   if(inputIndex===undefined){additional.push(structuredClone(normalized));additionalIndices.push(index);continue;}
   const input=normalizedSlots[inputIndex];
-  const original=JSON.stringify(typedIdentity(slots[inputIndex]));
+  const rawInput=slots[inputIndex];
+  if(!rawInput)throw Error(`Cross-array collision: persistedDomainFields[${index}] name ${JSON.stringify(normalized.name)} conflicts with slots[${inputIndex}] name ${JSON.stringify(input.name)}; input is not strictly legal: ${slotErrors.get(inputIndex)}`);
+  const original=JSON.stringify(typedIdentity(rawInput));
   const repeated=JSON.stringify(typedIdentity(states[index]));
-  if(input.type!==slots[inputIndex].type||input.type!==normalized.type||original!==repeated||JSON.stringify(input.options?.map(option=>[option.label,option.value]))!==JSON.stringify(normalized.options?.map(option=>[option.label,option.value])))throw Error('Cross-array collision is not an exact complete raw typed reference');
+  if(input.type!==rawInput.type||input.type!==normalized.type||original!==repeated||JSON.stringify(input.options?.map(option=>[option.label,option.value]))!==JSON.stringify(normalized.options?.map(option=>[option.label,option.value])))throw Error(`Cross-array collision: persistedDomainFields[${index}] name ${JSON.stringify(normalized.name)} conflicts with slots[${inputIndex}] name ${JSON.stringify(input.name)}; declarations are not an exact complete raw typed reference`);
   if(referenceTargets.has(input.name))throw Error('Duplicate declarations inside persistedDomainFields');
   referenceTargets.add(input.name);
   references.push({inputIndex,persistedIndex:index,canonicalFieldName:input.name,declarationGeneratedName:normalized.name,identityResolution:isIndexFallback&&input.name!==normalized.name?'exact-raw-index-fallback':'same-normalized-name',rawTypedIdentitySha256:createHash('sha256').update(original).digest('hex')});

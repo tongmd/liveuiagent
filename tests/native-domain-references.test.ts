@@ -53,3 +53,9 @@ test('non-ASCII raw identity resolves only unique index-fallback declaration to 
  const longA={...slot,label:'一个完整不可截断的非常长的业务字段名称甲'};const longB={...state,label:'一个完整不可截断的非常长的业务字段名称乙'};
  assert.throws(()=>canonicalize([longA],[longB],[{...input,label:'一个完整不可截断的非常长…'}],[{...repeated,label:'一个完整不可截断的非常长…'}]),/collision/);
 });
+
+test('non-referenced input controls retain existing normalizer authority without becoming legal raw reference sources',()=>{
+ const rawSlots:any=[{name:'old_host_hint',label:'Entry title',type:'string',required:false}];const normalized:any=[{name:'entry_title',label:'Entry title',type:'string',required:false}];
+ assert.deepEqual(canonicalize(rawSlots,[],normalized,[]).schemaFields,normalized);
+ assert.throws(()=>canonicalize(rawSlots,[{label:'Entry title',type:'string'}],normalized,[{name:'entry_title',label:'Entry title',type:'string'}]),/not strictly legal/);
+});
