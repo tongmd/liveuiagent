@@ -85,3 +85,18 @@ body:has(.liveui-composer) .history-panel{width:min(440px,calc(100vw - 32px));he
 body:has(.history-panel) .liveui-catalog-empty{visibility:hidden!important}
 body:has(.liveui-composer) .history-panel{background:#fff!important;opacity:1!important}
 .history-panel .history-prompt span{color:#233d2c!important}.history-panel .history-response span{color:#344e3e!important}.history-panel .history-response b{color:#617768!important}
+
+/* A native sheet has a fixed viewport, not its descendants' min-content width. */
+.concept-material.studio-shell .app-sheet .a2ui-host,
+.concept-material.studio-shell .app-sheet :is(.a2ui-card,.a2ui-column,.a2ui-list,.a2ui-tabs,.a2ui-field){
+  min-width:0;
+  grid-template-columns:minmax(0,1fr);
+}
+.concept-material.studio-shell .app-sheet .a2ui-host :is(.a2ui-row,.a2ui-heading,.a2ui-input){min-width:0;max-width:100%}
+.concept-material.studio-shell .app-sheet .a2ui-host .a2ui-list .a2ui-row{align-items:flex-start;flex-wrap:wrap}
+.concept-material.studio-shell .app-sheet .a2ui-host .a2ui-list .a2ui-row>.a2ui-text{
+  flex:1 1 120px;white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;
+}
+.concept-material.studio-shell .app-sheet .a2ui-host .a2ui-list .a2ui-badge{
+  flex:0 1 auto;max-width:100%;white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;
+}
