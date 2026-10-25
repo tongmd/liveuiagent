@@ -1,4 +1,5 @@
 import { appWorldCatalogLine } from './appworld-schema.js';
+import { actualGroundingEvidence, attemptedGroundingEvidence, groundingEvidenceHistory } from './grounding-evidence.js';
 import { AppWorldRequestNotStartedError } from './appworld-request-error.js';
 import { MailReplyEvidence } from './mail-reply-evidence.js';
 import { NativeWorkflow } from './native-workflow.js';
@@ -5934,7 +5935,7 @@ export async function runAppWorldGrounding(input: {
           userRequest,
           goal,
           ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}),
-          previousCalls: compactHistoryLog(historyLog),
+          previousCalls: groundingEvidenceHistory(historyLog),
           ...(input.recentTurns?.length ? { previousTurns: input.recentTurns } : {}),
           ...(feedback.length ? { evaluatorDeficiencies: feedback, instruction: 'An independent evaluator found these deficiencies. Fix only the remaining gaps, reusing ids and confirmed successful writes in previousCalls. Do not replay successful creates or retry an unknown write outcome. Missing required real values must be reported, never invented. Then finish with an updated summary and the FULL entities list for the whole turn.' } : {}),
           ...(mustFinish ? { instruction: 'You must finish NOW with {"done": true, "summary": ..., "entities": [...]} naming the concrete entities.' } : {}),
@@ -6016,7 +6017,7 @@ export async function runAppWorldGrounding(input: {
                 'DUPLICATE & TURN-SCOPE gate: reject the batch with {"approved": false, "reject": true, "reason": "<why>"} when (a) previousCalls already show a successful create of the same object (same bill/record, matching amounts or title) and the batch re-creates it WITHOUT first deleting the stale copy, or (b) the batch DELETES or re-records an object whose id does NOT trace to a create in previousCalls (i.e. it predates this turn) and the user request does not explicitly ask to remove or correct that record, or (c) the batch COMPLETES/closes/checks-off an item whose name is NOT mentioned in the user request or targetEntity — completing unmentioned siblings corrupts per-item state. Also reject when the API family contradicts explicit intent (for example recording an actual payment for a new bill, debt or future payment request), or when fixing the call would require changing the API family or inventing missing business values. Return approved:false, reject:true with the concrete reason so the executor can re-plan; do not disguise an intent error as an argument correction.',
                 'Otherwise respond ONLY with JSON: {"approved": true} only when the API intent and all args are right, or {"approved": false, "correctedCalls": [{"api": "<same api>", "args": {...fixed args...}}, ...], "reason": "<what you fixed>"}. Use correctedCalls only for evidenced argument corrections within an already-correct API family; keep the SAME apis in the SAME order. For a wrong API family return reject:true instead of correctedCalls.',
               ].join('\n'),
-              user: JSON.stringify({ userRequest, goal, previousCalls: compactHistoryLog(historyLog).slice(-8), mailRecipientEvidence: mailEvidence.facts(), proposedCalls: rawCalls }),
+              user: JSON.stringify({ userRequest, goal, previousCalls: groundingEvidenceHistory(historyLog), mailRecipientEvidence: mailEvidence.facts(), proposedCalls: rawCalls }),
             }) as Record<string, any>;
           } catch (error) {
             if (attempt >= 2) historyLog.push({ ok: false, api: '(write-verifier)', error: compactText((error as Error).message, 160) });
@@ -6061,10 +6062,10 @@ export async function runAppWorldGrounding(input: {
             apiAttemptCount += 1;
             const response = await webTool.invoke(args);
             webCallCount += 1;
-            historyLog.push({ api: webTool.apiName, ok: true, response: compactText(JSON.stringify(response), 800) });
+            historyLog.push(actualGroundingEvidence({ api: webTool.apiName, order: apiAttemptCount, request: args, response, requestSource: 'web-tool-dispatched-arguments' }));
           } catch (error) {
             unknownDispatchOutcomes += 1;
-            historyLog.push({ api: webTool.apiName, ok: false, dispatchOutcome: 'unknown', automaticRetry: false, error: compactText((error as Error).message, 240) });
+            historyLog.push({ ...attemptedGroundingEvidence({ api: webTool.apiName, order: apiAttemptCount, attemptedArguments: args, executionState: 'outcome_unknown', error: compactText((error as Error).message, 240) }), dispatchOutcome: 'unknown' });
           }
           continue;
         }
@@ -6086,13 +6087,15 @@ export async function runAppWorldGrounding(input: {
           mailEvidence.observe(result, calls.length, replyRecipients);
           if (String(capability.method || '').toUpperCase() === 'GET') lastReadAt = calls.length;
           else lastWriteAt = calls.length;
-          historyLog.push({ api: capability.apiName, ok: true, response: compactText(JSON.stringify(result.response ?? ''), 400) });
+          historyLog.push(actualGroundingEvidence({ api: capability.apiName, order: apiAttemptCount, request: result.request, response: result.response }));
         } catch (error) {
           if (bridgeAttempted && replyRecipients) mailEvidence.failedAttempt(capability, args, replyRecipients, error);
           const notStarted = bridgeAttempted && error instanceof AppWorldRequestNotStartedError;
           if (notStarted) notStartedApiCalls += 1;
           else if (bridgeAttempted) unknownDispatchOutcomes += 1;
-          historyLog.push({ api: capability.apiName, ok: false, ...(bridgeAttempted ? { dispatchOutcome: notStarted ? 'not_started' : 'unknown', automaticRetry: false } : {}), error: compactText((error as Error).message, 240) });
+          historyLog.push(bridgeAttempted
+            ? { ...attemptedGroundingEvidence({ api: capability.apiName, order: apiAttemptCount, attemptedArguments: args, executionState: notStarted ? 'not_started' : 'outcome_unknown', error: compactText((error as Error).message, 240) }), dispatchOutcome: notStarted ? 'not_started' : 'unknown' }
+            : { api: capability.apiName, ok: false, error: compactText((error as Error).message, 240) });
         }
       }
     }
@@ -6117,7 +6120,7 @@ export async function runAppWorldGrounding(input: {
         'Treat the goal contract as a fallible plan: fail a repayment/transfer write for a new bill, shared debt, or future payment request unless the user explicitly requested that transfer or reported a completed repayment. Do not approve only because execution matched a mistaken goal. A successful read alone never fulfills a requested mutation. Also fail if a write lacks a successful read AFTER the last write verifying the changed target and current state; step/time limits and mustFinish do not waive this evidence requirement. When evidence is incomplete, return pass:false with the missing evidence, not assumed success.',
         'Also fail when any visibleEntities entry names an object or id that does not appear in a successful API response inside apiCalls: entities are a read-back of the world, and a row whose name/id cannot be traced to response evidence is fabricated no matter how plausible it looks (e.g. inventing inbox subjects the API never returned).',
       ].join('\n'),
-      user: JSON.stringify({ userRequest, goal, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: compactHistoryLog(historyLog), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities }),
+      user: JSON.stringify({ userRequest, goal, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities }),
     }) as Record<string, any>;
     evaluation = {
       pass: verdictRaw?.pass === true && lastWriteAt <= lastReadAt && calls.length + webCallCount > 0,
