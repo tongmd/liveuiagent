@@ -19,7 +19,7 @@
     "shell:android": "npm --workspace apps/shell run android",
     "test": "npm run test:offline",
     "pretest:offline": "npm run build",
-    "test:offline": "node --test tests/*.test.mjs && tsx tests/agent-scheduler.test.ts && tsx tests/appworld-bridge.test.ts && npm run test:host && npm run test:dsh",
+    "test:offline": "node --test tests/*.test.mjs && tsx tests/agent-scheduler.test.ts && tsx tests/appworld-bridge.test.ts && npm run test:native && npm run test:host && npm run test:dsh",
     "test:runtime-ui": "node scripts/test-runtime-controls.mjs",
     "test:evaluator": "tsx scripts/test-complete-app-evaluator.ts",
     "test:catalog": "node scripts/test-material-catalog.mjs",
@@ -30,7 +30,8 @@
     "test:deployment": "node --test tests/deployment.test.mjs",
     "test:deploy": "node --test tests/deployment.test.mjs",
     "check:docs": "node scripts/check-docs.mjs",
-    "test:host": "tsx --test --test-concurrency=1 tests/complete-app-driver.test.ts tests/complete-action-deadline.test.ts tests/dsh-*.test.ts"
+    "test:host": "tsx --test --test-concurrency=1 tests/complete-app-driver.test.ts tests/complete-action-deadline.test.ts tests/dsh-*.test.ts",
+    "test:native": "tsx --test --test-concurrency=1 tests/native-*.test.ts"
   },
   "keywords": [
     "liveuiagent",
