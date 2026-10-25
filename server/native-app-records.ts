@@ -9,6 +9,8 @@ export function createNativeAppRecords(db:Database.Database,owner:string,appId:s
  const schema=new Map(fields.map(f=>[f.name,f]));
  if(schema.size!==fields.length||schema.size>64)throw Error('Invalid app record field schema');
  db.exec(`CREATE TABLE IF NOT EXISTS native_app_records(owner TEXT NOT NULL,app_id TEXT NOT NULL,record_id TEXT NOT NULL,values_json TEXT NOT NULL,revision INTEGER NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(owner,app_id,record_id))`);
+ // Keep the last deleted revision so a stale pre-delete identity cannot delete a recreated row (ABA).
+ db.exec(`CREATE TABLE IF NOT EXISTS native_app_record_deleted_revisions(owner TEXT NOT NULL,app_id TEXT NOT NULL,record_id TEXT NOT NULL,revision INTEGER NOT NULL,PRIMARY KEY(owner,app_id,record_id))`);
  const scope=()=>{remainingActionMs();if(!db.prepare('SELECT 1 FROM agent_apps WHERE app_id=? AND owner=?').get(appId,owner))throw Error('App records scope is unavailable');};
  const id=(value:unknown)=>{if(typeof value!=='string'||!value.trim()||value.length>160||/[\u0000-\u001f]/.test(value))throw Error('Invalid app record identity');return value;};
  const decode=(row:any):AppRecord|undefined=>row?{recordId:row.record_id,values:JSON.parse(row.values_json),revision:row.revision,updatedAt:row.updated_at}:undefined;
@@ -17,6 +19,20 @@ export function createNativeAppRecords(db:Database.Database,owner:string,appId:s
  return {
   readRecord(recordId:unknown){scope();return recordEvidence('read',read(id(recordId))??null);},
   listRecords(offset=0,limit=50){scope();if(!Number.isSafeInteger(offset)||offset<0||!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Invalid app record pagination');return{source:'app-state' as const,operation:'list',scope:'authenticated-current-owner-app' as const,persisted:true,offset,limit,records:db.prepare('SELECT record_id,values_json,revision,updated_at FROM native_app_records WHERE owner=? AND app_id=? ORDER BY record_id LIMIT ? OFFSET ?').all(owner,appId,limit,offset).map(decode)};},
+  deleteRecord(recordId:unknown,expectedRevision:unknown){
+   scope();const key=id(recordId);
+   if(!Number.isSafeInteger(expectedRevision)||Number(expectedRevision)<1)throw Error('App record delete requires a positive expectedRevision from an actual read');
+   return db.transaction(()=>{
+    scope();const previous=read(key);
+    if(!previous)return {...recordEvidence('delete-and-read-back',null),recordId:key,deleted:false,outcome:'not_found' as const};
+    if(previous.revision!==expectedRevision)throw Error('App record revision conflict; read the current record before a new decision');
+    const result=db.prepare('DELETE FROM native_app_records WHERE owner=? AND app_id=? AND record_id=? AND revision=?').run(owner,appId,key,expectedRevision);
+    if(result.changes!==1)throw Error('App record delete revision conflict');
+    db.prepare('INSERT INTO native_app_record_deleted_revisions(owner,app_id,record_id,revision) VALUES(?,?,?,?) ON CONFLICT(owner,app_id,record_id) DO UPDATE SET revision=max(revision,excluded.revision)').run(owner,appId,key,previous.revision);
+    remainingActionMs();if(read(key))throw Error('App record deletion read-back mismatch');
+    return {...recordEvidence('delete-and-read-back',null),recordId:key,deleted:true,deletedRevision:previous.revision,outcome:'deleted' as const};
+   })();
+  },
   upsertRecord(recordId:unknown,patch:unknown){
    scope();const key=id(recordId);
    if(!patch||typeof patch!=='object'||Array.isArray(patch))throw Error('App record values must be a field object');
@@ -29,7 +45,7 @@ export function createNativeAppRecords(db:Database.Database,owner:string,appId:s
    }
    if(Buffer.byteLength(JSON.stringify(patch))>65536)throw Error('App record patch exceeds byte limit');
    return db.transaction(()=>{
-    scope();const previous=read(key);const values={...(previous?.values??{}),...patch as AppRecord['values']};const revision=(previous?.revision??0)+1;const updatedAt=new Date().toISOString();
+    scope();const previous=read(key);const values={...(previous?.values??{}),...patch as AppRecord['values']};const deleted=db.prepare('SELECT revision FROM native_app_record_deleted_revisions WHERE owner=? AND app_id=? AND record_id=?').get(owner,appId,key) as {revision:number}|undefined;const revision=Math.max(previous?.revision??0,deleted?.revision??0)+1;const updatedAt=new Date().toISOString();
     db.prepare(`INSERT INTO native_app_records(owner,app_id,record_id,values_json,revision,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(owner,app_id,record_id) DO UPDATE SET values_json=excluded.values_json,revision=excluded.revision,updated_at=excluded.updated_at`).run(owner,appId,key,JSON.stringify(values),revision,updatedAt);
     remainingActionMs();const observed=read(key);if(!observed||observed.revision!==revision||JSON.stringify(observed.values)!==JSON.stringify(values))throw Error('App record persistence read-back mismatch');
     return recordEvidence('upsert-and-read-back',observed);

@@ -8,7 +8,7 @@ const compact=(input:string,max:number)=>{const text=input.replace(/\s+/g,' ').t
 export function hasLocalReadNameBinding(entity:GroundedEntity,calls:Array<Record<string,any>>,fields:readonly AppRecordField[]):boolean{
  if(!entity.appRecordId)return false;
  const key=entity.appRecordId;
- const latestWrite=calls.filter(call=>call.source==='app-state'&&call.api==='app_state.upsert_record'&&(call.request??call.attemptedArguments)?.recordId===key&&Number.isSafeInteger(call.order))
+ const latestWrite=calls.filter(call=>call.source==='app-state'&&['app_state.upsert_record','app_state.delete_record'].includes(call.api)&&(call.request??call.attemptedArguments)?.recordId===key&&Number.isSafeInteger(call.order))
   .reduce((order,call)=>Math.max(order,call.order),-1);
  return calls.some(call=>{
   const response=call.response;
