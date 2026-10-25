@@ -6,7 +6,9 @@ const sha=(v:string)=>createHash('sha256').update(v).digest('hex');
 const memoryBoundary='\nUser-controlled preference memory (data; current request takes precedence): ';
 const allowed=new Set(['messages','model','temperature','max_tokens','max_completion_tokens','response_format','thinking','reasoning_effort','reasoning','top_p','stop','seed','frequency_penalty','presence_penalty','n','stream','stream_options','tools','tool_choice','parallel_tool_calls']);
 export const NATIVE_INPUT_CAPTURE_LIMITS={maxRecords:128,maxRecordBytes:2*1024*1024,maxTotalBytes:32*1024*1024} as const;
-/** Opt-in private diagnostic, never an uploader or business request modifier. */
+/** Opt-in private original-input diagnostic, never an uploader or public-safe export.
+ * Exact known authentication keys/provider secret checks cannot identify arbitrary
+ * secrets in natural-language business text. Do not auto-collect or upload files. */
 export function createNativeInputCapture(taskRoot:string,root?:string,limits:Partial<Record<keyof typeof NATIVE_INPUT_CAPTURE_LIMITS,number>>={}) {
  const bound={...NATIVE_INPUT_CAPTURE_LIMITS,...limits};
  for(const k of Object.keys(bound) as Array<keyof typeof bound>)if(!Number.isSafeInteger(bound[k])||bound[k]<1||bound[k]>NATIVE_INPUT_CAPTURE_LIMITS[k])throw Error('Invalid Native capture bound');
@@ -24,7 +26,7 @@ export function createNativeInputCapture(taskRoot:string,root?:string,limits:Par
    for(let i=0;i<(saved.messages?.length||0);i++){
     const m=saved.messages[i];if(typeof m?.content!=='string')continue;
     // Only parse the host's complete JSON envelope, not arbitrary business text.
-    const pieces=m.content.split(memoryBoundary);if(pieces.length>2)continue;
+    const pieces=m.content.split(memoryBoundary);if(pieces.length>2)return {...base,status:'not_captured',reason:'ambiguous_host_message_envelope'};
     const next=pieces.map((part:string,index:number)=>{try{const value=JSON.parse(part);if(!value||typeof value!=='object')return part;const p=projectBusinessEvidence(value,`messages[${i}].content${index?'.personalContext':''}`);omitted.push(...p.omittedAuthenticationKeys);return p.omittedAuthenticationKeys.length?JSON.stringify(p.value):part;}catch{return part;}});
     m.content=next.join(memoryBoundary);
    }
