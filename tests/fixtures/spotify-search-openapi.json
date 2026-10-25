@@ -1,0 +1,617 @@
+{
+  "openapi": "3.1.0",
+  "paths": {
+    "/spotify/songs": {
+      "get": {
+        "summary": "Spotify: Search Songs",
+        "description": "Search for songs with a query.",
+        "operationId": "spotify__search_songs",
+        "parameters": [
+          {
+            "description": "The search query string.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Query",
+              "description": "The search query string.",
+              "default": ""
+            },
+            "name": "query",
+            "in": "query"
+          },
+          {
+            "description": "The index of the page to return.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Page Index",
+              "description": "The index of the page to return.",
+              "default": 0
+            },
+            "name": "page_index",
+            "in": "query"
+          },
+          {
+            "description": "The maximum number of results to return per page.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 20.0,
+              "minimum": 1.0,
+              "title": "Page Limit",
+              "description": "The maximum number of results to return per page.",
+              "default": 5
+            },
+            "name": "page_limit",
+            "in": "query"
+          },
+          {
+            "description": "The artist id to filter the search results by.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "title": "Artist Id",
+              "description": "The artist id to filter the search results by."
+            },
+            "name": "artist_id",
+            "in": "query"
+          },
+          {
+            "description": "The album id to filter the search results by.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "title": "Album Id",
+              "description": "The album id to filter the search results by."
+            },
+            "name": "album_id",
+            "in": "query"
+          },
+          {
+            "description": "The genre to filter the albums by.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Genre",
+              "description": "The genre to filter the albums by."
+            },
+            "name": "genre",
+            "in": "query"
+          },
+          {
+            "description": "The minimum release date for search results in YYYY-MM-DD format.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Min Release Date",
+              "description": "The minimum release date for search results in YYYY-MM-DD format.",
+              "default": "1500-01-01"
+            },
+            "name": "min_release_date",
+            "in": "query"
+          },
+          {
+            "description": "The maximum release date for search results in YYYY-MM-DD format.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Max Release Date",
+              "description": "The maximum release date for search results in YYYY-MM-DD format.",
+              "default": "3000-01-01"
+            },
+            "name": "max_release_date",
+            "in": "query"
+          },
+          {
+            "description": "The minimum duration in seconds for search results.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Min Duration",
+              "description": "The minimum duration in seconds for search results.",
+              "default": 0
+            },
+            "name": "min_duration",
+            "in": "query"
+          },
+          {
+            "description": "The maximum duration in seconds for search results.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Max Duration",
+              "description": "The maximum duration in seconds for search results.",
+              "default": 9223372036854775807
+            },
+            "name": "max_duration",
+            "in": "query"
+          },
+          {
+            "description": "The minimum rating for search results.",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 5.0,
+              "minimum": 0.0,
+              "title": "Min Rating",
+              "description": "The minimum rating for search results.",
+              "default": 0
+            },
+            "name": "min_rating",
+            "in": "query"
+          },
+          {
+            "description": "The maximum rating for search results.",
+            "required": false,
+            "schema": {
+              "type": "number",
+              "maximum": 5.0,
+              "minimum": 0.0,
+              "title": "Max Rating",
+              "description": "The maximum rating for search results.",
+              "default": 5
+            },
+            "name": "max_rating",
+            "in": "query"
+          },
+          {
+            "description": "The minimum like count for search results.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Min Like Count",
+              "description": "The minimum like count for search results.",
+              "default": 0
+            },
+            "name": "min_like_count",
+            "in": "query"
+          },
+          {
+            "description": "The maximum like count for search results.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Max Like Count",
+              "description": "The maximum like count for search results.",
+              "default": 9223372036854775807
+            },
+            "name": "max_like_count",
+            "in": "query"
+          },
+          {
+            "description": "The minimum play count for search results.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Min Play Count",
+              "description": "The minimum play count for search results.",
+              "default": 0
+            },
+            "name": "min_play_count",
+            "in": "query"
+          },
+          {
+            "description": "The maximum play count for search results.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Max Play Count",
+              "description": "The maximum play count for search results.",
+              "default": 9223372036854775807
+            },
+            "name": "max_play_count",
+            "in": "query"
+          },
+          {
+            "description": "The attribute to sort the songs by prefixed with +/- to reflect ascending/descending. Valid attributes: rating, like_count and play_count. If both query and sort_by are given and non-empty, results will be first ranked by query relevance, then paginated, and will then be sorted by the given attribute within each page.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Sort By",
+              "description": "The attribute to sort the songs by prefixed with +/- to reflect ascending/descending. Valid attributes: rating, like_count and play_count. If both query and sort_by are given and non-empty, results will be first ranked by query relevance, then paginated, and will then be sorted by the given attribute within each page."
+            },
+            "name": "sort_by",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "properties": {
+                      "song_id": {
+                        "type": "integer",
+                        "title": "Song Id"
+                      },
+                      "title": {
+                        "type": "string",
+                        "minLength": 1,
+                        "title": "Title"
+                      },
+                      "album_id": {
+                        "type": "integer",
+                        "title": "Album Id"
+                      },
+                      "album_title": {
+                        "type": "string",
+                        "title": "Album Title"
+                      },
+                      "duration": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0.0,
+                        "title": "Duration"
+                      },
+                      "artists": {
+                        "items": {
+                          "properties": {
+                            "id": {
+                              "type": "integer",
+                              "title": "Id"
+                            },
+                            "name": {
+                              "type": "string",
+                              "title": "Name"
+                            }
+                          },
+                          "additionalProperties": false,
+                          "type": "object",
+                          "required": [
+                            "id",
+                            "name"
+                          ],
+                          "title": "Artist",
+                          "description": "Response Model"
+                        },
+                        "type": "array",
+                        "title": "Artists"
+                      },
+                      "release_date": {
+                        "type": "string",
+                        "format": "date-time",
+                        "title": "Release Date"
+                      },
+                      "genre": {
+                        "type": "string",
+                        "minLength": 1,
+                        "title": "Genre"
+                      },
+                      "play_count": {
+                        "type": "integer",
+                        "minimum": 0.0,
+                        "title": "Play Count"
+                      },
+                      "rating": {
+                        "type": "number",
+                        "title": "Rating"
+                      },
+                      "like_count": {
+                        "type": "integer",
+                        "title": "Like Count"
+                      },
+                      "review_count": {
+                        "type": "integer",
+                        "title": "Review Count"
+                      },
+                      "shareable_link": {
+                        "type": "string",
+                        "title": "Shareable Link"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "song_id",
+                      "title",
+                      "duration",
+                      "artists",
+                      "release_date",
+                      "genre",
+                      "play_count",
+                      "rating",
+                      "like_count",
+                      "review_count",
+                      "shareable_link"
+                    ],
+                    "title": "SongResponse",
+                    "description": "Response Model"
+                  },
+                  "type": "array",
+                  "title": "Response 200 Search Songs Songs Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "title": "Message"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "message"
+                  ],
+                  "title": "MessageResponse",
+                  "description": "Response Model"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "title": "Message"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "message"
+                  ],
+                  "title": "MessageResponse",
+                  "description": "Response Model"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "title": "Message"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "message"
+                  ],
+                  "title": "MessageResponse",
+                  "description": "Response Model"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/spotify/artists": {
+      "get": {
+        "summary": "Spotify: Search Artists",
+        "description": "Search for artists with a query.",
+        "operationId": "spotify__search_artists",
+        "parameters": [
+          {
+            "description": "The search query string.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Query",
+              "description": "The search query string.",
+              "default": ""
+            },
+            "name": "query",
+            "in": "query"
+          },
+          {
+            "description": "The index of the page to return.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Page Index",
+              "description": "The index of the page to return.",
+              "default": 0
+            },
+            "name": "page_index",
+            "in": "query"
+          },
+          {
+            "description": "The maximum number of results to return per page.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 20.0,
+              "minimum": 1.0,
+              "title": "Page Limit",
+              "description": "The maximum number of results to return per page.",
+              "default": 5
+            },
+            "name": "page_limit",
+            "in": "query"
+          },
+          {
+            "description": "The genre to filter the artists by.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Genre",
+              "description": "The genre to filter the artists by."
+            },
+            "name": "genre",
+            "in": "query"
+          },
+          {
+            "description": "The minimum number of followers for search results.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Min Follower Count",
+              "description": "The minimum number of followers for search results.",
+              "default": 0
+            },
+            "name": "min_follower_count",
+            "in": "query"
+          },
+          {
+            "description": "The maximum number of followers for search results.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0.0,
+              "title": "Max Follower Count",
+              "description": "The maximum number of followers for search results.",
+              "default": 9223372036854775807
+            },
+            "name": "max_follower_count",
+            "in": "query"
+          },
+          {
+            "description": "The attribute to sort the artists by prefixed with +/- to reflect ascending/descending. Valid attributes: follower_count. If both query and sort_by are given and non-empty, results will be first ranked by query relevance, then paginated, and will then be sorted by the given attribute within each page.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Sort By",
+              "description": "The attribute to sort the artists by prefixed with +/- to reflect ascending/descending. Valid attributes: follower_count. If both query and sort_by are given and non-empty, results will be first ranked by query relevance, then paginated, and will then be sorted by the given attribute within each page."
+            },
+            "name": "sort_by",
+            "in": "query"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "properties": {
+                      "artist_id": {
+                        "type": "integer",
+                        "title": "Artist Id"
+                      },
+                      "name": {
+                        "type": "string",
+                        "minLength": 1,
+                        "title": "Name"
+                      },
+                      "genre": {
+                        "type": "string",
+                        "minLength": 1,
+                        "title": "Genre"
+                      },
+                      "follower_count": {
+                        "type": "integer",
+                        "title": "Follower Count"
+                      },
+                      "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "title": "Created At"
+                      }
+                    },
+                    "additionalProperties": false,
+                    "type": "object",
+                    "required": [
+                      "artist_id",
+                      "name",
+                      "genre",
+                      "follower_count",
+                      "created_at"
+                    ],
+                    "title": "ArtistResponse",
+                    "description": "Response Model"
+                  },
+                  "type": "array",
+                  "title": "Response 200 Search Artists Artists Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Unprocessable Entity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "title": "Message"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "message"
+                  ],
+                  "title": "MessageResponse",
+                  "description": "Response Model"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "title": "Message"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "message"
+                  ],
+                  "title": "MessageResponse",
+                  "description": "Response Model"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "title": "Message"
+                    }
+                  },
+                  "additionalProperties": false,
+                  "type": "object",
+                  "required": [
+                    "message"
+                  ],
+                  "title": "MessageResponse",
+                  "description": "Response Model"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

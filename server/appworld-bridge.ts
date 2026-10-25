@@ -1,3 +1,4 @@
+import { resolveApiSchema, validateApiValue } from './appworld-schema.js';
 import { remainingActionMs, withoutActionDeadline, actionDeadlineAt, actionDeadlineError } from './action-deadline.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -28,6 +29,7 @@ export type AppWorldToolCapability = {
   requiresAuth?: boolean;
   requiredParams?: string[];
   inputSchema?: unknown;
+  parameterLocations?: Record<string, 'path' | 'query' | 'body'>;
   outputSchema?: unknown;
 };
 
@@ -152,7 +154,7 @@ function flattenApiDocs(openapi: unknown, appName: string) {
       const summary = compactText(String(operation.summary || operation.description || apiName), 60);
       const description = compactText(String(operation.description || operation.summary || `${method} ${routePath}`), 240);
       const requestBody = operation.requestBody && typeof operation.requestBody === 'object'
-        ? asRecord(operation.requestBody, `AppWorld operation ${operationId} requestBody must be an object`)
+        ? asRecord(resolveApiSchema(operation.requestBody, doc), `AppWorld operation ${operationId} requestBody must be an object`)
         : undefined;
       const requestSchema = requestBody?.content && typeof requestBody.content === 'object'
         ? (asRecord(requestBody.content, `AppWorld operation ${operationId} requestBody content must be an object`)['application/json'] as Record<string, unknown> | undefined)?.schema
@@ -163,9 +165,26 @@ function flattenApiDocs(openapi: unknown, appName: string) {
       const outputSchema = responses?.['200'] && typeof responses['200'] === 'object'
         ? asRecord(responses['200'], `AppWorld operation ${operationId} response 200 must be an object`)
         : undefined;
-      const requiredParams = (Array.isArray(operation.parameters) ? operation.parameters : [])
-        .filter((param: any) => param && typeof param === 'object' && param.required === true)
-        .map((param: any) => String(param.name || '')).filter(Boolean);
+      const bodySchema = requestSchema ? asRecord(requestSchema, `Invalid request schema ${operationId}`) : {};
+      const properties: Record<string, unknown> = {...(bodySchema.properties as Record<string, unknown> || {})};
+      const parameterLocations: Record<string, 'path' | 'query' | 'body'> = Object.fromEntries(Object.keys(properties).map(key => [key, 'body']));
+      const required = new Set<string>(Array.isArray(bodySchema.required) ? bodySchema.required : []);
+      const parameters = new Map<string, any>();
+      for (const raw of [...(Array.isArray(routeMethods.parameters) ? routeMethods.parameters : []), ...(Array.isArray(operation.parameters) ? operation.parameters : [])]) {
+        const param = resolveApiSchema(raw, doc);
+        parameters.set(`${param.in}:${param.name}`, param); // Operation overrides path-item parameter of the same location/name.
+      }
+      for (const param of parameters.values()) {
+        if (!['path', 'query'].includes(param.in)) throw new Error(`Unsupported AppWorld parameter location ${operationId}: ${param.in}`);
+        if (param.in === 'query' && ((param.style && param.style !== 'form') || param.explode === false)) throw new Error(`Unsupported AppWorld query serialization ${operationId}: ${param.name}`);
+        const name = requiredText(param.name, `Missing parameter name ${operationId}`);
+        if (Object.hasOwn(properties, name)) throw new Error(`Ambiguous AppWorld parameter ${operationId}: ${name}`);
+        properties[name] = param.schema || {};
+        parameterLocations[name] = param.in;
+        if (param.required === true || param.in === 'path') required.add(name);
+      }
+      const requiredParams = [...required];
+      const inputSchema = {...bodySchema, type: 'object', properties, required: requiredParams, additionalProperties: false};
       tools.push({
         id: `tool.appworld.${appName}.${apiName}`,
         label: summary || titleCase(apiName),
@@ -179,7 +198,8 @@ function flattenApiDocs(openapi: unknown, appName: string) {
         operationId,
         requiresAuth: Array.isArray(operation.security) && operation.security.length > 0,
         requiredParams,
-        inputSchema: requestSchema,
+        inputSchema,
+        parameterLocations,
         outputSchema,
       });
     }
@@ -279,7 +299,6 @@ function stripBodyArgs(args: Record<string, unknown>, usedKeys: Set<string>) {
   const body: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(args)) {
     if (usedKeys.has(key)) continue;
-    if (key === 'sourceComponentId' || key === 'toolResults' || key === 'toolDbChanges' || key === 'dbChanges') continue;
     body[key] = value;
   }
   return body;
@@ -519,11 +538,13 @@ export function createAppWorldBridge(projectRoot: string): AppWorldBridge | null
     remainingActionMs();
     const tool = await findCapability(id);
     if (!tool) throw new Error(`unknown AppWorld tool: ${id}`);
-    const args = normalizeArgs(payload);
+    const declared = (tool.inputSchema as Record<string, any> | undefined)?.properties || {};
+    const args = Object.fromEntries(Object.entries(normalizeArgs(payload)).filter(([key]) => Object.hasOwn(declared, key) || !['sourceComponentId', 'toolResults', 'toolDbChanges', 'dbChanges'].includes(key)));
     if (tool.id === 'tool.appworld.db.snapshot') {
       const snapshot = await writeSnapshot('manual');
       return { tool, request: args, response: snapshot, dbChanges: null };
     }
+    if (tool.inputSchema) validateApiValue(args, tool.inputSchema as Record<string, any>, tool.apiName);
     // Final enforcement for every execution path, including explicit MCP
     // calls. Catalog/schema discovery and evaluator snapshots remain usable;
     // fail before auth bootstrap can read mail or write account records.
@@ -539,13 +560,14 @@ export function createAppWorldBridge(projectRoot: string): AppWorldBridge | null
     // AppWorld mounts each app's OpenAPI paths under /{appName}; the per-app
     // openapi.json documents paths without that prefix.
     const { url, usedKeys } = buildRequestUrl(config.apiBase, `/${tool.appName}${tool.path}`, args);
-    const queryKeys = ['GET', 'HEAD'].includes(tool.method) ? Object.keys(args).filter((key) => !usedKeys.has(key)) : [];
+    const queryKeys = Object.keys(args).filter(key => tool.parameterLocations?.[key] === 'query');
     for (const key of queryKeys) {
       const value = args[key];
       if (value === undefined || value === null || String(value).trim() === '') continue;
-      url.searchParams.set(key, String(value));
+      if (Array.isArray(value)) value.forEach(item => url.searchParams.append(key, String(item)));
+      else url.searchParams.set(key, String(value));
     }
-    const body = !['GET', 'HEAD'].includes(tool.method) ? stripBodyArgs(args, usedKeys) : undefined;
+    const body = !['GET', 'HEAD'].includes(tool.method) ? stripBodyArgs(args, new Set([...usedKeys, ...queryKeys])) : undefined;
     const callOnce = async () => fetchJson(url.toString(), {
       method: tool.method,
       label: `AppWorld tool ${tool.id}`,

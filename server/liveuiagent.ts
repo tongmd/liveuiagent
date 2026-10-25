@@ -1,3 +1,4 @@
+import { appWorldCatalogLine } from './appworld-schema.js';
 import { NativeWorkflow } from './native-workflow.js';
 import { actionDeadlineAt, actionDeadlineError, remainingActionMs, actionRetryDelay } from './action-deadline.js';
 import fs from 'node:fs';
@@ -5775,18 +5776,7 @@ export async function runAppWorldGrounding(input: {
   const webTools = webToolRegistry.filter((tool) => (input.webPermissions ?? []).includes(tool.id));
   // 目录必须包含该 action 允许的每一个 API —— 静默截断(旧 slice(0,60))会让 agent
   // 以为 play/pause 这类排在 openapi 末尾的能力根本不存在(点"开始播放"却只会重读歌单)。
-  const catalog = capabilities.map((tool) => {
-    const schema = tool.inputSchema as Record<string, any> | undefined;
-    const required = new Set<string>([
-      ...(Array.isArray(schema?.required) ? schema!.required : []),
-      ...(Array.isArray(tool.requiredParams) ? tool.requiredParams : []),
-    ]);
-    const args = uniqueStrings([
-      ...required,
-      ...Object.keys(schema?.properties || {}),
-    ]).slice(0, 8).map((name) => (required.has(name) ? `${name}*` : name));
-    return `- ${tool.apiName} [${tool.method}]: ${compactText(tool.purpose, 140)} args(*=required): ${args.join(', ') || 'none'}`;
-  }).concat(webToolCatalogLines(webTools)).join('\n');
+  const catalog = capabilities.map(appWorldCatalogLine).concat(webToolCatalogLines(webTools)).join('\n');
   // The GUI form fills several slots with overlapping text; give the agent the
   // distinct values only. 被点击的按钮语义放在第一位 —— 三个按钮必须驱动不同的行为
   // (播放就要调 play API,而不是把歌单再确认一遍)。

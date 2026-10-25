@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createServer } from 'node:http';
+import { resolveApiSchema, appWorldCatalogLine } from '../server/appworld-schema.js';
 import { createAppWorldBridge } from '../server/appworld-bridge.js';
 
 async function main() {
@@ -12,7 +13,13 @@ async function main() {
 
   const openapi = {
     openapi: '3.1.0',
+    components: {schemas: {Note: {type:'object', required:['text'], properties:{text:{type:'string'},sourceComponentId:{type:'string'}}}}},
     paths: {
+      '/notes/{note_id}': {
+        parameters:[{name:'note_id', in:'path', required:true, schema:{type:'integer'}}],
+        patch: {operationId:'update_note', parameters:[{name:'notify', in:'query', schema:{type:'boolean'}}],
+          requestBody:{content:{'application/json':{schema:{$ref:'#/components/schemas/Note'}}}}, responses:{'200':{description:'ok'}}},
+      },
       '/notes': {
         post: {
           operationId: 'create_note_notes_post',
@@ -33,13 +40,25 @@ async function main() {
     },
   };
 
+  // Real frozen Spotify search parameters; authentication is outside this mock's scope.
+  const spotify = JSON.parse(fs.readFileSync(new URL('./fixtures/spotify-search-openapi.json', import.meta.url), 'utf8'));
+  for (const item of Object.values(spotify.paths) as any[]) item.get.security = [{OAuth2:[]}];
+  const gmail = JSON.parse(fs.readFileSync(new URL('./fixtures/gmail-reply-openapi.json', import.meta.url), 'utf8'));
+  // Keep real protected operation security: credentials come only from host login.
+  const secret = 'mock-host-session-secret';
+  const authHeaders: unknown[] = [];
+  const requests: Array<{url: string; body: string}> = [];
   const snapshots: Record<string, string> = {
     '/dbs': JSON.stringify({ simple_note: '/tmp/appworld/simple_note.db' }),
     '/api_docs/app_descriptions': JSON.stringify([
       { name: 'api_docs', description: 'API documentation app' },
       { name: 'simple_note', description: 'Simple note app' },
+      { name: 'spotify', description: 'Spotify mock' },
+      { name: 'gmail', description: 'Gmail mock' },
     ]),
     '/simple_note/openapi.json': JSON.stringify(openapi),
+    '/spotify/openapi.json': JSON.stringify(spotify),
+    '/gmail/openapi.json': JSON.stringify(gmail),
     '/notes': JSON.stringify({ ok: true }),
     '/dbs/save': JSON.stringify({ message: 'saved' }),
   };
@@ -50,6 +69,22 @@ async function main() {
     req.on('data', (chunk) => bodyChunks.push(Buffer.from(chunk)));
     req.on('end', () => {
       const key = url.pathname;
+      if (key.endsWith('/auth/token')) {
+        res.writeHead(200, {'content-type':'application/json'}); res.end(JSON.stringify({access_token:secret})); return;
+      }
+      if (key.startsWith('/spotify/spotify/') || key.startsWith('/gmail/gmail/')) authHeaders.push(req.headers.authorization);
+      if (key === '/spotify/spotify/songs' || key === '/spotify/spotify/artists') {
+        requests.push({url: url.toString(), body: Buffer.concat(bodyChunks).toString('utf8')});
+        res.writeHead(200, {'content-type': 'application/json'}); res.end('[]'); return;
+      }
+      if (req.method === 'POST' && key === '/gmail/gmail/email_threads/8/emails/9/reply') {
+        requests.push({url:url.toString(),body:Buffer.concat(bodyChunks).toString('utf8')});
+        res.writeHead(200, {'content-type':'application/json'}); res.end('{}'); return;
+      }
+      if (req.method === 'PATCH' && key === '/simple_note/notes/7') {
+        requests.push({url:url.toString(),body:Buffer.concat(bodyChunks).toString('utf8')});
+        res.writeHead(200, {'content-type':'application/json'}); res.end('{}'); return;
+      }
       if (req.method === 'POST' && key === '/simple_note/notes') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ created: true, body: Buffer.concat(bodyChunks).toString('utf8') }));
@@ -77,7 +112,7 @@ async function main() {
       apiBase,
       snapshotRoot: './snapshots',
       exposeAllTools: true,
-      apps: ['simple_note'],
+      apps: ['simple_note', 'spotify', 'gmail'],
       timeoutMs: 2000,
     },
     gui_debug_policy: {
@@ -98,6 +133,59 @@ async function main() {
     assert.equal((result.response as any).created, true, 'AppWorld tool did not execute');
     assert(result.dbChanges, 'db change summary missing');
     assert(Array.isArray(result.dbChanges?.changedApps), 'db change summary must have changed apps');
+    const update = tools.find(t => t.apiName === 'update_note')!;
+    assert.deepEqual(new Set(update.requiredParams), new Set(['text','note_id']));
+    await assert.rejects(bridge!.callTool(update.id, {note_id:7}), /Missing AppWorld argument/);
+    await bridge!.callTool(update.id, {note_id:7, notify:false, text:'updated',sourceComponentId:'declared-business-value'});
+    assert.equal(new URL(requests.at(-1)!.url).searchParams.get('notify'), 'false');
+    assert.deepEqual(JSON.parse(requests.at(-1)!.body), {text:'updated',sourceComponentId:'declared-business-value'});
+    for (const route of ['/spotify/songs', '/spotify/artists']) {
+      const tool = tools.find(t => t.path === route)!;
+      assert(tool, 'real search tool discovered');
+      const schema = tool.inputSchema as any;
+      assert.equal(schema.properties.page_limit.maximum, 20);
+      assert.equal(schema.properties.page_limit.default, 5);
+      assert(!tool.requiredParams!.includes('page_limit'), 'optional pagination stays optional');
+      const line = appWorldCatalogLine(tool);
+      for (const name of Object.keys(schema.properties)) assert(line.includes(`${name}:`), `catalog must retain ${name}`);
+      assert(line.includes('"maximum":20'), 'catalog exposes paging bound');
+      const args = {query: 'indie', page_index: 1, page_limit: 20, ...(route.endsWith('songs') ? {artist_id: 36} : {})};
+      const observed = await bridge!.callTool(tool.id, {...args, sourceComponentId:'button',toolResults:[]});
+      assert(!JSON.stringify(observed).includes(secret));
+      assert(!appWorldCatalogLine(tool).includes(secret));
+      const sent = new URL(requests.at(-1)!.url);
+      for (const [key, value] of Object.entries(args)) assert.equal(sent.searchParams.get(key), String(value));
+      assert.equal(requests.at(-1)!.body, '');
+      const count = requests.length;
+      await assert.rejects(bridge!.callTool(tool.id, {query:'indie', imaginary_filter:true}), /Unknown AppWorld argument/);
+      await assert.rejects(bridge!.callTool(tool.id, {page_limit:21}), /Invalid AppWorld argument/);
+      await assert.rejects(bridge!.callTool(tool.id, {page_index:-1}), /Invalid AppWorld argument/);
+      await assert.rejects(bridge!.callTool(tool.id, {page_limit:'20'}), /Invalid AppWorld argument/);
+      assert.equal(requests.length, count, 'invalid requests never reach HTTP');
+      await bridge!.callTool(tool.id, {}); // all search params really are optional
+    }
+
+    assert(authHeaders.length > 0 && authHeaders.every(header => header === `Bearer ${secret}`));
+    const reply = tools.find(t => t.path.endsWith('/reply'))!;
+    assert.deepEqual(new Set(reply.requiredParams), new Set(['body','email_thread_id','email_id']));
+    assert(appWorldCatalogLine(reply).includes('email_addresses:'));
+    assert(appWorldCatalogLine(reply).includes('otherwise, to the sender'));
+    await assert.rejects(bridge!.callTool(reply.id, {email_thread_id:8,email_id:9}), /Missing AppWorld argument/);
+    await bridge!.callTool(reply.id, {email_thread_id:8,email_id:9,body:'Reply text',email_addresses:['recipient@example.test']});
+    assert.deepEqual(JSON.parse(requests.at(-1)!.body), {body:'Reply text',email_addresses:['recipient@example.test']});
+    assert.equal(new URL(requests.at(-1)!.url).search, '');
+    assert.equal(authHeaders.at(-1), `Bearer ${secret}`);
+    assert(!appWorldCatalogLine(reply).includes(secret));
+    assert.throws(() => resolveApiSchema({$ref:'#/components/schemas/missing'}, {}), /Missing/);
+    assert.throws(() => resolveApiSchema({$ref:'https://example.test/schema'}, {}), /Unsupported/);
+    assert.throws(() => resolveApiSchema({$ref:'#/self'}, {self:{$ref:'#/self'}}), /Unsupported/);
+    const composed = resolveApiSchema({allOf:[{type:'object',properties:{body:{type:'string'}},required:['body']},{properties:{optional:{type:'integer'}}}]}, {});
+    assert.deepEqual(composed.required,['body']); assert(composed.properties.optional);
+    const conflicting = structuredClone(openapi) as any;
+    conflicting.paths['/notes/{note_id}'].patch.parameters.push({name:'text',in:'query',schema:{type:'string'}});
+    snapshots['/simple_note/openapi.json'] = JSON.stringify(conflicting);
+    const invalidBridge = createAppWorldBridge(tmpRoot)!;
+    await assert.rejects(invalidBridge.getCapabilities(), /Ambiguous AppWorld parameter.*text/);
   } finally {
     if (previousApiBase === undefined) delete process.env.APPWORLD_API_BASE;
     else process.env.APPWORLD_API_BASE = previousApiBase;
