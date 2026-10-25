@@ -1,3 +1,4 @@
+import { actionDeadlineAt, actionDeadlineError, remainingActionMs, actionRetryDelay } from './action-deadline.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -1678,19 +1679,21 @@ async function chatFetchWithRetry(url: string, init: RequestInit, timeoutMs: num
   const networkAttempts = Math.max(attempts, 5);
   for (let attempt = 1; attempt <= networkAttempts; attempt++) {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    const timeout = setTimeout(() => controller.abort(), remainingActionMs(timeoutMs));
     try {
       const response = await fetch(url, { ...init, signal: controller.signal });
       const text = await response.text();
+      remainingActionMs();
       if (response.status === 429 || response.status >= 500) {
         lastError = new Error(`transient ${response.status}: ${text.slice(0, 200)}`);
-        if (attempt < attempts) { await new Promise((r) => setTimeout(r, 800 * attempt)); continue; }
+        if (attempt < attempts) { await actionRetryDelay(800 * attempt); continue; }
       }
       return { ok: response.ok, status: response.status, text };
     } catch (error) {
+      if (actionDeadlineAt() !== undefined && Date.now() >= actionDeadlineAt()!) throw actionDeadlineError();
       if ((error as Error).name === 'AbortError') throw error;
       lastError = error;
-      if (attempt < networkAttempts) { await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** (attempt - 1), 8000))); continue; }
+      if (attempt < networkAttempts) { await actionRetryDelay(Math.min(1000 * 2 ** (attempt - 1), 8000)); continue; }
     } finally {
       clearTimeout(timeout);
     }
@@ -5681,10 +5684,11 @@ export async function runAppWorldGrounding(input: {
   // 语义的回合知道上一批产出了什么。
   recentTurns?: Array<Record<string, unknown>>;
   llm?: LlmRuntimeConfig;
-}): Promise<{ calls: AppWorldCallResult[]; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>> } | null> {
+}): Promise<{ calls: AppWorldCallResult[]; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; deadlineExceeded?: boolean } | null> {
   // The ablation keeps planning/catalog access but supplies no external facts.
   // Guard the shared executor as well as its current callers.
   if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') return null;
+  remainingActionMs();
   const hostNow = new Date().toISOString();
   let serviceClock: Awaited<ReturnType<NonNullable<AppWorldBridge['getClock']>>> = null;
   try { serviceClock = await input.bridge.getClock?.() ?? null; } catch { /* Actual host UTC is the fallback. */ }
@@ -5781,10 +5785,13 @@ export async function runAppWorldGrounding(input: {
   // 不能因 calls(只计 bridge 调用)为空而被丢弃成 null → 502。
   let webCallCount = 0;
   let lastReadAt = -1;
+  try {
   for (let round = 1; round <= 4; round++) {
+    remainingActionMs();
     callsAtRoundStart = calls.length;
     const stepBudget = round === 1 ? 6 : 4;
     for (let step = 1; step <= stepBudget; step++) {
+      remainingActionMs();
       const mustFinish = step >= stepBudget - 1 || calls.length >= 16;
       // 单次决策调用的 provider 尖刺(180s 超时/断连)只烧一步,不杀整轮
       // (与 designer attempt 环同策略;iter21 实锤单次超时可致整例死亡)。
@@ -5838,13 +5845,14 @@ export async function runAppWorldGrounding(input: {
         }),
       }) as Record<string, any>;
       } catch (error) {
+        remainingActionMs();
         historyLog.push({ ok: false, api: '(decision)', error: compactText((error as Error).message, 160) });
         continue;
       }
       if (decision?.done || (mustFinish && !decision?.call && !Array.isArray(decision?.calls))) {
         // Read-back 硬门:有写操作而其后没有任何读调用,实体列表就是 agent 的自述
-        // (删除后回显旧列表的根因)。打回去要求先读再 done;mustFinish 时放行(诚实截断)。
-        if (decision?.done && lastWriteAt > lastReadAt && !mustFinish) {
+        // (删除后回显旧列表的根因)。预算尾部也不能豁免读后验证。
+        if (decision?.done && lastWriteAt > lastReadAt) {
           historyLog.push({ ok: false, api: '(read-back-gate)', error: 'entities must come from a READ call made AFTER your last write — fetch the current full list with a read API first, then finish with entities copied from that response' });
           continue;
         }
@@ -5888,6 +5896,7 @@ export async function runAppWorldGrounding(input: {
         let check: Record<string, any> | null = null;
         for (let attempt = 1; attempt <= 2 && !check; attempt++) {
           try {
+            remainingActionMs();
             check = await openAIChatJson({
               label: 'Write Verifier Agent',
               llm: input.llm,
@@ -5909,7 +5918,7 @@ export async function runAppWorldGrounding(input: {
         // (iter15 实锤:186.45 的 ÷2 与 ÷3 两版并存,人均 155.37)。拒绝进 history,
         // 执行 agent 下一步看到原因后改为 删旧→建新 或转去修其他缺口。
         if (check?.approved === false && check?.reject === true) {
-          historyLog.push({ ok: false, api: '(write-verifier)', error: compactText(`batch rejected as duplicate re-create: ${String(check.reason || '')}. Delete the stale copy first, then re-create.`, 240) });
+          historyLog.push({ ok: false, api: '(write-verifier)', error: compactText(`write batch rejected: ${String(check.reason || 'The proposed write violates the current request')}. Replan respecting the user intent; do not automatically delete historical records.`, 240) });
           continue;
         }
         if (check?.approved === false && Array.isArray(check.correctedCalls) && check.correctedCalls.length === rawCalls.length
@@ -5919,6 +5928,7 @@ export async function runAppWorldGrounding(input: {
         }
       }
       for (const rawCall of verifiedCalls) {
+        remainingActionMs();
         const apiName = String(rawCall?.api || '').trim();
         const args = (rawCall?.args && typeof rawCall.args === 'object') ? rawCall.args as Record<string, unknown> : {};
         // 公网工具调用:GET 语义,只进 history 供后续步骤引用,不进 read-back 门。
@@ -5966,6 +5976,7 @@ export async function runAppWorldGrounding(input: {
         : `Completed ${calls.length + webCallCount} actions`;
     }
     // ③ 独立评审：只看证据(目标契约、API 调用记录、用户将看到的结果),不看执行 agent 的过程。
+    remainingActionMs();
     const verdictRaw = await openAIChatJson({
       label: 'Grounding Evaluator Agent',
       llm: input.llm,
@@ -5982,9 +5993,10 @@ export async function runAppWorldGrounding(input: {
       user: JSON.stringify({ userRequest, goal, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: compactHistoryLog(historyLog), visibleSummary: summary, visibleEntities: entities }),
     }) as Record<string, any>;
     evaluation = {
-      pass: verdictRaw?.pass === true,
+      pass: verdictRaw?.pass === true && lastWriteAt <= lastReadAt,
       deficiencies: (Array.isArray(verdictRaw?.deficiencies) ? verdictRaw.deficiencies : []).map((item: unknown) => compactText(String(item), 160)).filter(Boolean).slice(0, 5),
     };
+    if(lastWriteAt > lastReadAt) evaluation.deficiencies.unshift('not_verified: no successful read-back after the last write');
     if (evaluation.pass || !evaluation.deficiencies.length) break;
     if (round > 1 && calls.length === callsAtRoundStart) break; // 上一轮零进展,再来一轮只会重复
     // ④ 自我提升:带着评审缺陷再执行一轮(最后一轮失败则保留 best-effort 结果返回)。
@@ -5992,6 +6004,12 @@ export async function runAppWorldGrounding(input: {
       feedback = evaluation.deficiencies;
       summary = '';
     }
+  }
+  } catch (error) {
+    if ((error as {code?:string}).code !== 'action_deadline_exceeded') throw error;
+    historyLog.push({ok:false,api:'(action-deadline)',error:(error as Error).message});
+    evaluation={pass:false,deficiencies:[(error as Error).message,...(lastWriteAt>lastReadAt?['not_verified: no successful read-back after the last write']:[])]};
+    return {calls,summary,entities,stats,goal,evaluation,attempts:historyLog,deadlineExceeded:true};
   }
   return { calls, summary, entities, stats, goal, evaluation, attempts: historyLog };
 }

@@ -1,3 +1,4 @@
+import { remainingActionMs, withoutActionDeadline, actionDeadlineAt, actionDeadlineError } from './action-deadline.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -109,7 +110,7 @@ function asRecord(value: unknown, message: string) {
 
 async function fetchJson(url: string, options: RequestInit & { label: string; timeoutMs: number }) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), options.timeoutMs);
+  const timeout = setTimeout(() => controller.abort(), remainingActionMs(options.timeoutMs));
   try {
     const response = await fetch(url, {
       ...options,
@@ -121,9 +122,11 @@ async function fetchJson(url: string, options: RequestInit & { label: string; ti
       },
     });
     const text = await response.text();
+    remainingActionMs();
     if (!response.ok) throw new Error(`${options.label} failed ${response.status}: ${text.slice(0, 400)}`);
     return text ? JSON.parse(text) : null;
   } catch (error) {
+    if (actionDeadlineAt() !== undefined && Date.now() >= actionDeadlineAt()!) throw actionDeadlineError();
     if ((error as Error).name === 'AbortError') throw new Error(`${options.label} timed out after ${options.timeoutMs}ms`);
     throw error;
   } finally {
@@ -513,6 +516,7 @@ export function createAppWorldBridge(projectRoot: string): AppWorldBridge | null
   }
 
   async function callTool(id: string, payload: Record<string, unknown>): Promise<AppWorldCallResult> {
+    remainingActionMs();
     const tool = await findCapability(id);
     if (!tool) throw new Error(`unknown AppWorld tool: ${id}`);
     const args = normalizeArgs(payload);
@@ -561,7 +565,7 @@ export function createAppWorldBridge(projectRoot: string): AppWorldBridge | null
         throw error;
       }
     }
-    const after = await writeSnapshot(`after-${tool.appName}-${tool.apiName}`);
+    const after = await withoutActionDeadline(() => writeSnapshot(`after-${tool.appName}-${tool.apiName}`));
     const dbChanges = diffSnapshots(before, after);
     return {
       tool,

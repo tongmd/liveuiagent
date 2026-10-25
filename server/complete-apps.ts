@@ -1,3 +1,4 @@
+import { withActionDeadline, remainingActionMs } from './action-deadline.js';
 import type express from 'express';
 import type Database from 'better-sqlite3';
 import fs from 'node:fs/promises';
@@ -44,7 +45,7 @@ export function createHostActionStore(db: Database.Database) {
       const failure=ok?undefined:(grounded.evaluation?.deficiencies?.filter(Boolean).join('; ')||'The independent review did not verify the requested outcome');
       const job={id:'host_'+randomUUID(),appId,status:'done',createdAt,finishedAt:createdAt,
         execution:{harness:'dsh',actionRuntime:'host-appworld',model},
-        result:{ok,status:ok?'succeeded':'not_verified',...(failure?{error:failure,code:'appworld_goal_not_verified'}:{}),text:ok?grounded.summary:'Operation not verified: '+failure+'. '+grounded.summary,data:{entities:grounded.entities,stats:grounded.stats,evaluation:grounded.evaluation}},
+        result:{ok,status:ok?'succeeded':'not_verified',...(grounded.deadlineExceeded?{unresolved:true}:{}),...(failure?{error:failure,code:'appworld_goal_not_verified'}:{}),text:ok?grounded.summary:'Operation not verified: '+failure+'. '+grounded.summary,data:{entities:grounded.entities,stats:grounded.stats,evaluation:grounded.evaluation}},
         evidence:dshToolEvidence(appId,grounded)};
       db.prepare('INSERT INTO complete_host_actions VALUES (?,?,?,?,?)').run(owner,job.id,appId,JSON.stringify(job),createdAt);
       return job;
@@ -94,9 +95,12 @@ export function dshToolEvidence(appId: string, grounded: NonNullable<Awaited<Ret
 // The desktop retains its app/window protocol. Complete app code and data remain
 // in the existing DSH service, with the same authenticated account identity.
 export function createCompleteApps(db: Database.Database, personal: any, userOf: (req: express.Request) => string, llmOf: (req: express.Request) => any, options: {
+  actionTimeoutMs?: number;
   harnessFor?: (req: express.Request, appId?: string) => HarnessId;
   executionOf?: (req: express.Request) => { model?: string; provider?: { apiBase: string; apiKey: string } };
 } = {}) {
+  const actionTimeoutMs=options.actionTimeoutMs ?? 16*60*1000;
+  if(!Number.isFinite(actionTimeoutMs)||actionTimeoutMs<=0)throw new Error('Invalid host action timeout');
   const toolBridge = createAppWorldBridge(process.cwd());
   const hostActions=createHostActionStore(db);
   const serviceBindings=createDshServiceBindings(db);
@@ -163,7 +167,8 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     const upstreamOwner = userPrefix + owner;
     if (upstreamOwner.length > 200) throw runtimeError('The configured application workspace identity is too long', 'dsh_workspace_identity_invalid', 503);
     await initializeEmptyAccount(upstreamOwner);
-    const r = await fetch(new URL(route, apiBase), {method,headers:{'X-LiveUIAgent-User':upstreamOwner,...(method !== 'GET' ? {'Content-Type':'application/json'} : {})},body:data === undefined ? undefined : JSON.stringify(data),signal:AbortSignal.timeout(35000)});
+    const r = await fetch(new URL(route, apiBase), {method,headers:{'X-LiveUIAgent-User':upstreamOwner,...(method !== 'GET' ? {'Content-Type':'application/json'} : {})},body:data === undefined ? undefined : JSON.stringify(data),signal:AbortSignal.timeout(remainingActionMs(35000))}).catch(error=>{remainingActionMs();throw error;});
+    remainingActionMs();
     const value: any = await r.json();
     if (!r.ok) throw Object.assign(error(value.error || 'The app service is temporarily unavailable',r.status), {code:value.code});
     // Upstream/model-generated evidence is never an authority.
@@ -261,7 +266,16 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       finishTask('done',a.name+' is ready');if(stream)send('result',result);else res.json(result);
     }catch(e:any){finishTask('error',e.message);if(stream)send('error',{error:e.message,...(e.code?{code:e.code}:{})});else next(e)}finally{if(heartbeat)clearInterval(heartbeat);if(stream)res.end()}
   }
-  async function action(req: express.Request, appId: string, body=req.body) {
+  function action(req: express.Request, appId: string, body=req.body, deadline=Date.now()+actionTimeoutMs) {
+    return withActionDeadline(deadline,()=>actionWithinDeadline(req,appId,body)).catch(failure=>{
+      if(failure?.code==='action_deadline_exceeded'){
+        const failed=hostActions.fail(userOf(req),appId,String(llmOf(req)?.model||''),failure,[]);
+        failure.trace=[{agent:'Host service executor',step:'Action deadline exceeded before a verified result',status:'error',jobId:failed.id,message:failure.message}];
+      }
+      throw failure;
+    });
+  }
+  async function actionWithinDeadline(req: express.Request, appId: string, body:any) {
     const id = internalId(appId);
     if (!id) throw error('App not found',404);
     const actionPrompt=withOutputLanguage(body?.prompt || body?.actionId);
@@ -286,7 +300,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
         throw Object.assign(failure,{trace:[{agent:'Host service executor',step:'Connected service action failed',status:'error',jobId:failed.id,message:failure.message}]});
       }
       if(grounded) {
-        if(!grounded.calls.length)throw runtimeError('No real business API call completed','dsh_tool_execution_empty',502);
+        if(!grounded.calls.length && !grounded.deadlineExceeded)throw runtimeError('No real business API call completed','dsh_tool_execution_empty',502);
         // Real execution and independent review are complete. Persist the host
         // result directly; launching another coding agent risks redoing writes.
         return hostActions.save(userOf(req),appId,grounded,selected.model);
@@ -335,7 +349,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
   async function loadApp(req:express.Request,appId:string){const id=internalId(appId);if(!id)throw error('App not found',404);return dsh(req,'apps/'+id);}
   async function saveStore(req:express.Request,appId:string,store:unknown){const id=internalId(appId);if(!id)throw error('App not found',404);return dsh(req,'apps/'+id+'/store','PUT',store);}
   async function evaluateAction(req:express.Request,appId:string,prompt:string,context:unknown){
-    const job=await action(req,appId,{prompt,context});let current=job;const deadline=Date.now()+16*60*1000;
+    const deadline=Date.now()+actionTimeoutMs;const job=await action(req,appId,{prompt,context},deadline);let current=job;
     while(['queued','running'].includes(current.status)){
       if(Date.now()>deadline)throw runtimeError('Application AI action exceeded the evaluation deadline','evaluator_action_timeout',504);
       await new Promise(resolve=>setTimeout(resolve,1000));current=await dsh(req,'jobs/'+job.id);
