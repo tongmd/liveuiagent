@@ -66,9 +66,9 @@ export class NativeWorkflow {
     const at = new Date().toISOString();
     const prior = [...this.steps].reverse().find(step => step.stage === stage && step.nodeId === nodeId && step.status === 'running');
     const step: WorkflowRecord = { executionId: this.executionId, appId: this.options.appId, owner: this.options.owner, actionId: this.options.actionId,
-      stage, nodeId, status, input: input ?? prior?.input, output, at,
+      stage, nodeId, status, input: structuredClone(input ?? prior?.input), output: structuredClone(output), at,
       startedAt: status === 'running' ? at : prior?.startedAt, ...(status === 'running' ? {} : { finishedAt: at }) };
-    this.options.record(step);
+    this.options.record(structuredClone(step));
     this.steps.push(step);
   }
   fail(error: unknown, details: Record<string, unknown> = {}) {

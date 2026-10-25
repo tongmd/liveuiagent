@@ -227,3 +227,30 @@ test('a repair response without strict approval is rejected without a third call
     assert.equal(calls, 2); assert.equal(workflow.handoffs.length, 0);
   }
 });
+
+test('audit snapshots remain unchanged after business state, output and handoffs mutate', async () => {
+  const sink: WorkflowRecord[] = [];
+  const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: r => sink.push(r), call: async () => ({ proceed: true, instructions: 'Use the unchanged request.', constraints: ['Write once'], expectedOutcome: 'Verified target' }) });
+  const request = { originalRequest: { text: 'Original' }, business: { rows: [{ id: 7, value: 'Before execution' }] } };
+  const output = { entities: [{ id: 7, name: 'Original observation' }], nested: { completed: true } };
+  workflow.record('execute', 'agents.executor', 'running', request);
+  workflow.record('execute', 'agents.executor', 'ok', undefined, output);
+  const expected = structuredClone(workflow.steps);
+  request.business.rows.unshift({ id: 8, value: 'Later execution' });
+  request.business.rows[1].value = 'Changed after execution'; request.originalRequest.text = 'Changed';
+  output.entities[0].name = 'Changed after audit'; output.nested.completed = false;
+  assert.deepEqual(workflow.steps, expected); assert.deepEqual(sink, expected);
+  // Each durable-sink and response snapshot is also isolated from the other.
+  (sink[0].input as any).business.rows[0].value = 'Sink consumer mutation';
+  assert.deepEqual(workflow.steps, expected);
+  (workflow.steps[1].input as any).originalRequest.text = 'Terminal response mutation';
+  assert.deepEqual(workflow.steps[0].input, expected[0].input);
+  const context = { originalRequest: { text: 'Plan request' }, currentState: { entities: [{ id: 7, name: 'Observed' }] } };
+  await workflow.plan(context);
+  const planHistory = structuredClone(workflow.steps.filter(r => r.stage === 'plan'));
+  const sinkHistory = structuredClone(sink.filter(r => r.stage === 'plan'));
+  workflow.handoffs[0].instructions = 'Later mutation'; workflow.handoffs[0].constraints.push('Later constraint');
+  context.currentState.entities[0].name = 'Later business mutation';
+  assert.deepEqual(workflow.steps.filter(r => r.stage === 'plan'), planHistory);
+  assert.deepEqual(sink.filter(r => r.stage === 'plan'), sinkHistory);
+});
