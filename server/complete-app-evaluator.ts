@@ -197,7 +197,22 @@ export class CompleteAppBrowser {
     await this.perform({ kind: 'click', target: button.target });
     return { selection: { fields: fields.map(field => field.label), button: button.label }, bridgeResults: clone(this.bridgeResults), gui: await this.snapshot() };
   }
-  async close() { await this.browser?.close(); this.browser = undefined; this.page = undefined; this.frame = undefined; }
+  async close() {
+    const browser = this.browser;
+    const child = browser?.process();
+    let closed = false;
+    try { await browser?.close(); closed = true; }
+    finally {
+      // Chrome's crash reporter can inherit its stdio after Chrome exits. Those
+      // owned pipes otherwise keep the evaluator's Node process alive indefinitely.
+      if (child && (child.exitCode !== null || child.signalCode !== null)) {
+        child.stdin?.destroy(); child.stdout?.destroy(); child.stderr?.destroy();
+      }
+      if (closed || (child && (child.exitCode !== null || child.signalCode !== null))) {
+        this.browser = undefined; this.page = undefined; this.frame = undefined;
+      }
+    }
+  }
 }
 
 export type CompleteAppEvaluatorInput = { appId: string; appName: string; html: string; store?: Record<string, string>; mode: 'gui' | 'behavior'; expectedBehaviorPrompt?: string; steps?: CompleteAppStep[]; maxSteps?: number; llm?: LlmRuntimeConfig; chromePath?: string; outDir?: string };
