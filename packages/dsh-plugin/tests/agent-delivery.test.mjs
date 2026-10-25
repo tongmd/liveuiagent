@@ -73,3 +73,34 @@ test('an external form-owned submit is primary while unrelated form controls sta
  const html=app(good).replace('<button type="submit" data-liveui-action="agent.invoke">Run task</button>','').replace('</form>','</form><button form="taskForm" type="submit" data-liveui-action="agent.invoke">Run task</button><form><button type="submit">Unrelated</button></form>');
  const result=await check(html);assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.agentAction.calls,3);
 });
+
+
+import {connectedStarterHtml} from '../host-action-starter.mjs';
+const extraSubmitListener = body => connectedStarterHtml().replace('</body>', `<script>
+ document.querySelector('#liveui-task-form').addEventListener('submit', async event => {
+  event.preventDefault();
+  const task=document.querySelector('#liveui-task').value;
+  ${body}
+ });
+</script></body>`);
+test('real Chrome rejects starter plus second primary listener rather than suppressing the domain handler',async()=>{
+ const result=await check(extraSubmitListener(`await window.liveuiagent.ai(task,{source:'domain-second-listener'});`));
+ assert.equal(result.ok,false,JSON.stringify(result));
+ assert.ok(result.errors.some(e=>e.code==='agent_action_contract'&&/2 times on the failure probe|observed 2/.test(e.message)),JSON.stringify(result));
+});
+test('real Chrome also rejects a second client call only after a successful primary result',async()=>{
+ const result=await check(extraSubmitListener(`
+  const controller=window.liveuiapp;
+  const wait=()=>new Promise(resolve=>setTimeout(resolve,25));
+  let reply;
+  for(let i=0;i<40;i++){reply=controller.lastResult;if(reply)break;await wait();}
+  if(reply?.ok===true)await window.liveuiagent.ai(task,{source:'success-only-second-listener'});
+ `));
+ assert.equal(result.ok,false,JSON.stringify(result));
+ assert.ok(result.errors.some(e=>e.code==='agent_action_contract'&&/2 times on the success probe|observed 2/.test(e.message)),JSON.stringify(result));
+});
+test('the unchanged single starter listener passes each exact-one probe',async()=>{
+ const result=await check(connectedStarterHtml());
+ assert.equal(result.ok,true,JSON.stringify(result));
+ assert.equal(result.agentAction.failureCalls,1);assert.equal(result.agentAction.successCalls,1);assert.equal(result.agentAction.calls,3);
+});

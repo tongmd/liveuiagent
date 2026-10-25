@@ -48,6 +48,10 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       if (key !== channel) throw Error('Invalid delivery bridge channel');
       if (!actionPhase || !primaryAction) { add('agent_action_before_submit', 'Call the host service from the bound primary submit action, not startup or input-change handlers'); throw Error('Service actions require an explicit user action'); }
       agentCalls.push({ prompt, context });
+      // Count browser SDK invocations, not the real host's internal API plan.
+      // Let both handlers run normally so duplicate writes are detected rather
+      // than hidden by propagation suppression or a fake single-call wrapper.
+      if (agentCalls.length > 1) add('agent_action_contract', `A single primary submit invoked window.liveuiagent.ai ${agentCalls.length} times on the ${outcome} probe. Use one host SDK invocation per submit; compose multiple service API operations inside that host action.`);
       return outcome === 'success' ? serviceSuccess : { ok: false, text: serviceError, error: serviceError, data: { ok: false, error: serviceError } };
     });
     const policy = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'; frame-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'">';
@@ -182,9 +186,12 @@ async function verifyAgentAction(frame, request, serviceError, calls, beginActio
   let after = '';
   while (Date.now() < deadline) {
     after = await frame.evaluate(() => document.body.innerText);
-    if (calls.length && after.includes(serviceError)) break;
+    // Keep the whole bounded probe window open after the first rendered
+    // response: a second async submit listener may call the SDK after it.
+    if (calls.length > 1) break;
     await new Promise(resolve => setTimeout(resolve, 50));
   }
+  if (calls.length > 1) throw Error(`Expected exactly one window.liveuiagent.ai invocation for one primary submit; observed ${calls.length}. Remove duplicate submit/click listeners, not domain behavior.`);
   if (!calls.length) throw Error('The primary user action did not call window.liveuiagent.ai. Wire its submit/click handler to await the host bridge; browser-only saves are not external service operations.');
   if (!calls.some(call => JSON.stringify(call).includes(request))) throw Error('The host call discarded the current natural-language input. Forward the complete entered request and fields in prompt/context.');
   if (successEntities) {
