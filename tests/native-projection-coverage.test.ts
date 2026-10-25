@@ -65,3 +65,27 @@ test('ID-less reading books can move shelves while duplicates consume evidence o
  assert.equal(projectionCoverageGaps('retain_existing',[{id:'stable',name:'Same'}],[{id:'other',name:'Same'}]).length,1);
  assert.equal(projectionCoverageGaps('retain_existing',[{name:'Old'}],[{name:'Renamed'}]).length,1,'ID-less rename remains unknown');
 });
+
+test('a shared source container cannot permit rekeying an independent payment record',()=>{
+ const carriers=[{id:'shelf',name:'First'},{id:'shelf',name:'Second'}];
+ const prior=[...carriers,{id:'payment-1',name:'Alice'}];
+ for(const destination of [[{id:'new',name:'Alice'}],[{id:'new',name:'Alice'},{id:'new',name:'Other'}]]) {
+  const gaps=projectionCoverageGaps('retain_existing',prior,[...carriers,...destination]);
+  assert.equal(gaps.length,1);assert.match(gaps[0],/payment-1/);
+ }
+});
+test('synthetic SQL-shaped book projections need unit IDs rather than changing container IDs',()=>{
+ // These are synthetic COMPLETE projections of the actual note membership,
+ // not the unretained model proposal from the closed run.
+ const prior=[{id:'3085',name:'The Overstory',group:'To read'},{id:'3085',name:'Piranesi',group:'To read'},{id:'3085',name:'Tomorrow, and Tomorrow, and Tomorrow',group:'To read'},{id:'3086',name:'Klara and the Sun',group:'Currently reading'},{id:'3084',name:'Project Hail Mary',group:'Finished'}];
+ const current=[...prior.slice(0,3),{id:'3084',name:'Klara and the Sun',group:'Finished'},prior[4]];
+ for(const projection of [current,[...current].reverse()]) {
+  const gaps=projectionCoverageGaps('retain_existing',prior,projection);
+  assert.equal(gaps.length,1);assert.match(gaps[0],/Klara and the Sun/,'ambiguous provenance is not permission to change a record ID');
+ }
+ // A fresh view with no true book IDs omits IDs on both sides from the outset.
+ // This does not migrate or repair the old saved projection automatically.
+ const withoutId=(rows:typeof prior)=>rows.map(({id,...unit})=>unit);
+ assert.deepEqual(projectionCoverageGaps('retain_existing',withoutId(prior),withoutId(current)),[]);
+ assert.equal(projectionCoverageGaps('retain_existing',withoutId(prior),withoutId(current.filter(b=>b.name!=='Piranesi'))).length,1);
+});
