@@ -105,6 +105,7 @@ test((longIds?'shared-prefix long-ID identity: ':'')+'390px product lifecycle us
    const check=await page.$('[data-a2ui-label="Enabled"] [role="switch"]');assert.ok(check);if(await check.evaluate(e=>e.getAttribute('aria-checked')==='true')!==enabled)await check.click();else{await check.click();await check.click();} // Explicitly edit even an unset/unchecked false value.
    const actual=await page.$$eval('[data-fixture-field]',els=>Object.fromEntries(els.map(el=>[el.getAttribute('data-fixture-field'),el.value])));
    assert.equal(actual.Name,title);assert.equal(actual.Amount,String(amount));assert.equal(actual.Date,date);
+   assert.equal(await check.evaluate(el=>el.getAttribute('aria-checked')==='true'),enabled,'Visible switch must match the submitted boolean');
    lastVisibleFill={title,amount,enabled,date};visibleFills.push({expected:{...lastVisibleFill},actual});
   };
   const click=async(action,index=0)=>{const selector=`[data-a2ui-action-id="actions.${action}.run"]`;await page.waitForSelector(selector+':not([disabled])');const n=actionRequests.length;const buttons=await page.$$(selector);assert.ok(buttons[index]);await buttons[index].click();await page.waitForFunction(async n=>(await window.__fixtureCalls())>=n&&!document.querySelector('.a2ui-host button[disabled]'),{},n+1);};
