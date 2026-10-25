@@ -6,14 +6,14 @@ type ModelCall = (node: WorkflowNode, input: Record<string, unknown>, mode: 'pla
 
 /** Omit only the reserved static graph already supplied through chain/specs.
  * All business state, records and request values remain byte-for-byte intact. */
-export function projectNativeRoleContext(context: Record<string, unknown>) {
-  const state = context.currentState;
+export function projectNativeRoleContext(context: Record<string, unknown>, stateField: 'currentState' | 'proposedRuntimeState' = 'currentState') {
+  const state = context[stateField];
   if (!state || typeof state !== 'object' || Array.isArray(state)) {
     return { ...context, contextProjection: { version: 1, omittedRuntimeKeys: [], policy: 'Full original request, permissions, action and business data; no truncation' } };
   }
   const projected = Object.fromEntries(Object.entries(state).filter(([key]) => key !== 'orchestration'));
-  return { ...context, currentState: projected, contextProjection: {
-    version: 1, omittedRuntimeKeys: Object.hasOwn(state, 'orchestration') ? ['orchestration'] : [],
+  return { ...context, [stateField]: projected, contextProjection: {
+    version: 1, stateField, omittedRuntimeKeys: Object.hasOwn(state, 'orchestration') ? ['orchestration'] : [],
     reason: 'Static orchestration graph and worker specs are already consumed by the host graph executor; they are not business state',
     preservedRuntimeKeys: Object.keys(projected),
     policy: 'Full original request, permissions, action, entities, records, history, interaction and all other business fields; no truncation',
@@ -71,7 +71,8 @@ export class NativeWorkflow {
   }
   async review(outcome: Record<string, unknown>) {
     const node: WorkflowNode = { id: 'agents.result-reviewer', role: 'Independent result verifier', purpose: 'Check actual observed results against the original request and worker contracts. Never infer success from a plan or hide failed tools.' };
-    const input = { modelInvocationId: randomUUID(), model: this.nodes[0]?.model, outcome, workerContracts: this.handoffs };
+    const projectedOutcome = Object.hasOwn(outcome, 'proposedRuntimeState') ? projectNativeRoleContext(outcome, 'proposedRuntimeState') : outcome;
+    const input = { modelInvocationId: randomUUID(), model: this.nodes[0]?.model, outcome: projectedOutcome, workerContracts: this.handoffs };
     this.record('review', node.id, 'running', input);
     try {
       const output = await this.options.call(node, input, 'review');

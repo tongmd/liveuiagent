@@ -131,3 +131,21 @@ test('failure cleanup and catch reporting create exactly one terminal event per 
   assert.equal(records.filter(r => r.stage === 'plan' && r.status === 'failed').length, 1);
   assert.equal(records.at(-1)?.input && (records.at(-1)!.input as any).request, 'original');
 });
+
+test('independent reviewer retains complete observed results and staged business state while omitting static graph', async () => {
+  let observed: any;
+  const outcome = { originalRequest: { text: 'Full original request' }, toolResults: [{ response: { items: Array.from({ length: 80 }, (_, i) => ({ id: i, actual: 'observed' })) } }],
+    proposedRecords: Array.from({ length: 90 }, (_, i) => ({ id: i, text: 'saved-' + i })),
+    proposedRuntimeState: { orchestration: { staticGraph: 'not-business'.repeat(10000) }, entities: [{ id: 7, name: 'Actual target' }], history: ['full real history'], interaction: { target: 7 } } };
+  const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {}, call: async (_node, input) => { observed = input; return { pass: true, reason: 'Verified observed target' }; } });
+  await workflow.review(outcome);
+  assert.deepEqual(observed.outcome.originalRequest, outcome.originalRequest);
+  assert.deepEqual(observed.outcome.toolResults, outcome.toolResults);
+  assert.deepEqual(observed.outcome.proposedRecords, outcome.proposedRecords);
+  assert.deepEqual(observed.outcome.proposedRuntimeState.entities, outcome.proposedRuntimeState.entities);
+  assert.deepEqual(observed.outcome.proposedRuntimeState.history, outcome.proposedRuntimeState.history);
+  assert.deepEqual(observed.outcome.proposedRuntimeState.interaction, outcome.proposedRuntimeState.interaction);
+  assert.equal(observed.outcome.proposedRuntimeState.orchestration, undefined);
+  assert.ok(outcome.proposedRuntimeState.orchestration);
+  assert.equal(observed.outcome.contextProjection.stateField, 'proposedRuntimeState');
+});
