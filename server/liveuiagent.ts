@@ -5971,7 +5971,7 @@ export async function runAppWorldGrounding(input: {
       user: JSON.stringify({ userRequest, goal, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: compactHistoryLog(historyLog), visibleSummary: summary, visibleEntities: entities }),
     }) as Record<string, any>;
     evaluation = {
-      pass: Boolean(verdictRaw?.pass),
+      pass: verdictRaw?.pass === true,
       deficiencies: (Array.isArray(verdictRaw?.deficiencies) ? verdictRaw.deficiencies : []).map((item: unknown) => compactText(String(item), 160)).filter(Boolean).slice(0, 5),
     };
     if (evaluation.pass || !evaluation.deficiencies.length) break;
