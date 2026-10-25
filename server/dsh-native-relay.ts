@@ -1,9 +1,15 @@
 import http from 'node:http';
 import {randomBytes,timingSafeEqual} from 'node:crypto';
 
+export const NATIVE_DSH_ROLE_BOUNDARY='You are a Native application reasoning worker for the exact host conversation that follows. Preserve the roles and ordered meaning of those messages. Return only the JSON requested by the host. You have no tools and cannot execute local or external operations. The authenticated host alone validates and executes business operations; never claim that you executed one.';
+
 // A per-inference capability. The DSH process sees only this short-lived token;
 // provider credentials and provider-specific sampling/reasoning stay in the host.
 export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKey:string};request:Record<string,unknown>;signal:AbortSignal;maxRequestBytes?:number;fetchImpl?:typeof fetch}) {
+ if(!Array.isArray(input.request.messages))throw new Error('Native DSH requires the host ordered message list');
+ // Freeze host role semantics before DSH wraps the conversation as its task.
+ // A user message containing JSON roles remains a user message, never a system.
+ const hostMessages=structuredClone(input.request.messages);
  const upstream=new URL(input.provider.apiBase.replace(/\/+$/,'')+'/chat/completions');
  if(!['http:','https:'].includes(upstream.protocol)||upstream.username||upstream.password||upstream.search||upstream.hash)throw new Error('Invalid Native DSH provider URL');
  const key=randomBytes(32).toString('hex');
@@ -41,7 +47,7 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
    // role inference is pure reasoning; authenticated host code owns tool APIs.
    if(body.tools!==undefined&&(!Array.isArray(body.tools)||body.tools.length))return fail(res,400,'native_relay_tools_forbidden');
    if(body.tool_choice!==undefined&&body.tool_choice!=='none')return fail(res,400,'native_relay_tools_forbidden');
-   const forwarded:Record<string,any>={...body,...parameters,model:body.model,messages:body.messages,stream:body.stream};
+   const forwarded:Record<string,any>={...body,...parameters,model:body.model,messages:[{role:'system',content:NATIVE_DSH_ROLE_BOUNDARY},...hostMessages],stream:body.stream};
    delete forwarded.tools;delete forwarded.tool_choice;delete forwarded.parallel_tool_calls;
    // Adapters may choose the other OpenAI token spelling by default. Do not
    // leave a 32768-token adapter default beside a host's explicit 1024 cap.
