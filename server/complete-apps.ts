@@ -185,6 +185,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
   async function action(req: express.Request, appId: string, body=req.body) {
     const id = internalId(appId);
     if (!id) throw error('App not found',404);
+    const actionPrompt=withOutputLanguage(body?.prompt || body?.actionId);
     const saved=await dsh(req,'apps/'+id);
     const selected = await execution(req);
     let evidence:any;let groundedContext:any;
@@ -202,12 +203,12 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
         if(!grounded.calls.length)throw runtimeError('No real business API call completed','dsh_tool_execution_empty',502);
         const toolResults=Object.fromEntries(grounded.calls.map((call,i)=>[call.tool.id+'#'+(i+1),call]));
         const toolDbChanges=grounded.calls.flatMap(call=>call.dbChanges?.changedApps||[]);
-        evidence={schemaVersion:1,appId,trace:[{agent:'AppWorld Grounding Agent',step:'Execute GUI action',status:'done',output:{goal:grounded.goal,evaluation:grounded.evaluation}}],toolResults,toolDbChanges};
+        evidence={schemaVersion:1,appId,trace:[{agent:'AppWorld Grounding Agent',step:'Execute GUI action',status:grounded.evaluation?.pass===false?'rejected':'done',output:{goal:grounded.goal,evaluation:grounded.evaluation}}],toolResults,toolDbChanges};
         groundedContext={summary:grounded.summary,entities:grounded.entities,stats:grounded.stats,evaluation:grounded.evaluation,instruction:'Render these actual executed results. Do not repeat API mutations or claim unobserved outcomes.'};
       }
     }
     const job = await dsh(req,'apps/'+id+'/action','POST',{
-      prompt:withOutputLanguage(body?.prompt || body?.actionId),
+      prompt:actionPrompt,
       context:{...body?.context,eventPayload:body?.eventPayload,personalContext:personal.recall(userOf(req),appId),...(groundedContext?{executedTools:groundedContext}:{})},
       ...selected,
     });
