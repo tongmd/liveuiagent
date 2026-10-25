@@ -1,4 +1,5 @@
 import { stateDisplayPaths, stateDisplayFields, stateDisplayValues } from './native-state-display.js';
+import {resolveControlPreparation} from './gui-interaction-planner.js';
 import { createAppStateAdapter, appRecordFields, hydrateAppState, type AppStateAdapter } from './native-app-state.js';
 import { independentInferencePair } from './inference-pair.js';
 import { nativeRowSlotContext } from './native-row-context.js';
@@ -968,11 +969,12 @@ export async function planNativeGuiInteractionStep(system: string, input: unknow
   // thinking can spend the entire completion cap before emitting that JSON.
   // Keep business reasoning and all other models' configured policy intact.
   const conciseDeepSeek = /(^|\/)deepseek(?:[-_.]|$)/i.test(String(llm.model||''));
-  return openAIChatJson({label: 'Native GUI Step Planner', llm: {...llm, personalContext: undefined}, system,
+  const preparation=await openAIChatJson({label: 'Native GUI Step Planner', llm: {...llm, personalContext: undefined}, system,
     ...(conciseDeepSeek ? {thinking: {type: 'disabled' as const}, reasoningEffort: 'none' as const} : {}),
     // Completion caps include model reasoning, not only the small final step JSON.
     // Match the existing Native role budget while keeping the planner/action deadlines.
     user: JSON.stringify(input), temperature: 0, maxTokens: 8192});
+ return resolveControlPreparation(preparation,input);
 }
 
 export async function makeBusinessFields(prompt: string, subject: string, tokens: string[], context: {

@@ -2,14 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import http from 'node:http';
-import {createGuiInteractionPlanner,validateInteractionInput,validateInteractionStep} from '../server/gui-interaction-planner.js';
+import {createGuiInteractionPlanner,validateInteractionInput,validateInteractionStep,resolveControlPreparation} from '../server/gui-interaction-planner.js';
 import {planNativeGuiInteractionStep} from '../server/liveuiagent.js';
 import {withActionDeadline,remainingActionMs} from '../server/action-deadline.js';
 const view={visibleText:'Books',fields:[{target:'e1',label:'Book title',type:'text',value:'',required:true},{target:'e2',label:'Shelf',type:'select-one',value:'todo',options:[{label:'To read',value:'todo'},{label:'Finished',value:'done'}]},{target:'e3',label:'Finished',type:'checkbox',value:'on',checked:false}],buttons:[{target:'e4',label:'Add book',actionId:'record.add',contextText:'Piranesi — To read'}]};
 const input=()=>({appId:'owned',harness:'dsh',model:'fixture-selected',userMessage:'Add Piranesi to my to-read shelf',snapshot:structuredClone(view),observations:[]});
 async function setup(t:any,overrides:any={}){
  let plans=0,dispatches=0;const modelInputs:any[]=[];
- const llm={model:'fixture-selected',apiKey:'private-provider-key',apiBase:'https://provider.invalid',personalContext:'private personal context',chatCompletion:async(request:any)=>{dispatches++;modelInputs.push(request);return{choices:[{message:{content:JSON.stringify({kind:'fill',target:'e1',value:'Piranesi'})}}]};}};
+ const llm={model:'fixture-selected',apiKey:'private-provider-key',apiBase:'https://provider.invalid',personalContext:'private personal context',chatCompletion:async(request:any)=>{dispatches++;modelInputs.push(request);return{choices:[{message:{content:JSON.stringify({fields:[{target:'e1',decision:'set',value:'Piranesi',source:'user',quote:'Piranesi'},{target:'e2',decision:'keep'},{target:'e3',decision:'keep'}],action:{kind:'click',target:'e4'}})}}]};}};
  const handler=createGuiInteractionPlanner({owner:()=> 'alice',authorize:(id,owner)=>{if(id!=='owned'||owner!=='alice')throw Object.assign(Error('not found'),{status:404});},resolve:()=>({harness:'dsh',llm}),plan:async(...args:any[])=>{plans++;return planNativeGuiInteractionStep(args[0],args[1],args[2]);},...overrides});
  const app=express();app.use(express.json());app.post('/evaluator/interaction-step',handler);app.use((e:any,_q:any,r:any,_n:any)=>r.status(e.status||500).json({error:e.message,code:e.code,plannerModelCalls:e.plannerModelCalls}));
  const server=http.createServer(app);await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();return new Promise<void>(r=>server.close(()=>r()));});
@@ -46,7 +46,7 @@ test('planner parent deadline only shortens inference budget and late decisions 
 });
 
  test('remaining episode budget can shorten but never enlarge host planner deadline',async t=>{
- const budgets:number[]=[];const llm={model:'fixture-selected',chatCompletion:async()=>{budgets.push(remainingActionMs());return{choices:[{message:{content:JSON.stringify({kind:'done',reason:'Observed UI already matches current request'})}}]};}};
+ const budgets:number[]=[];const llm={model:'fixture-selected',chatCompletion:async()=>{budgets.push(remainingActionMs());return{choices:[{message:{content:JSON.stringify({fields:view.fields.map(f=>({target:f.target,decision:'keep'})),action:{kind:'done',reason:'Observed UI already matches current request'}})}}]};}};
  const {post}=await setup(t,{timeoutMs:1000,resolve:()=>({harness:'dsh',llm})});
  assert.equal((await post({...input(),remainingBudgetMs:20000,stepsRemaining:20,clicksRemaining:8})).status,200);assert.ok(budgets[0]>0&&budgets[0]<=1000);
  assert.equal((await post({...input(),remainingBudgetMs:500,stepsRemaining:1,clicksRemaining:0})).status,200);assert.ok(budgets[1]>0&&budgets[1]<=500);
@@ -58,4 +58,26 @@ test('bounded GUI planner still rejects truncated DSH completion once without re
  let adapterCalls=0;
  const {post,counts}=await setup(t,{resolve:()=>({harness:'dsh',llm:{model:'fixture-selected',chatCompletion:async(request:any)=>{adapterCalls++;assert.equal(request.max_tokens,8192);throw Object.assign(Error('Native model output reached its token limit'),{code:'dsh_native_output_truncated'});}}})});
  const result=await post(input());assert.equal(result.status,500);assert.equal(result.body.code,'dsh_native_output_truncated');assert.equal(result.body.plannerModelCalls,1);assert.equal(adapterCalls,1);assert.equal(counts().plans,1);assert.equal(result.body.step,undefined);
+});
+
+test('host preparation always returns actual field changes before an immediate business click',()=>{
+ const context={userMessage:'Set new time to 05:45, shelf Finished and check Finished',snapshot:structuredClone(view)};
+ const proposal={fields:[{target:'e3',decision:'set',checked:true,source:'user',quote:'check Finished'},{target:'e2',decision:'set',value:'done',source:'visible',quote:'Finished'},{target:'e1',decision:'set',value:'05:45',source:'user',quote:'05:45'}],action:{kind:'click',target:'e4'}};
+ assert.deepEqual(resolveControlPreparation(proposal,context),{kind:'fill',target:'e1',value:'05:45'});
+ context.snapshot.fields[0].value='05:45';assert.deepEqual(resolveControlPreparation(proposal,context),{kind:'select',target:'e2',value:'done'});
+ context.snapshot.fields[1].value='done';assert.deepEqual(resolveControlPreparation(proposal,context),{kind:'check',target:'e3',checked:true});
+ context.snapshot.fields[2].checked=true;assert.deepEqual(resolveControlPreparation(proposal,context),{kind:'click',target:'e4'});
+});
+test('preparation rejects incomplete ambiguous invented and non-visible decisions without returning any operation',()=>{
+ const context={userMessage:'Add Piranesi',snapshot:view};
+ const valid:any={fields:[{target:'e1',decision:'set',value:'Piranesi',source:'user',quote:'Piranesi'},{target:'e2',decision:'keep'},{target:'e3',decision:'keep'}],action:{kind:'click',target:'e4'}};
+ for(const mutate of [(p:any)=>p.fields.pop(),(p:any)=>p.fields[1].target='e1',(p:any)=>p.fields[0].quote='future hidden answer',(p:any)=>p.fields[0].source='observation',(p:any)=>p.fields[1]={target:'e2',decision:'set',value:'invented',source:'visible',quote:'Finished'},(p:any)=>p.fields[2].value='invented',(p:any)=>p.action={kind:'fill',target:'e1',value:'Piranesi'},(p:any)=>p.fields[0].api='hidden']){const p=structuredClone(valid);mutate(p);assert.throws(()=>resolveControlPreparation(p,context));}
+ assert.throws(()=>resolveControlPreparation({kind:'click',target:'e4'},context),'legacy direct-click model output cannot bypass preparation');
+ const unsupported={...valid,action:{kind:'unsupported',reason:'No visible label editor exists'}};assert.equal(resolveControlPreparation(unsupported,context).kind,'unsupported');
+});
+
+test('preparation preserves optional keep and handles explicit clear, false, zero and equivalent numbers',()=>{
+ const context={userMessage:'Clear note and turn alerts off; set count to 0',snapshot:{visibleText:'Current count 0',fields:[{target:'e1',label:'Note',type:'text',value:'old'},{target:'e2',label:'Alerts',type:'switch',value:'true',checked:true},{target:'e3',label:'Count',type:'number',value:'0.0'},{target:'e4',label:'Optional',type:'text',value:'retain'}],buttons:[{target:'e5',label:'Save',actionId:'save'}]}};
+ const p={fields:[{target:'e1',decision:'set',value:'',source:'user',quote:'Clear note'},{target:'e2',decision:'set',checked:false,source:'user',quote:'alerts off'},{target:'e3',decision:'set',value:'0',source:'user',quote:'0'},{target:'e4',decision:'keep'}],action:{kind:'click',target:'e5'}};
+ assert.deepEqual(resolveControlPreparation(p,context),{kind:'fill',target:'e1',value:''});context.snapshot.fields[0].value='';assert.deepEqual(resolveControlPreparation(p,context),{kind:'check',target:'e2',checked:false});context.snapshot.fields[1].checked=false;assert.deepEqual(resolveControlPreparation(p,context),{kind:'click',target:'e5'});assert.equal(context.snapshot.fields[3].value,'retain');
 });
