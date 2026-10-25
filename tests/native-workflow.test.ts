@@ -67,3 +67,14 @@ test('invalid duplicate chain, missing nodes and mismatched edges rejected befor
   assert.throws(() => new NativeWorkflow({ ...base, specs: {} }), /missing agent/);
   assert.throws(() => new NativeWorkflow({ ...base, handoffEdges: edges.toReversed() }), /handoffs/);
 });
+
+test('failed execution closes all pending timing records without retrying a worker', () => {
+  const records: WorkflowRecord[] = [];
+  const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: r => records.push(r), call: async () => ({}) });
+  workflow.record('execute', 'agents.executor', 'running', { operation: 'write' });
+  workflow.fail(new Error('connection lost after write'));
+  assert.equal(records.length, 2);
+  assert.equal(records[1].status, 'failed');
+  assert.ok(records[1].startedAt); assert.ok(records[1].finishedAt);
+  assert.deepEqual(records[1].input, { operation: 'write' });
+});

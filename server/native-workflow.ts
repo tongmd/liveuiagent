@@ -30,6 +30,10 @@ export class NativeWorkflow {
     this.options.record(step);
     this.steps.push(step);
   }
+  fail(error: unknown) {
+    const pending = this.steps.filter(step => step.status === 'running' && !this.steps.some(next => next.stage === step.stage && next.nodeId === step.nodeId && next.status !== 'running'));
+    for (const step of pending) this.record(step.stage, step.nodeId, 'failed', undefined, { error: String(error) });
+  }
   async plan(context: Record<string, unknown>) {
     for (const [index, node] of this.nodes.entries()) {
       const input = { modelInvocationId: randomUUID(), model: node.model, context, upstream: this.handoffs.slice(), incomingHandoff: index ? this.options.handoffEdges[index - 1] : null };

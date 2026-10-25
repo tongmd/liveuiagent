@@ -6834,6 +6834,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       // Validate the entire graph before any external side effect, then run each
       // worker with its own role and the previous workers' structured handoffs.
       const route = requireActionRoute(action, actionId);
+      requiredText(action.orchestrationRouteId, `action ${actionId} missing orchestrationRouteId`, 80);
+      const entryAgent = requiredText(action.agent, `action ${actionId} missing entry agent`, 80);
+      if (entryAgent !== route.agentChain[0]) throw httpError(`action ${actionId} entry agent does not match its graph`, 500);
       const agentSpecs = requiredObject<Record<string, any>>(stored.appPackage.agents?.agents, `app ${input.appId} missing agents`);
       nativeWorkflow = new NativeWorkflow({
         appId: stored.appId, owner: String(input.user || '').trim(), actionId,
@@ -7028,6 +7031,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       } catch (error) {
         // External API writes cannot be rolled back with SQLite. Preserve a failed
         // causal record and never automatically rerun the business operation.
+        nativeWorkflow?.fail(error);
         nativeWorkflow?.record('turn', 'agents.orchestrator', 'failed', undefined, { error: String(error), externalEffectsMayHaveOccurred: nativeExecutionStarted });
         if (error && typeof error === 'object' && nativeWorkflow) Object.assign(error, {
           workflowExecution: { executionId: nativeWorkflow.executionId, status: 'failed', steps: nativeWorkflow.steps, externalEffectsMayHaveOccurred: nativeExecutionStarted },
