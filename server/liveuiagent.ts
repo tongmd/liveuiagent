@@ -1,5 +1,8 @@
-import {markNativeActionNotStarted,normalizeNativeActionId} from './native-action-not-started.js';
 import {authorizedGroundingCapabilities,nativeActionContext,nativeActionContextPolicy} from './native-action-context.js';
+import {NativeCommandReceipts,type CommandReceiptBinding} from './native-command-receipts.js';
+import {HOST_COMMAND_ACTION,parseHostCommandEvent,businessSurfaceWithoutHostCommand,appendHostCommand,assertHostCommandDescriptor} from './native-host-command.js';
+import {hostCommandRoute,stageHostCommandResult} from './native-host-command-runtime.js';
+import {markNativeActionNotStarted,normalizeNativeActionId,hostNativeActionNotStartedProof} from './native-action-not-started.js';
 import { assertSurfaceContract, compileSemanticSurface, semanticSurfaceDesignPolicy, type SemanticSurfaceDesign } from './native-surface-design.js';
 import {factorNativePlanInput} from './native-plan-factor.js';
 import {parsePrimaryMembership,primaryMembershipPolicy,primaryProjectionDeficiencies,appStateMembershipEvidencePolicy,type PrimaryMembership} from './native-primary-projection.js';
@@ -3010,7 +3013,7 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
         return stateOptions.find((option) => option.value === raw)?.label || raw;
       })(),
       nextStep: requiredText(latest.nextStep, `A2UI state for ${plan.signature} missing draft nextStep`, 180),
-      result: requiredText(latest.result, `A2UI state for ${plan.signature} missing draft result`, 1200),
+      result: requiredText(stored.runtimeState.lastCommandResult ?? latest.result, `A2UI state for ${plan.signature} missing draft result`, 1200),
       slots: Object.fromEntries(plan.interaction.businessFields.map((field) => [
         field.name,
         latest[field.name] === undefined || latest[field.name] === null ? '' : String(latest[field.name]),
@@ -4727,7 +4730,8 @@ function a2uiTextValue(component: A2UIComponentRecord, data: Record<string, any>
   return undefined;
 }
 
-function validateA2uiSurfaceQuality(surface: A2UISurfaceSpec) {
+function validateA2uiSurfaceQuality(surface: A2UISurfaceSpec, hostDescriptor?:unknown) {
+  if(hostDescriptor!==undefined)surface=businessSurfaceWithoutHostCommand(surface,hostDescriptor) as A2UISurfaceSpec;
   const data = requiredObject<Record<string, any>>(surface.initialData, `A2UI surface ${surface.surfaceId} missing initialData`);
   const components = collectA2uiComponents(surface);
   components.forEach((component) => requiredText(component.id, 'A2UI component missing id', 120));
@@ -5046,7 +5050,7 @@ function saveStoredApp(db: Database.Database, registryRoot: string, stored: Stor
   stored.appPackage = enriched.appPackage;
   const workflow = enriched.appPackage.ui?.meta?.a2ui as A2UISurfaceSpec | undefined;
   if (!workflow?.surfaceId) throw new Error(`app ${enriched.appId} missing A2UI surface while saving`);
-  validateA2uiSurfaceQuality(workflow);
+  validateA2uiSurfaceQuality(workflow,(enriched.appPackage.ui.meta as any)?.hostCommand);
   const guiEvaluation = evaluateRenderedGui({ appPackage: enriched.appPackage as any, appId: enriched.appId });
   assertRenderedGuiEvaluationPass(guiEvaluation);
   const uiMeta = requiredObject<Record<string, unknown>>(enriched.appPackage.ui.meta, `app ${enriched.appId} missing ui meta for GUI evaluation`);
@@ -5374,7 +5378,11 @@ function enrichAppRecord(stored: StoredApp): StoredApp {
   }
   const plan = deriveA2uiPlan(stored);
   const actions = requiredObject<Record<string, unknown>>((stored.appPackage.actions as any).actions, `app ${stored.appId} missing actions while enriching`);
-  const a2ui = makeA2uiSurface(plan, Object.keys(actions), makeA2uiState(plan, stored));
+  let a2ui = makeA2uiSurface(plan, Object.keys(actions), makeA2uiState(plan, stored));
+  if((stored.appPackage.ui.meta as any).hostCommand!==undefined){
+    assertHostCommandDescriptor((stored.appPackage.ui.meta as any).hostCommand);
+    a2ui=appendHostCommand(a2ui,actions).surface as A2UISurfaceSpec;
+  }
   const uiMeta = requiredObject<Record<string, unknown>>(stored.appPackage.ui.meta, `app ${stored.appId} missing ui meta while enriching`);
   stored.appPackage.ui = {
     ...stored.appPackage.ui,
@@ -6709,6 +6717,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
   const nativeActionTimeoutMs = options.nativeActionTimeoutMs ?? 16 * 60 * 1000;
   if (!Number.isFinite(nativeActionTimeoutMs) || nativeActionTimeoutMs <= 0) throw Error('Native action timeout must be positive and finite');
   initStore(db);
+  const commandReceipts = new NativeCommandReceipts(db);
   fs.mkdirSync(options.registryRoot, { recursive: true });
   const debugPolicy = loadLiveUIAgentConfig(options.projectRoot ?? process.cwd()).gui_debug_policy;
   const projectRoot = options.projectRoot ?? process.cwd();
@@ -7107,14 +7116,32 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const releaseAppLock = await acquireAppLock(String(input.appId || ''));
       let nativeWorkflow: NativeWorkflow | undefined;
       let nativeExecutionStarted = false;
+      let receiptBinding: CommandReceiptBinding | undefined;
       try {
       remainingActionMs();
       const stored = getOwnedApp(db, input.appId, String(input.user || '').trim().slice(0, 60));
       if (!stored) throw httpError(`app not found: ${input.appId}`, 404);
       const actionId = normalizeActionId(input.actionId);
-      const action = requiredObject<Record<string, any>>((stored.appPackage.actions as any).actions, `app ${input.appId} missing actions`)[actionId];
+      const isCommand = actionId === HOST_COMMAND_ACTION;
+      const commandEvent = isCommand ? parseHostCommandEvent(input.eventPayload) : undefined;
+      if(isCommand) businessSurfaceWithoutHostCommand(stored.appPackage.ui.meta.a2ui, (stored.appPackage.ui.meta as any).hostCommand);
+      const hostRoute = isCommand ? hostCommandRoute(stored.appPackage.manifest.permissions) : undefined;
+      const action = hostRoute?.action ?? requiredObject<Record<string, any>>((stored.appPackage.actions as any).actions, `app ${input.appId} missing actions`)[actionId];
       if (!action) throw httpError(`action not found: ${actionId}`, 404);
-      const rawPayload = extractPayload(input.eventPayload);
+      const rawPayload = commandEvent ? {...commandEvent} : extractPayload(input.eventPayload);
+      const owner = String(input.user || '').trim();
+      if(!owner) throw httpError('authenticated owner required for durable action admission',403);
+      // Only an already-completed duplicate returns its prior receipt. It never
+      // replays stale state patches over a later app revision or enters tools.
+      if(commandEvent){
+        const binding={owner,appId:stored.appId,requestId:commandEvent.requestId,command:commandEvent.command,eventPayload:input.eventPayload,actionId};
+        const admission=commandReceipts.begin(binding);
+        if(!admission.admitted){
+          if(admission.state!=='completed')throw Object.assign(httpError('This command has an unresolved or failed receipt; no operation was repeated.',409),{commandReceipt:admission});
+          return {ok:true,replayed:true,commandReceipt:admission,messages:['This request previously completed. No operation was repeated; refresh to inspect current state.']};
+        }
+        receiptBinding=binding;
+      } else commandReceipts.assertAppResolved(owner,stored.appId);
       if (action.perItem === true) {
         try {
           assertRowActionPayload(action, rawPayload, requiredArray<BusinessSlotSpec>((stored.runtimeState.interaction as InteractionModel)?.businessFields, 'perItem action needs declared business fields').map(field => field.name),
@@ -7149,7 +7176,11 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       requiredText(action.orchestrationRouteId, `action ${actionId} missing orchestrationRouteId`, 80);
       const entryAgent = requiredText(action.agent, `action ${actionId} missing entry agent`, 80);
       if (entryAgent !== route.agentChain[0]) throw httpError(`action ${actionId} entry agent does not match its graph`, 500);
-      const agentSpecs = requiredObject<Record<string, any>>(stored.appPackage.agents?.agents, `app ${input.appId} missing agents`);
+      const agentSpecs = hostRoute?.specs ?? requiredObject<Record<string, any>>(stored.appPackage.agents?.agents, `app ${input.appId} missing agents`);
+      if(!receiptBinding){
+        receiptBinding={owner,appId:stored.appId,requestId:randomUUID(),command:JSON.stringify(input.eventPayload),eventPayload:input.eventPayload,actionId};
+        commandReceipts.begin(receiptBinding);
+      }
       nativeWorkflow = new NativeWorkflow({
         appId: stored.appId, owner: String(input.user || '').trim(), actionId,
         chain: route.agentChain, specs: Object.fromEntries(Object.entries(agentSpecs).map(([id, spec]) => [id, { ...spec, model: input.llm?.model || process.env.LIVEUIAGENT_ORCHESTRATOR_MODEL || '' }])), handoffEdges: route.handoffs,
@@ -7186,6 +7217,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       remainingActionMs();
       const executionLlm = input.llm ? { ...input.llm, personalContext: [input.llm.personalContext || '',
         'Native worker contracts (planning, not observed facts): ' + JSON.stringify(workerHandoffs)].join('\n') } : input.llm;
+      commandReceipts.enterExecutor(receiptBinding);
       nativeExecutionStarted = true;
       nativeWorkflow.record('execute', 'agents.executor', 'running', { originalRequest: rawPayload });
       remainingActionMs();
@@ -7217,7 +7249,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             // 目标实体置于首位:行内按钮回合的唯一业务输入就是"对这一个对象做该动作"。
             fields: [
               ...(targetEntity ? [{ label: "Target item", value: `${targetEntity.name}${targetEntity.id ? ` (id ${targetEntity.id})` : ''}` }] : []),
-              ...(action.perItem===true
+              ...(commandEvent ? [{label:'Current visible command',value:commandEvent.command}] : action.perItem===true
                 ? consumedGroundingFields(action.consumedSlots,rawPayload,interactionModel?.businessFields ?? [])
                 : (interactionModel?.businessFields ?? [])
                   .map((field) => ({ label: String(field.label), value: String((rawPayload as Record<string, unknown>)[field.name] ?? '').trim() }))
@@ -7263,7 +7295,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       if (!grounded) {
         const interaction = stored.runtimeState.interaction as InteractionModel | undefined;
         const slotLabels = new Map((interaction?.businessFields ?? []).map((field) => [field.name, field.label]));
-        const slots = Object.fromEntries(Object.entries(rawPayload)
+        const slots = commandEvent ? {'Current visible command':commandEvent.command} : Object.fromEntries(Object.entries(rawPayload)
           .filter(([key, value]) => slotLabels.has(key) && typeof value === 'string' && (value as string).trim())
           .map(([key, value]) => [slotLabels.get(key) as string, String(value)]));
         const local = await runLocalAgentTurn({
@@ -7297,7 +7329,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         dbChanges: appWorldTraceSummary(toolResults), toolResults,
       });
       nativeWorkflow.record('commit', 'agents.data', 'running');
-      const agentResult = trace(traceLog, 'State Agent', 'Commit orchestration turn and mutate visible state', { actionId, payload, appWorldDbChanges: appWorldTraceSummary(toolResults) }, updateStoredAgentApp(stored, actionId, payload, authoritativeEntities));
+      const agentResult = trace(traceLog, 'State Agent', 'Commit orchestration turn and mutate visible state', { actionId, payload, appWorldDbChanges: appWorldTraceSummary(toolResults) }, isCommand ? stageHostCommandResult(stored,payload,authoritativeEntities) : updateStoredAgentApp(stored, actionId, payload, authoritativeEntities));
       hydrateAppState(stored,appState);
       await nativeWorkflow.review({ originalRequest: input.eventPayload, hostActionContext:hostActionContract, result: rawPayload.result,
         entities: rawPayload.entities, stats: rawPayload.entityStats, toolResults,
@@ -7351,7 +7383,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       nativeWorkflow.record('commit', 'agents.data', 'ok', undefined, { collection: agentResult.collection, records: agentResult.records.length });
       nativeWorkflow.record('commit', 'agents.memory', 'ok', undefined, { workflowId: actionWorkflowId });
       nativeWorkflow.record('turn', 'agents.orchestrator', 'ok', undefined, { persisted: true });
-      return {
+      const actionResponse = {
         statePatch: {
           target: 'app.runtimeState',
           op: 'replace',
@@ -7373,6 +7405,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         messages: [message],
         trace: traceLog,
       };
+      commandReceipts.complete(receiptBinding, {executionId:nativeWorkflow.executionId,status:'completed'});
+      return actionResponse;
       } catch (error) {
         // A child transport/provider wrapper must not turn the exhausted host
         // budget into a configuration error or a retryable inference failure.
@@ -7388,6 +7422,10 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         if (error && typeof error === 'object' && nativeWorkflow) Object.assign(error, {
           workflowExecution: { executionId: nativeWorkflow.executionId, status: 'failed', steps: nativeWorkflow.steps, externalEffectsMayHaveOccurred: nativeExecutionStarted },
         });
+        if(receiptBinding){
+          if(!nativeExecutionStarted&&!hostNativeActionNotStartedProof(error))markNativeActionNotStarted(error,{executionId:nativeWorkflow?.executionId??randomUUID(),appId:input.appId,actionId:input.actionId,eventPayload:input.eventPayload});
+          commandReceipts.fail(receiptBinding,error);
+        }
         throw error;
       } finally {
         releaseAppLock();

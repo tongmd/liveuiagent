@@ -37,20 +37,26 @@ export function hostCommandComponents(): Record<string,any>[] {
   {id:d.buttonId,component:'Button',child:PREFIX+'execute_label',action:{event:{name:d.actionId,context:{command:{path:d.inputPath}}}}},
  ];
 }
-function assertNoReserved(value:unknown):void {
+function assertNoReserved(value:unknown, structuralKey?:string):void {
  if(typeof value==='string') {
-  if(value===HOST_COMMAND_ACTION || value.startsWith(PREFIX) || value==='/hostCommand' || value.startsWith('/hostCommand/'))fail('reserved namespace collision');
+  if(['id','action','actionId','name','path','child','children'].includes(structuralKey??'') && (value===HOST_COMMAND_ACTION || value.startsWith(PREFIX) || value==='/hostCommand' || value.startsWith('/hostCommand/')))fail('reserved namespace collision');
  } else if(value&&typeof value==='object') {
   for(const [key,child] of Object.entries(value)){
    if(key==='hostCommand'||key===HOST_COMMAND_ACTION||key.startsWith(PREFIX))fail('reserved namespace collision');
-   assertNoReserved(child);
+   assertNoReserved(child,Array.isArray(value)?structuralKey:key);
   }
  }
+}
+function assertSurfaceNamespace(surfaceInput:unknown){
+ const surface=object(surfaceInput);
+ const data=object(surface.initialData);
+ if(Object.hasOwn(data,'hostCommand'))fail('reserved namespace collision');
+ assertNoReserved({...surface,initialData:{},messages:Array.isArray(surface.messages)?surface.messages.map((message:any)=>message?.updateDataModel?{...message,updateDataModel:{...message.updateDataModel,value:{}}}:message):surface.messages});
 }
 /** Append host controls to the known root column after model validation. Does not
  * alter business actions, slots or permissions and never accepts model host metadata. */
 export function appendHostCommand(surfaceInput:unknown, businessActions:unknown):{surface:Record<string,any>;descriptor:HostCommandDescriptor} {
- assertNoReserved(surfaceInput);assertNoReserved(businessActions);
+ assertSurfaceNamespace(surfaceInput);assertNoReserved(businessActions);
  const surface=structuredClone(object(surfaceInput));
  const updates=object(surface).messages;
  if(!Array.isArray(updates))return fail('messages required');
@@ -95,7 +101,7 @@ export function businessSurfaceWithoutHostCommand(surfaceInput:unknown,rawDescri
  }
  if(!equal(surface.actionMap?.[HOST_COMMAND_ACTION],{actionId:HOST_COMMAND_ACTION,payloadSource:'event.context'}))return fail('host action map modified');
  delete surface.actionMap[HOST_COMMAND_ACTION];
- assertNoReserved(surface);
+ assertSurfaceNamespace(surface);
  return surface;
 }
 /** requestId is transport-owned, not a model/context binding. User text is kept

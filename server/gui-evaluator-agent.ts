@@ -1,3 +1,4 @@
+import {businessSurfaceWithoutHostCommand} from './native-host-command.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -208,7 +209,11 @@ function appActionExists(pkg: AppPackage, actionId: string) {
 }
 
 export function evaluateRenderedGui(input: { appPackage: AppPackage; appId?: string }): RenderedGuiEvaluation {
-  const pkg = input.appPackage;
+  let pkg = input.appPackage;
+  if((pkg.ui?.meta as any)?.hostCommand!==undefined){
+    const surface=businessSurfaceWithoutHostCommand(pkg.ui.meta!.a2ui,(pkg.ui.meta as any).hostCommand);
+    pkg={...pkg,ui:{...pkg.ui,meta:{...pkg.ui.meta,a2ui:surface}}} as AppPackage;
+  }
   const manifest = requiredObject<Record<string, any>>(pkg.manifest, 'package missing manifest');
   const appId = requireText(input.appId || manifest.appId, 'app missing appId', 160);
   const appName = requireText(manifest.name, `app ${appId} missing name`, 160);

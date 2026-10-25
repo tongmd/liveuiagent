@@ -133,3 +133,37 @@ test('actual HTTP failed runtime action returns host-only non-entry proof withou
  const server=http.createServer(async(req,res)=>{let raw='';for await(const c of req)raw+=c;const body=JSON.parse(raw);try{await f.runtime.action({...body,user:'fixture-owner',llm:{model:'fixture',chatCompletion:async()=>reply({proceed:false,reason:'Fixture actual plan refusal'})}});}catch(e:any){res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({error:e.message,workflowExecution:e.workflowExecution,...(hostNativeActionNotStartedProof(e)?{nativeActionNotStarted:hostNativeActionNotStartedProof(e)}:{})}));}});await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();return new Promise<void>(r=>server.close(()=>r()));});
  const response=await fetch(`http://127.0.0.1:${(server.address()as any).port}/agent/action`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({appId:'parcels',actionId:'actions.refresh.run',eventPayload:payload})});assert.equal(response.status,500);const body:any=await response.json();assert.equal(body.workflowExecution.status,'failed');assert.equal(body.workflowExecution.externalEffectsMayHaveOccurred,false);assert(validateNativeActionNotStartedProof(body.nativeActionNotStarted,{appId:'parcels',actionId:'refresh.run',eventPayload:payload}));assert.equal(body.nativeActionNotStarted.executionId,body.workflowExecution.executionId);
 });
+
+test('host command uses exact visible request without filling business slots, real service read and SQLite preference readback',async t=>{
+ const{appendHostCommand}=await import('../server/native-host-command.js');const f=await runtimeFixture(t);
+ const opened=await f.runtime.queryState({user:'fixture-owner'});const pkg:any=opened.apps[0].appPackage;
+ pkg.manifest.permissions=[...pkg.actions.actions['refresh.run'].permissions];
+ const attached=appendHostCommand(pkg.ui.meta.a2ui,pkg.actions.actions);pkg.ui.meta.a2ui=attached.surface;pkg.ui.meta.hostCommand=attached.descriptor;
+ f.db.prepare('UPDATE agent_apps SET package_json=? WHERE app_id=?').run(JSON.stringify(pkg),'parcels');
+ const command='Read Parcel42 and save its local filter preference as 249';
+ const payload={command,requestId:'00000000-0000-4000-8000-000000000001',sourceComponentId:'host_app_command_execute'};
+ let step=0,calls=0;const before=JSON.parse(f.db.prepare('SELECT data_json FROM agent_apps WHERE app_id=?').get('parcels').data_json);
+ const chatCompletion=async(request:any)=>{calls++;const sys=request.messages[0].content;const value=JSON.parse(request.messages[1].content.split('\n')[0]);
+  if(sys.includes('You are one worker')){assert.equal(value.context.requestPayload.command,command);assert.equal(value.context.requestPayload.subject,undefined);assert.deepEqual(value.context.permissions,pkg.manifest.permissions);return reply({proceed:true,instructions:'Read actual parcel and persist requested preference',constraints:[],expectedOutcome:'Read-back matches command'});}
+  if(sys.includes('You analyze a GUI'))return reply({objective:command});
+  if(sys.includes('You are the Write Verifier'))return reply({approved:true});
+  if(sys.includes('You are an INDEPENDENT evaluator'))return reply({pass:true,deficiencies:[]});
+  if(sys.includes('You are the backend workflow')){step++;assert(value.userRequest.some((s:string)=>s.includes(command)));return reply(step===1?{calls:[{api:'read_items',args:{}}]}:step===2?{calls:[{api:'app_state.upsert_record',args:{recordId:'parcel42',values:{subject:'Parcel42',filter:'249'}}}]}:step===3?{calls:[{api:'app_state.read_record',args:{recordId:'parcel42'}}]}:{done:true,summary:'Parcel42 local filter saved as 249',entities:[{id:'parcel42',name:'Parcel42',appRecordId:'parcel42',detail:'249'}],stats:[{label:'Tracked',value:'1'}]});}
+  return reply({pass:true,reason:'Actual current service read and real local preference read-back'});
+ };
+ const result:any=await f.runtime.action({appId:'parcels',actionId:'host.app.command',user:'fixture-owner',eventPayload:payload,llm:{model:'fixture',chatCompletion}}as any);
+ assert.equal(result.runtimeState.entities[0].appState.filter,'249');assert.deepEqual(result.appData,before,'no fabricated form values/domain history records');
+ const n=calls;const duplicate:any=await f.runtime.action({appId:'parcels',actionId:'host.app.command',user:'fixture-owner',eventPayload:payload,llm:{model:'fixture',chatCompletion}}as any);assert.equal(calls,n);assert.equal(duplicate.commandReceipt.state,'completed');assert.equal(duplicate.statePatch,undefined);
+ const reopened=await f.runtime.queryState({user:'fixture-owner'});assert.equal(reopened.apps[0].appPackage.ui.meta.a2ui.initialData.draft.result,'Parcel42 local filter saved as 249');
+});
+
+test('actual command unknown persists across reload and blocks both new command IDs and dedicated actions',async t=>{
+ const{appendHostCommand}=await import('../server/native-host-command.js');const f=await runtimeFixture(t);const pkg:any=(await f.runtime.queryState({user:'fixture-owner'})).apps[0].appPackage;pkg.manifest.permissions=[...pkg.actions.actions['refresh.run'].permissions];const x=appendHostCommand(pkg.ui.meta.a2ui,pkg.actions.actions);pkg.ui.meta.a2ui=x.surface;pkg.ui.meta.hostCommand=x.descriptor;f.db.prepare('UPDATE agent_apps SET package_json=? WHERE app_id=?').run(JSON.stringify(pkg),'parcels');
+ let calls=0;const llm={model:'fixture',chatCompletion:async(request:any)=>{calls++;if(request.messages[0].content.includes('You are one worker'))return reply({proceed:true,instructions:'Read current parcels',constraints:[],expectedOutcome:'Read-back observed'});throw Error('fixture connection lost after executor entry');}};
+ const payload={command:'Read the current parcels',requestId:'00000000-0000-4000-8000-000000000002',sourceComponentId:'host_app_command_execute'};
+ await assert.rejects(f.runtime.action({appId:'parcels',actionId:'host.app.command',user:'fixture-owner',eventPayload:payload,llm}as any),/fixture connection lost/);
+ assert.equal(f.db.prepare('SELECT state FROM native_host_command_receipts WHERE request_id=?').get(payload.requestId).state,'unknown');const n=calls;
+ await f.runtime.queryState({user:'fixture-owner'});
+ for(const event of [{actionId:'host.app.command',eventPayload:payload},{actionId:'host.app.command',eventPayload:{...payload,requestId:'00000000-0000-4000-8000-000000000003'}},{actionId:'refresh.run',eventPayload:{subject:'Read parcels',scope:'All'}}])await assert.rejects(f.runtime.action({...event,appId:'parcels',user:'fixture-owner',llm}as any),/unresolved|failed receipt/);
+ assert.equal(calls,n);
+});
