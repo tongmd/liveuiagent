@@ -72,9 +72,9 @@ test('one membership cannot duplicate rows and a missing-record read cannot prov
  assert(primaryProjectionDeficiencies('app_local',[{name:'Member',appRecordId:'one'},{name:'Member',appRecordId:'one'}],calls,fields).some(x=>x.includes('multiple')));assert(primaryProjectionDeficiencies('app_local',[],calls,fields).some(x=>x.includes('empty first list')));
 });
 
-test('long local names use exact unshortened read evidence while display may be compact',()=>{
+test('long local names retain exact unshortened read evidence through grounding output',()=>{
  const name='A deliberately long complete member identity that exceeds forty display characters';const row={name,appRecordId:'one'};const calls=[{source:'app-state',api:'app_state.read_record',request:{recordId:'one'},order:1,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments',response:{source:'app-state',operation:'read',scope:'authenticated-current-owner-app',persisted:true,record:{recordKind:'primary_member',recordId:'one',revision:1,values:{member_name:name}}}}];
- assert.deepEqual(primaryProjectionDeficiencies('app_local',[row],calls,fields),[]);assert.equal(normalizeGroundingEntities([row],new Set([name]),calls,fields).length,1);assert.equal(normalizeGroundingEntities([row],new Set([name]),[],fields).length,0);assert.equal(normalizeGroundingEntities([row],new Set([name]),calls,fields)[0].name.length,40);
+ assert.deepEqual(primaryProjectionDeficiencies('app_local',[row],calls,fields),[]);assert.equal(normalizeGroundingEntities([row],new Set([name]),calls,fields).length,1);assert.equal(normalizeGroundingEntities([row],new Set([name]),[],fields).length,0);assert.equal(normalizeGroundingEntities([row],new Set([name]),calls,fields)[0].name,name);
 });
 
 test('all four actual grounding role requests share the required local record binding and unambiguous done schema',async t=>{

@@ -28,7 +28,9 @@ export function normalizeGroundingEntities(raw:unknown,formEchoes:ReadonlySet<st
   // Proof uses the full submitted name before presentation compaction.
   .filter((item:Record<string,unknown>)=>Boolean(opaqueIdentity(item.id))||!formEchoes.has(String(item.name).trim())||hasLocalReadNameBinding({name:String(item.name).trim(),...(typeof item.appRecordId==='string'?{appRecordId:item.appRecordId}:{})},calls,fields))
   .map((item:Record<string,unknown>)=>({
-   name:compact(String(item.name),40),
+   // Semantic name/read evidence stays complete through the independent evaluator.
+   // UI presentation may shorten its own label, never this canonical value.
+   name:String(item.name).trim(),
    ...(opaqueIdentity(item.id)!==''?{id:opaqueIdentity(item.id)}:{}),
    ...(typeof item.detail==='string'&&item.detail.trim()?{detail:compact(item.detail,80)}:{}),
    ...(typeof item.group==='string'&&item.group.trim()?{group:compact(item.group,24)}:{}),
