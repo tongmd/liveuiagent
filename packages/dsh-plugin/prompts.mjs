@@ -20,7 +20,7 @@ Prioritize the actual task. Keep the implementation focused; do not expand into 
 Keep developer contracts, service wiring and implementation explanations out of the interface. Do not add decorative taglines or explanatory fine print; use task-relevant controls, actual results and actionable status.
 Every visible action must work; no dummy buttons or fake AI responses.
 Implement persistent create/edit/delete, filtering, calculations, import/export or history when
-appropriate to the request. Provide useful real sample data, clearly identified as examples.
+appropriate to the request. Populate working views only from supplied application data or actual verified service results. If no real records are available, show an empty state. Examples require an explicit user choice, remain clearly labelled and separate from real records, and must never load automatically.
 Use localStorage normally: the host supplies an app-scoped persistent implementation that survives
 refresh, generated app revisions and opening on another browser with the same signed-in account.
 Read stored state on startup, merge defaults carefully and preserve user data on revisions.
