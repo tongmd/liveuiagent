@@ -39,7 +39,7 @@ test('actual host transport through Native relay forwards all structured role po
 test('direct HTTP DeepSeek stays unchanged and no retry is added; GUI explicit policy remains unchanged',async()=>{
  const wires:any[]=[];const upstream=await server(async(req,res)=>{let raw='';for await(const c of req)raw+=c;wires.push(JSON.parse(raw));res.end(JSON.stringify({choices:[{message:{content:'{}'},finish_reason:'stop'}]}));});
  try{const original=request({thinking:{type:'enabled'},max_tokens:16384});await nativeModelTransport({model:original.model,apiBase:upstream.base,apiKey:'fixture'},upstream.base+'/chat/completions',{method:'POST',body:JSON.stringify(original)},5000,'Router Agent');assert.deepEqual(wires[0],original);assert.equal(wires.length,1);}finally{await upstream.close();}
- let received:any;const llm={model:'DeepSeek-V4.1-Flash',chatCompletion:async(r:any)=>{received=r;return {choices:[{message:{content:JSON.stringify({operation:{quote:'fixture-user'},fields:[],action:{kind:'done',reason:'fixture complete'}})}}]};}};
+ let received:any;const llm={model:'DeepSeek-V4.1-Flash',chatCompletion:async(r:any)=>{received=r;return {choices:[{message:{content:JSON.stringify({operation:{},fields:[],action:{kind:'done',reason:'fixture complete'}})}}]};}};
  await planNativeGuiInteractionStep('fixture-system',{userMessage:'fixture-user',snapshot:{visibleText:'fixture',fields:[],buttons:[]},observations:[]},llm);assert.equal(received.max_tokens,8192);assert.deepEqual(received.thinking,{type:'disabled'});assert.equal(received.reasoning_effort,'none');
 });
 test('bounded policy does not accept truncated or incomplete output and cannot add retries',async()=>{
