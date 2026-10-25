@@ -1,3 +1,4 @@
+import { nativeRowSlotContext } from './native-row-context.js';
 import { appWorldCatalogLine } from './appworld-schema.js';
 import { actualGroundingEvidence, attemptedGroundingEvidence, groundingEvidenceHistory } from './grounding-evidence.js';
 import { AppWorldRequestNotStartedError } from './appworld-request-error.js';
@@ -2985,6 +2986,7 @@ function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: str
   if (!Array.isArray(raw) || raw.length < 3 || raw.length > 70) return reject('components must be an array of 3-70 objects');
   const slotSet = new Set(opts.slots.map((slot) => slot.name));
   const slotById = new Map(opts.slots.map((slot) => [slot.name, slot]));
+  const rowContextSlots = new Set<string>();
   // 槽位声明的类型决定这个输入位长什么样:date 要日历、select 要选项药丸、boolean 要
   // 开关、number 要步进器。类型本来就在 Business Slot Agent 的输出里,之前只是在设计器
   // 这一层被丢掉了,于是日期也变成一个裸文本框。
@@ -3228,6 +3230,7 @@ function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: str
       return done(true);
     }
     if (kind === 'TextField') {
+      if (itemScoped.has(id)) return bad('row inputs must reference an existing composer slot; put its single TextField outside the /entities list');
       const path = String((node.value as Record<string, unknown> | undefined)?.path || '');
       const slot = path.replace(/^\/draft\/slots\//, '');
       if (!path.startsWith('/draft/slots/') || !slotSet.has(slot)) return bad(`value must bind /draft/slots/<slot> with a known slot (got "${path}"; known: ${[...slotSet].join(', ')})`);
@@ -3282,11 +3285,15 @@ function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: str
         // 实体行内动作按钮(可选):作用于"这一行对象"的动作。身份上下文在此静态签发
         // (entityName/id 是行对象字段,不需要渲染期新鲜度),渲染注入只补无 context 的按钮。
         // 变体强制 default(主按钮属于 composer),每个条目模板至多一个行内按钮。
+        let slotContext: Record<string, { path: string }>;
+        try { slotContext = nativeRowSlotContext((node.action as Record<string, any>)?.event?.context, slotSet); }
+        catch (error) { return bad(String((error as Error).message)); }
+        Object.keys(slotContext).forEach((slot) => rowContextSlots.add(slot));
         itemButtonCount += 1;
         if (itemButtonActions.has(actionName)) return bad('two row Buttons bound to the SAME action — each row Button must trigger a different action');
         itemButtonActions.add(actionName);
         if (itemButtonCount > 2) return bad('at most TWO Buttons inside the /entities item subtree');
-        out.push({ id: `d_${id}`, component: 'Button', child: ref(node.child), variant: 'default', action: { event: { name: `actions.${actionName}`, context: { entityName: { path: '/entityName' }, entityId: { path: '/id' } } } }, checks: [] });
+        out.push({ id: `d_${id}`, component: 'Button', child: ref(node.child), variant: 'default', action: { event: { name: `actions.${actionName}`, context: { ...slotContext, entityName: { path: '/entityName' }, entityId: { path: '/id' } } } }, checks: [] });
         return done(true);
       }
       topLevelButtonCount += 1;
@@ -3309,6 +3316,7 @@ function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: str
   if (!walk('overview')) return reject(lastDesignRejectReason || 'component tree failed to validate from the overview root');
   // 列表条目必须同时展示 name 和 detail,否则真实创建的对象只剩一行裸名字。
   // composer 至少一个顶层按钮:行内按钮在实体为空时不可达,不能是动作的唯一入口。
+  for (const slot of rowContextSlots) if (!boundSlots.has(slot)) return reject(`row action slot "${slot}" needs its editable composer TextField`);
   if (!fieldCount) return reject('missing at least one TextField input');
   // 与 QA 门(validateA2uiSurfaceQuality ≥3 语义槽位)同一条线:设计器只放 1-2 个
   // 输入位会在生成后段被 QA 抛死且不进重试环 —— 在这里拦下并给精确拒因。
@@ -6238,7 +6246,7 @@ export async function designAppSurface(input: {
 }): Promise<Array<Record<string, unknown>>> {
   const contract = [
     'You design the user-facing surface of a freshly generated consumer app as an A2UI component tree.',
-    'Component vocabulary (exact): Card{child}, Column{children[],align?}, Row{children[],align?}, Text{text: string | {"path": "..."}, variant?: h2|h3|body|caption}, TextField{label, value:{path:"/draft/slots/<slot>"}, variant: shortText|longText|date|choice|toggle|stepper}, Button{child:"<Text component id>", variant?: primary|default, action:{event:{name:"<actionId>"}}}, List{children:{componentId:"<item component id>", path:"/entities"}}, StatBlock{label, value, caption?}, StatGrid{path:"/stats"}, Badge{text}, SectionHeading{title, kicker?, meta?}.',
+    'Component vocabulary (exact): Card{child}, Column{children[],align?}, Row{children[],align?}, Text{text: string | {"path": "..."}, variant?: h2|h3|body|caption}, TextField{label, value:{path:"/draft/slots/<slot>"}, variant: shortText|longText|date|choice|toggle|stepper}, Button{child:"<Text component id>", variant?: primary|default, action:{event:{name:"<actionId>", context?:{"<knownSlot>":{path:"/draft/slots/<knownSlot>"}}}}}, List{children:{componentId:"<item component id>", path:"/entities"}}, StatBlock{label, value, caption?}, StatGrid{path:"/stats"}, Badge{text}, SectionHeading{title, kicker?, meta?}.',
     'THE WIDGETS — this app must LOOK like an app, not like a form with paragraphs. Use them (a text-only surface is rejected):',
     'StatBlock{label, value, caption?} — the hero figure of the app, rendered as one big accent-colored value with a small uppercase label above it. Put exactly ONE near the top, and bind it to the app\'s REAL headline aggregate: value MUST be {"path":"/draft/statValue"} with label {"path":"/draft/statLabel"} (the first computed aggregate — a total, a count, a range, a countdown; when no aggregate exists yet it shows the live record count). NEVER bind value to "/draft/state" (a 3-value internal workflow enum — it renders the same for every app and carries no information) and never bind "/draft/stats" (the flattened line StatGrid already renders per cell). Never invent a number as a literal.',
     'StatGrid{path:"/stats"} — renders the app\'s REAL computed aggregates as a grid of up to 4 label/value cells. It takes no children and no literal content: /stats is the live array the grounding step computed. Include it once when the app tracks aggregates (totals, remaining counts, ranges, countdowns). It renders nothing when there are no aggregates yet, so it is always safe.',
@@ -6256,6 +6264,7 @@ export async function designAppSurface(input: {
     'Bindable paths: /entitiesTitle (content-list header), /entitiesEmptyHint (empty-state hint), /draft/result (latest outcome sentence), /draft/state (short workflow status — Badge only, NEVER the StatBlock hero), /draft/statLabel + /draft/statValue (the app\'s first REAL computed aggregate: the StatBlock hero pair), /draft/stats (the aggregate-summary line: cumulative totals / remaining counts / countdowns), /stats (StatGrid only: the REMAINING aggregates after the first — the hero one is not repeated here), /draft/slots/<slot>. Inside the /entities item subtree, Texts and widgets may bind {"path":"name"} (group-prefixed display name), {"path":"title"} (the bare name, use this one when the row also carries a Badge on {"path":"tag"}), {"path":"detail"} and {"path":"tag"} — the item must be a small Card showing BOTH a name/title and detail.',
     'Layout rules: group shortText, date and stepper inputs two per Row so the composer stays compact; longText, choice and toggle inputs each take a full row (pills and switches need the width). Put composer action Buttons together in one Row at the end of the composer.',
     'Per-entity row button: when an action below is marked perItem: true, the /entities item Card MUST additionally contain a Button (variant default, never primary) bound to THAT action, with its own short child Text label (1-18 chars, e.g. 标记完成) — it acts on the row it sits in. At most TWO row Buttons per item, each bound to a DIFFERENT action; row buttons are DUPLICATE entry points — the same actions must still appear as composer Buttons. When no action is perItem, OMIT row buttons entirely.',
+    'A row Button that needs a NEW input value (for example a destination or amount) MUST explicitly declare ONLY those required known business slots in action.event.context: {slot_name:{path:"/draft/slots/slot_name"}}. Read that value from the existing composer TextField; do not duplicate inputs inside rows or attach business actions to onchange. Do not pass unrelated or stale fields to actions that only need entity identity (for example mark done). Identity is injected by the host: never declare entityName, entityId, sourceComponentId or arbitrary context keys. Each declared key must equal its exact known slot name and path; no literals, nested objects or other paths.',
     'Design rules: the root component MUST have id "overview" (a Column). Make it feel like a real consumer app for THIS intention, and it renders in a PHONE-WIDTH column (~390px) — single column, no wide side-by-side layouts. Shape it top to bottom: a StatBlock hero showing the app\'s live state; a StatGrid when the app has real aggregates; a SectionHeading over the content list; the List bound to /entities (each item a small Card with the record title and detail, plus a Badge on {"path":"tag"} when rows carry categories); the /draft/result line; then ONE compact composer section (its own SectionHeading + the TextFields) ending in a Row of Buttons with every action at least once (first one primary). Prefer a widget over a sentence: aggregates belong in StatGrid, status in a Badge, section labels in SectionHeading — plain Texts are for the row title/detail and the /draft/result line. No internal jargon (never: agent, workflow, 记录, 流程, orchestration). Never repeat the app name or its description as captions or section labels — every visible string must add new information. All copy in the same language as the intention. At most 30 components, ids short.',
     'Every TextField label must be a SPECIFIC human label of 2-18 characters — count them: English labels run long, so prefer compact forms ("Unpaid balance", not "Carry unpaid balance"). Button child Texts are literal 1-18 chars.',
     'Respond ONLY with JSON: {"components": [ ... ]}',

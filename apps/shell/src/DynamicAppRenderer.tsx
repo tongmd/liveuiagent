@@ -114,9 +114,18 @@ function setPath(data: Record<string, any>, descriptor: unknown, value: string) 
   current[parts[parts.length - 1]] = value;
 }
 
-function resolveActionContext(data: Record<string, any>, context: unknown): Record<string, unknown> {
+function resolveActionContext(data: Record<string, any>, context: unknown, rootData: Record<string, any>): Record<string, unknown> {
   const record = requiredObject<Record<string, unknown>>(context, 'A2UI action missing context');
-  return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, resolvePath(data, value)]));
+  return Object.fromEntries(Object.entries(record).map(([key, value]) => {
+    const binding = value && typeof value === 'object' ? (value as any).path : undefined;
+    if (data !== rootData && typeof binding === 'string' && binding.startsWith('/draft/slots/')) {
+      if (binding !== `/draft/slots/${key}` || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
+        || ['__proto__', 'prototype', 'constructor', 'entityName', 'entityId', 'sourceComponentId'].includes(key)
+        || !Object.hasOwn(rootData.draft?.slots || {}, key)) throw new Error('Invalid row slot binding');
+      return [key, resolvePath(rootData, value)];
+    }
+    return [key, resolvePath(data, value)];
+  }));
 }
 
 export function DynamicAppRenderer({ app, onAction, busy }: RendererProps) {
@@ -156,10 +165,11 @@ function childIds(component: A2UIComponent): string[] {
   return [];
 }
 
-function RenderA2UI({ model, componentId, data, busy, mutateData, onAction }: {
+function RenderA2UI({ model, componentId, data, rootData = data, busy, mutateData, onAction }: {
   model: SurfaceModel;
   componentId: string;
   data: Record<string, any>;
+  rootData?: Record<string, any>;
   busy: boolean;
   mutateData: (mutator: (draft: Record<string, any>) => void) => void;
   onAction: (actionId: string, eventPayload: unknown) => Promise<void>;
@@ -171,7 +181,7 @@ function RenderA2UI({ model, componentId, data, busy, mutateData, onAction }: {
     return (
       <View style={styles.card}>
         {childIds(component).map((childId) => (
-          <RenderA2UI key={childId} {...{ model, componentId: childId, data, busy, mutateData, onAction }} />
+          <RenderA2UI key={childId} {...{ model, componentId: childId, data, rootData, busy, mutateData, onAction }} />
         ))}
       </View>
     );
@@ -181,7 +191,7 @@ function RenderA2UI({ model, componentId, data, busy, mutateData, onAction }: {
     return (
       <View style={styles.column}>
         {childIds(component).map((childId) => (
-          <RenderA2UI key={childId} {...{ model, componentId: childId, data, busy, mutateData, onAction }} />
+          <RenderA2UI key={childId} {...{ model, componentId: childId, data, rootData, busy, mutateData, onAction }} />
         ))}
       </View>
     );
@@ -191,7 +201,7 @@ function RenderA2UI({ model, componentId, data, busy, mutateData, onAction }: {
     return (
       <View style={styles.row}>
         {childIds(component).map((childId) => (
-          <RenderA2UI key={childId} {...{ model, componentId: childId, data, busy, mutateData, onAction }} />
+          <RenderA2UI key={childId} {...{ model, componentId: childId, data, rootData, busy, mutateData, onAction }} />
         ))}
       </View>
     );
@@ -223,7 +233,7 @@ function RenderA2UI({ model, componentId, data, busy, mutateData, onAction }: {
     const action = requiredObject<any>(component.action, `Button ${component.id} missing action`);
     const event = requiredObject<any>(action.event, `Button ${component.id} missing action event`);
     const actionName = requiredText(event.name, `Button ${component.id} missing action name`);
-    const payload = resolveActionContext(data, event.context);
+    const payload = resolveActionContext(data, event.context, rootData);
     return (
       <Pressable
         disabled={busy}
@@ -231,14 +241,14 @@ function RenderA2UI({ model, componentId, data, busy, mutateData, onAction }: {
         style={[component.variant === 'primary' ? styles.primaryButton : styles.button, busy && styles.disabled]}
       >
         {childIds(component).map((childId) => (
-          <RenderA2UI key={childId} {...{ model, componentId: childId, data, busy, mutateData, onAction }} />
+          <RenderA2UI key={childId} {...{ model, componentId: childId, data, rootData, busy, mutateData, onAction }} />
         ))}
       </Pressable>
     );
   }
 
   if (component.component === 'Tabs') {
-    return <RenderTabs {...{ component, model, data, busy, mutateData, onAction }} />;
+    return <RenderTabs {...{ component, model, data, rootData, busy, mutateData, onAction }} />;
   }
 
   if (component.component === 'List') {
@@ -252,6 +262,7 @@ function RenderA2UI({ model, componentId, data, busy, mutateData, onAction }: {
             busy={busy}
             componentId={itemComponentId}
             data={row}
+            rootData={rootData}
             key={`${itemComponentId}-${index}`}
             model={model}
             mutateData={mutateData}
@@ -265,10 +276,11 @@ function RenderA2UI({ model, componentId, data, busy, mutateData, onAction }: {
   throw new Error(`unsupported A2UI component: ${component.component}`);
 }
 
-function RenderTabs({ component, model, data, busy, mutateData, onAction }: {
+function RenderTabs({ component, model, data, rootData, busy, mutateData, onAction }: {
   component: A2UIComponent;
   model: SurfaceModel;
   data: Record<string, any>;
+  rootData?: Record<string, any>;
   busy: boolean;
   mutateData: (mutator: (draft: Record<string, any>) => void) => void;
   onAction: (actionId: string, eventPayload: unknown) => Promise<void>;
@@ -286,7 +298,7 @@ function RenderTabs({ component, model, data, busy, mutateData, onAction }: {
           </Pressable>
         ))}
       </View>
-      <RenderA2UI {...{ model, componentId: requiredText(tab.child, `Tabs ${component.id} tab missing child`), data, busy, mutateData, onAction }} />
+      <RenderA2UI {...{ model, componentId: requiredText(tab.child, `Tabs ${component.id} tab missing child`), data, rootData, busy, mutateData, onAction }} />
     </View>
   );
 }
