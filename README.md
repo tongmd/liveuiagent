@@ -33,7 +33,8 @@ Model requests use your configured provider. No model API calls are needed for t
 ## Features
 
 - Application generation and revision through natural-language requests.
-- A shared runtime for interfaces, persistent data, tools, and service actions.
+- A shared runtime for component interfaces, persistent data, tools, and service actions.
+- Separate agent-role invocations, validated handoffs, independent result review, and persistent execution records.
 - Model and harness selection through the application settings.
 - Memory for saved preferences and context.
 - Background job scheduling, status, and cancellation.
@@ -44,7 +45,9 @@ Model requests use your configured provider. No model API calls are needed for t
 | Harness | Application representation | Configuration |
 | --- | --- | --- |
 | Native | Application specifications rendered by the shared runtime | Included in the local runtime |
-| DeepSeek Harness | HTML applications with storage and AI bridges | Configure a DSH service, or install the [DSH plugin](packages/dsh-plugin/README.md) |
+| DeepSeek Harness | Native component specifications with DSH-backed agent reasoning | Set `LIVEUI_NATIVE_DSH_COMMAND` to an installed DSH CLI |
+
+New applications use A2UI component specifications. Agent roles pass validated contracts to a host executor, which owns permitted service calls and commits reviewed state. Existing HTML applications remain supported; API callers can explicitly request `delivery: "html"` for the [HTML plugin](packages/dsh-plugin/README.md) path.
 
 The web interface is included. The `apps/shell` directory contains the React Native shell; its platform tooling is installed separately when needed.
 
@@ -59,7 +62,9 @@ Start with [.env.example](.env.example). Storage paths are local and ignored by 
 | `GENERATED_APPS_DIR` | Generated application storage |
 | `OPENAI_API_BASE`, `OPENAI_API_KEY` | Model provider connection |
 | `LIVEUIAGENT_ORCHESTRATOR_MODEL` | Default orchestration model |
-| `LIVEUIAGENT_DSH_API_BASE` | Optional DSH service endpoint |
+| `LIVEUI_NATIVE_DSH_COMMAND`, `LIVEUI_NATIVE_DSH_ARGS` | DSH reasoning executable and optional JSON argument array |
+| `LIVEUI_NATIVE_DSH_TIMEOUT_MS`, `LIVEUI_NATIVE_DSH_MAX_CONCURRENT` | Per-inference deadline and concurrent-worker limit |
+| `LIVEUIAGENT_DSH_API_BASE` | Optional service endpoint for existing or explicit HTML applications |
 
 The application settings can override provider settings for the current user. `liveuiagent.config.json` configures optional service and evaluator integrations. For a hosted installation with authentication and persistent storage, follow the [deployment guide](deploy/README.md).
 

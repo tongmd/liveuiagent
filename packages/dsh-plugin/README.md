@@ -2,6 +2,8 @@
 
 `@liveuiagent/dsh-plugin` mounts LiveUIAgent at `/liveuiagent/` inside an authenticated DSH web profile. It generates and revises HTML apps, persists app data, and provides Memory for saved preferences. The plugin exposes its browser bridge as `window.liveuiagent`.
 
+The main LiveUIAgent server also supports DSH reasoning for Native component applications through `LIVEUI_NATIVE_DSH_COMMAND`. This package supplies the separate HTML delivery path.
+
 ## Setup
 
 Supported host: **DSH 0.2.0-rc.2, Cordis 4.0.4, Node.js 22.19 or newer**. Configure the DSH provider and browser authentication first.
