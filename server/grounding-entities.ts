@@ -22,11 +22,20 @@ export function hasLocalReadNameBinding(entity:GroundedEntity,calls:Array<Record
  });
 }
 
-export function normalizeGroundingEntities(raw:unknown,formEchoes:ReadonlySet<string>,calls:Array<Record<string,any>>,fields:readonly AppRecordField[]):GroundedEntity[]{
+/** Literal association only, never collection membership or external success.
+ * Inputs are current-turn successful GET responses selected by the host caller,
+ * not model-supplied provenance. Search JSON string VALUES, never object keys. */
+function hasExternalReadNameAssociation(name:string,responses:readonly unknown[]):boolean{
+ const pending=[...responses];const seen=new Set<object>();
+ while(pending.length){const value=pending.pop();if(typeof value==='string'){if(value.includes(name))return true;}else if(value&&typeof value==='object'&&!seen.has(value)){seen.add(value);for(const child of Object.values(value))pending.push(child);}}
+ return false;
+}
+
+export function normalizeGroundingEntities(raw:unknown,formEchoes:ReadonlySet<string>,calls:Array<Record<string,any>>,fields:readonly AppRecordField[],readonlyExternalReadResponses:readonly unknown[]=[]):GroundedEntity[]{
  return (Array.isArray(raw)?raw:[])
   .filter((item:unknown)=>item&&typeof item==='object'&&String((item as Record<string,unknown>).name||'').trim())
   // Proof uses the full submitted name before presentation compaction.
-  .filter((item:Record<string,unknown>)=>Boolean(opaqueIdentity(item.id))||!formEchoes.has(String(item.name).trim())||hasLocalReadNameBinding({name:String(item.name).trim(),...(typeof item.appRecordId==='string'?{appRecordId:item.appRecordId}:{})},calls,fields))
+  .filter((item:Record<string,unknown>)=>Boolean(opaqueIdentity(item.id))||!formEchoes.has(String(item.name).trim())||hasLocalReadNameBinding({name:String(item.name).trim(),...(typeof item.appRecordId==='string'?{appRecordId:item.appRecordId}:{})},calls,fields)||hasExternalReadNameAssociation(String(item.name).trim(),readonlyExternalReadResponses))
   .map((item:Record<string,unknown>)=>({
    // Semantic name/read evidence stays complete through the independent evaluator.
    // UI presentation may shorten its own label, never this canonical value.

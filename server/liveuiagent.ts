@@ -6214,7 +6214,10 @@ export async function runAppWorldGrounding(input: {
           && typeof (item as Record<string, unknown>).name === 'string'
           && Boolean(((item as Record<string, unknown>).name as string).trim()));
         proposedEntities=decision?.entities;
-        entities = normalizeGroundingEntities(decision?.entities,formEchoes,appStateCalls,input.appState?.recordFields ?? []);
+        // This association only avoids suppressing a same-form-name entity.
+        // The independent evaluator and all write/read/membership gates still decide truth.
+        const readonlyExternalReadResponses=calls.slice(Math.max(0,lastWriteAt)).filter(call=>call.tool?.method==='GET').map(call=>call.response);
+        entities = normalizeGroundingEntities(decision?.entities,formEchoes,appStateCalls,input.appState?.recordFields ?? [],readonlyExternalReadResponses);
         stats = (Array.isArray(decision?.stats) ? decision.stats : [])
           .filter((item: unknown) => item && typeof item === 'object' && String((item as Record<string, unknown>).label || '').trim() && String((item as Record<string, unknown>).value ?? '').trim())
           .slice(0, 8)
