@@ -23,7 +23,9 @@ export const groundingViewPolicy = [
 
 export type ProjectionPolicy = 'retain_existing' | 'replace_or_filter' | 'unspecified';
 export function parseProjectionPolicy(value: unknown): ProjectionPolicy {
-  return value === 'retain_existing' || value === 'replace_or_filter' ? value : 'unspecified';
+  if (value === undefined) return 'unspecified';
+  if (value === 'retain_existing' || value === 'replace_or_filter' || value === 'unspecified') return value;
+  throw new Error('Model contract error: projectionPolicy must be retain_existing, replace_or_filter, or unspecified when provided');
 }
 // Tokens only detect a missing prior unit; name/group are not business identities.
 export function projectionCoverageGaps(policy: ProjectionPolicy, prior: unknown[], current: unknown[]): string[] {

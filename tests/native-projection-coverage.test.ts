@@ -6,20 +6,22 @@ const reply=(value:any)=>({choices:[{message:{content:JSON.stringify(value)}}]})
 const prior={entities:[{name:'First',id:'1'},{name:'Second',group:'Queue'},{name:'Third',id:'3'},{name:'Fourth',id:'4'}],stats:[{label:'Tracked',value:'4'}]};
 const newRow={name:'New',id:'5'};
 test('coverage is conservative, ID-first, strictly opt-in and does not authorize removal',()=>{
- for(const invalid of [null,{},['retain_existing'],'RETAIN_EXISTING',' retain_existing ',true])assert.equal(parseProjectionPolicy(invalid),'unspecified');
+ assert.equal(parseProjectionPolicy(undefined),'unspecified');
+ for(const policy of ['retain_existing','replace_or_filter','unspecified'] as const)assert.equal(parseProjectionPolicy(policy),policy);
+ for(const invalid of [null,{},['retain_existing'],'RETAIN_EXISTING',' retain_existing ',true,42])assert.throws(()=>parseProjectionPolicy(invalid),/Model contract error/);
  assert.equal(projectionCoverageGaps('retain_existing',prior.entities,[newRow]).length,4);
  assert.equal(projectionCoverageGaps('retain_existing',prior.entities,[{name:'Renamed',id:'1'},{name:'Second',group:'Queue'},prior.entities[2],prior.entities[3]]).length,0);
  assert.equal(projectionCoverageGaps('retain_existing',[{name:'Second',group:'Queue'}],[{name:'Second',group:'Other'}]).length,1);
  for(const policy of ['replace_or_filter','unspecified'] as const)assert.deepEqual(projectionCoverageGaps(policy,prior.entities,[]),[]);
  assert.deepEqual(projectionCoverageGaps('retain_existing',[],[]),[]);
 });
-for(const mode of ['reject','repair','replace','invalid','unfinished'] as const)test(`actual grounding coverage loop ${mode}: complete prior context and no repeated writes`,async()=>{
+for(const mode of ['reject','repair','replace','unfinished'] as const)test(`actual grounding coverage loop ${mode}: complete prior context and no repeated writes`,async()=>{
  const prompts:any[]=[];const ops:string[]=[];let step=0,reviews=0;
  const tools=['create_unit','create_other','read_units'].map(api=>({id:api,apiName:api,permission:api,appName:'units',method:api==='read_units'?'GET':'POST',purpose:api}));
  const bridge:any={getCapabilities:async()=>tools,callTool:async(api:string,args:any)=>{ops.push(api);return{tool:tools.find(t=>t.id===api),request:args,response:api==='read_units'?{units:[...prior.entities,newRow]}:newRow,dbChanges:null};}};
  const output=await runAppWorldGrounding({bridge,permissions:tools.map(t=>t.permission),appName:'Units',payload:{request:'Add New to the existing tracked units'},priorProjection:prior,llm:{model:'fixture-only',chatCompletion:async(request:any)=>{
   const sys=request.messages[0].content;const input=JSON.parse(request.messages[1].content.split('\n')[0]);prompts.push({sys,input});assert.deepEqual(input.priorProjection,prior);
-  if(sys.includes('You analyze a GUI'))return reply({objective:'Add new tracked unit',projectionPolicy:mode==='replace'?'replace_or_filter':mode==='invalid'?{retain_existing:true}:'retain_existing',deliverables:['New unit']});
+  if(sys.includes('You analyze a GUI'))return reply({objective:'Add new tracked unit',projectionPolicy:mode==='replace'?'replace_or_filter':'retain_existing',deliverables:['New unit']});
   if(sys.includes('You are the Write Verifier'))return reply({approved:true});
   if(sys.includes('You are an INDEPENDENT evaluator')){reviews++;return reply(mode==='unfinished'&&reviews===1?{pass:false,deficiencies:['Original requested second unit still needs its write']}:{pass:true,deficiencies:[]});}
   step++;
@@ -36,6 +38,13 @@ for(const mode of ['reject','repair','replace','invalid','unfinished'] as const)
  else assert.equal(output?.evaluation?.pass,true);
  if(mode==='unfinished')assert.deepEqual(ops,['create_unit','read_units','create_other','read_units'],'coverage must not block unfinished original business writes while evaluator already fails');
  if(mode==='repair'){assert.deepEqual(output?.entities,[...prior.entities,newRow]);assert.deepEqual(ops,['create_unit','read_units','read_units']);}
- if(mode==='replace'||mode==='invalid')assert.deepEqual(ops,['create_unit','read_units']);
+ if(mode==='replace')assert.deepEqual(ops,['create_unit','read_units']);
  assert.equal(output?.calls.filter(c=>c.tool.apiName==='create_unit').length,1,'real write receipt remains in complete evidence');
+});
+
+for(const invalid of ['retain-all', null, 1, {}, ['retain_existing']])test(`invalid provided policy fails before execution: ${JSON.stringify(invalid)}`,async()=>{
+ let dispatched=0;
+ const tools=[{id:'read_units',apiName:'read_units',permission:'read_units',appName:'units',method:'GET',purpose:'Read units'}];
+ await assert.rejects(runAppWorldGrounding({bridge:{getCapabilities:async()=>tools,callTool:async()=>{dispatched++;throw Error('Must not dispatch');}} as any,permissions:['read_units'],appName:'Units',payload:{request:'Add New'},priorProjection:prior,llm:{model:'fixture-only',chatCompletion:async()=>reply({objective:'Add New',projectionPolicy:invalid})}}),/Model contract error: projectionPolicy/);
+ assert.equal(dispatched,0);
 });
