@@ -52,7 +52,7 @@ test('strict steps operate only current editable fields and real bound actions/o
 test('planner parent deadline only shortens inference budget and late decisions are never returned',async t=>{
  let calls=0;const llm={model:'fixture-selected',chatCompletion:async()=>{calls++;await new Promise(r=>setTimeout(r,1700));return{choices:[{message:{content:JSON.stringify({kind:'done',reason:'No action'})}}]};}};
  const {post}=await setup(t,{timeoutMs:1000,resolve:()=>({harness:'dsh',llm})});const result=await post(input());assert.equal(result.status,504);assert.equal(result.body.code,'action_deadline_exceeded');assert.equal(calls,1);
- let budget=0;await assert.rejects(withActionDeadline(Date.now()+500,()=>planNativeGuiInteractionStep('One step',{}, {model:'fixture',chatCompletion:async(_r,o)=>{budget=o!.timeoutMs!;await new Promise(r=>setTimeout(r,900));return{};}})),(e:any)=>e.code==='action_deadline_exceeded');assert.ok(budget>0&&budget<=500);await new Promise(r=>setTimeout(r,1800));
+ let budget=0;await assert.rejects(withActionDeadline(Date.now()+500,()=>planNativeGuiInteractionStep('One step',input(), {model:'fixture',chatCompletion:async(_r,o)=>{budget=o!.timeoutMs!;await new Promise(r=>setTimeout(r,900));return{};}})),(e:any)=>e.code==='action_deadline_exceeded');assert.ok(budget>0&&budget<=500);await new Promise(r=>setTimeout(r,1800));
 });
 
  test('remaining episode budget can shorten but never enlarge host planner deadline',async t=>{

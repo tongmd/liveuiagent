@@ -1,0 +1,208 @@
+{
+  "scope": "Saved c2 planning inputs without component metadata; no business results or expected actions. New protocol test adds explicit host component observation separately.",
+  "probes": [
+    {
+      "caseId": "phone-hop",
+      "userMessage": "Set 06:30 alarms for Monday through Friday with a 10-minute snooze.",
+      "snapshot": {
+        "visibleText": "已保存的工作日闹钟\n0\nNo results yet\nPlan your week\nBase wake-up time\nDay to adjust\nMonday\nTuesday\nWednesday\nThursday\nFriday\nAdjusted wake-up …\nAlarm label\nSet base time\nSaved alarms\nAsk this app\nExecute\nNew request",
+        "fields": [
+          {
+            "target": "e1",
+            "label": "Base wake-up time",
+            "tag": "input",
+            "type": "text",
+            "value": "",
+            "required": false,
+            "disabled": false,
+            "readOnly": false
+          },
+          {
+            "target": "e2",
+            "label": "Day to adjust",
+            "tag": "div",
+            "type": "choice",
+            "value": "",
+            "required": false,
+            "disabled": false,
+            "readOnly": false,
+            "options": [
+              {
+                "value": "Monday",
+                "label": "Monday",
+                "disabled": false
+              },
+              {
+                "value": "Tuesday",
+                "label": "Tuesday",
+                "disabled": false
+              },
+              {
+                "value": "Wednesday",
+                "label": "Wednesday",
+                "disabled": false
+              },
+              {
+                "value": "Thursday",
+                "label": "Thursday",
+                "disabled": false
+              },
+              {
+                "value": "Friday",
+                "label": "Friday",
+                "disabled": false
+              }
+            ]
+          },
+          {
+            "target": "e3",
+            "label": "Adjusted wake-up …",
+            "tag": "input",
+            "type": "text",
+            "value": "",
+            "required": false,
+            "disabled": false,
+            "readOnly": false
+          },
+          {
+            "target": "e4",
+            "label": "Alarm label",
+            "tag": "input",
+            "type": "text",
+            "value": "",
+            "required": false,
+            "disabled": false,
+            "readOnly": false
+          },
+          {
+            "target": "e5",
+            "label": "Ask this app",
+            "tag": "textarea",
+            "type": "textarea",
+            "value": "",
+            "required": false,
+            "disabled": false,
+            "readOnly": false
+          }
+        ],
+        "buttons": [
+          {
+            "target": "e6",
+            "label": "Set base time",
+            "actionId": "actions.agent_turn_1.run",
+            "contextText": "",
+            "disabled": false
+          },
+          {
+            "target": "e7",
+            "label": "Execute",
+            "actionId": "host.app.command",
+            "contextText": "",
+            "disabled": false
+          },
+          {
+            "target": "e8",
+            "label": "New request",
+            "actionId": "host.app.command.prepare",
+            "contextText": "",
+            "disabled": true
+          }
+        ]
+      },
+      "observations": []
+    },
+    {
+      "caseId": "gmail-hop",
+      "userMessage": "Mark the Marlowe thread paid, and send polite follow-up replies in the still-unpaid Rivera Studios and Tenpenny Media threads.",
+      "snapshot": {
+        "visibleText": "已保存发票数\n0\nNo results yet\nNew invoice\nClient name\nInvoice number\nClient email\nInvoice amount\n−\n+\nFollow-up message\nSend invoices\nInvoice threads\nAsk this app\nExecute\nNew request",
+        "fields": [
+          {
+            "target": "e1",
+            "label": "Client name",
+            "tag": "input",
+            "type": "text",
+            "value": "",
+            "required": false,
+            "disabled": false,
+            "readOnly": false
+          },
+          {
+            "target": "e2",
+            "label": "Invoice number",
+            "tag": "input",
+            "type": "text",
+            "value": "3310",
+            "required": false,
+            "disabled": false,
+            "readOnly": false
+          },
+          {
+            "target": "e3",
+            "label": "Client email",
+            "tag": "input",
+            "type": "text",
+            "value": "",
+            "required": false,
+            "disabled": false,
+            "readOnly": false
+          },
+          {
+            "target": "e4",
+            "label": "Invoice amount",
+            "tag": "input",
+            "type": "text",
+            "value": "",
+            "required": false,
+            "disabled": false,
+            "readOnly": false
+          },
+          {
+            "target": "e5",
+            "label": "Follow-up message",
+            "tag": "textarea",
+            "type": "textarea",
+            "value": "",
+            "required": false,
+            "disabled": false,
+            "readOnly": false
+          },
+          {
+            "target": "e6",
+            "label": "Ask this app",
+            "tag": "textarea",
+            "type": "textarea",
+            "value": "",
+            "required": false,
+            "disabled": false,
+            "readOnly": false
+          }
+        ],
+        "buttons": [
+          {
+            "target": "e7",
+            "label": "Send invoices",
+            "actionId": "actions.agent_turn_1.run",
+            "contextText": "",
+            "disabled": false
+          },
+          {
+            "target": "e8",
+            "label": "Execute",
+            "actionId": "host.app.command",
+            "contextText": "",
+            "disabled": false
+          },
+          {
+            "target": "e9",
+            "label": "New request",
+            "actionId": "host.app.command.prepare",
+            "contextText": "",
+            "disabled": true
+          }
+        ]
+      },
+      "observations": []
+    }
+  ]
+}

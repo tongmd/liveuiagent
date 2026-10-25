@@ -1,3 +1,4 @@
+import {guiPlanningModelInput} from './gui-interaction-planner.js';
 import {canonicalizeDomainReferences} from './native-domain-references.js';
 import {writeDesignContractDiagnostics,writeDesignReferenceDiagnostics} from './design-contract-diagnostics.js';
 import {domainFieldUnion,persistedDomainPolicy,type DomainField} from './native-domain-fields.js';
@@ -1004,7 +1005,7 @@ export async function planNativeGuiInteractionStep(system: string, input: unknow
     ...(conciseDeepSeek ? {thinking: {type: 'disabled' as const}, reasoningEffort: 'none' as const} : {}),
     // Completion caps include model reasoning, not only the small final step JSON.
     // Match the existing Native role budget while keeping the planner/action deadlines.
-    user: JSON.stringify(input), temperature: 0, maxTokens: 8192});
+    user: JSON.stringify(guiPlanningModelInput(input)), temperature: 0, maxTokens: 8192});
  try{const step=resolveControlPreparation(preparation,input);writeGuiPlanningDiagnostics(input,preparation,step);return step;}catch(error){if((error as any)?.code==='invalid_gui_interaction'){writeGuiPlanningDiagnostics(input,preparation,undefined,error);Object.assign(error as object,{planningContractInvalid:true});}throw error;}
 }
 
