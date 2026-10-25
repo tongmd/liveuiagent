@@ -60,7 +60,7 @@ test('complete-app execution requests English defaults without changing original
   assert.equal(pkg.ui.meta.agentWorkflow[0].actionRoutes[0].actionId,'agent.invoke');
   assert.ok(pkg.actions.actions['agent.invoke']);
   const original = 'Build a notes app. Keep the sample title “日记” unchanged.';
-  assert.equal((await post('/agent/run', {completeApp: true, prompt: original})).status, 200);
+  assert.equal((await post('/agent/run', {completeApp: true, delivery: 'html', prompt: original})).status, 200);
   assert.deepEqual(db.prepare('SELECT prompt, label FROM chat_history').get(), {prompt: original, label: 'Create: ' + original.slice(0, 60)});
   assert.match(calls[0].body.prompt, /^LiveUIAgent output preference: use English/);
   assert.match(calls[0].body.prompt, /unless the original request explicitly asks for another language/);

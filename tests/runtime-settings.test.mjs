@@ -47,10 +47,11 @@ test('bridge forwards the chosen model/provider for generate, revise and action;
   const app=express();app.use(express.json());bridge.install(app);app.post('/agent/run',(req,res)=>res.json({native:true}));
   app.use((e,req,res,next)=>res.status(e.status||500).json({code:e.code,error:e.message}));const base=await serve(t,app);
   async function call(route,body){const r=await fetch(base+route,{method:'POST',headers:{'content-type':'application/json','x-liveuiagent-user':'alice'},body:JSON.stringify(body)});const text=await r.text();assert.ok(!text.includes('fixture-secret'));return{...JSON.parse(text),httpStatus:r.status};}
-  const generated=await call('/agent/run',{prompt:'build fixture'});assert.equal(generated.type,'app_created');assert.equal(generated.execution.model,'chosen-model');
+  const defaultNative=await call('/agent/run',{prompt:'new Native fixture'});assert.equal(defaultNative.native,true);assert.equal(requests.length,0,'DSH reasoning does not implicitly select HTML delivery');
+  const generated=await call('/agent/run',{prompt:'build fixture',delivery:'html'});assert.equal(generated.type,'app_created');assert.equal(generated.execution.model,'chosen-model');
   assert.equal((await call('/agent/patch-app',{appId:'dsh_'+appId,prompt:'revise'})).httpStatus,202);
   assert.equal((await call('/agent/action',{appId:'dsh_'+appId,prompt:'explain'})).httpStatus,202);
   assert.equal(requests.length,3);for(const request of requests){assert.equal(request.owner,'alice');assert.equal(request.body.model,'chosen-model');assert.equal(request.body.provider.apiKey,'fixture-secret');}
   harness='native';assert.equal((await call('/agent/run',{prompt:'native'})).native,true);assert.equal(requests.length,3);
-  harness='dsh';modern=false;assert.equal((await call('/agent/run',{prompt:'unsupported'})).code,'harness_model_unsupported');assert.equal(requests.length,3);
+  harness='dsh';modern=false;assert.equal((await call('/agent/run',{prompt:'unsupported',delivery:'html'})).code,'harness_model_unsupported');assert.equal(requests.length,3);
 });
