@@ -1408,8 +1408,7 @@ function missingTopLevelMessage(input: Record<string, unknown>, key: string) {
   return `orchestrator output must include ${key} at top level; received shape ${JSON.stringify(jsonShapeDiagnostic(input))}`;
 }
 
-function requiredAgentSkeleton(model: string, toolCapabilities: ToolCapability[] = []) {
-  const externalTools = toolCapabilities.map((tool) => tool.id);
+function requiredAgentSkeleton(model: string) {
   return requiredCoreAgents.map((id, index) => ({
     id,
     name: id.replace(/^agents\./, ''),
@@ -1428,7 +1427,7 @@ function requiredAgentSkeleton(model: string, toolCapabilities: ToolCapability[]
     model,
     tools: id === 'agents.safety' ? ['policy.check']
       : id === 'agents.data' ? ['storage.app', 'app_state.read', 'app_state.write']
-      : uniqueStrings(['llm.call', 'app_state.read', 'app_state.write', ...externalTools]),
+      : ['llm.call', 'app_state.read', 'app_state.write'],
     memory: coreAgentMemory[id],
     inputs: ['ui_event', 'visible_state', 'app_memory'],
     outputs: ['state_patch', 'visible_result'],
@@ -1573,7 +1572,8 @@ function sanitizeOrchestrationPlan(raw: unknown, request: OrchestratorAgentReque
   for (const [index, value] of input.agents.entries()) {
     const item = asRecord(value, `orchestrator agent ${index + 1} must be an object`);
     const id = normalizeAgentId(requiredText(item.id, `orchestrator agent ${index + 1} missing id`, 60), `${request.signature}_${index + 1}`);
-    const tools = stringArray(item.tools, `orchestrator agent ${id} missing tools`).slice(0, 8);
+    const tools = stringArray(item.tools, `orchestrator agent ${id} missing tools`);
+    if (!Array.isArray(item.tools) || item.tools.length > 8) throw new Error(`orchestrator agent ${id} must declare at most 8 tools`);
     if (!tools.length) throw new Error(`orchestrator agent ${id} missing tools`);
     const unsafeTools = tools.filter((tool) => !isAllowedAgentTool(tool, new Set(request.toolCapabilities.map((capability) => capability.id))));
     if (unsafeTools.length) throw new Error(`orchestrator agent ${id} declares unsafe tools: ${unsafeTools.join(', ')}`);
@@ -1938,7 +1938,7 @@ async function openAIOrchestratorProvider(request: OrchestratorAgentRequest): Pr
       outcomeLabel: request.interaction.outcomeLabel,
     },
     functions: request.functions,
-    toolCapabilities: request.toolCapabilities,
+    toolCapabilities: {hostOwnedReference:'/requestedToolCapabilities',meaning:'The complete unchanged selected capability catalog appears exactly once at the top-level requestedToolCapabilities. This reference neither grants tools nor accepts user-defined reference targets.'},
     ...(knownPeopleData ? { knownPeople: knownPeopleData } : {}),
   };
   const allowedToolIds = uniqueStrings([
@@ -1963,6 +1963,7 @@ async function openAIOrchestratorProvider(request: OrchestratorAgentRequest): Pr
 	          'Missing fields are invalid: never rely on runtime defaults.',
 	          'Routes are strict contracts. You must copy every required route id and entryActionId exactly.',
 	          'Keep the JSON compact. Do not add commentary or long prose.',
+          'Each agent must declare 1–8 tools selected for its responsibilities from allowedTools. minimumValidAgents is a legal minimal graph skeleton, not an instruction to copy the full catalog into each agent. The complete host-owned catalog is requestedToolCapabilities; appRequest.toolCapabilities references precisely that same catalog, never user-defined data. All selected capabilities and permissions remain available globally; a short per-agent list does not truncate the catalog.',
 	          ...(knownPeopleData ? [`When the user intention names a person and appRequest.knownPeople provides their contact information, workflow actions searching for or messaging that person must use the provided real email or phone. Never invent contact details for people listed in knownPeople. If a person is named but not in knownPeople, you may search or use discovery APIs.`] : []),
         ].join(' '),
       },
@@ -1984,7 +1985,7 @@ async function openAIOrchestratorProvider(request: OrchestratorAgentRequest): Pr
 	          allowedMemoryValues: ['none', 'app-scoped', 'session-and-app'],
 	          memoryRule: 'Each agent must include a memory field and use one of the allowedMemoryValues. Do not omit memory.',
 	          coreMemoryRule: coreAgentMemory,
-          minimumValidAgents: requiredAgentSkeleton(model, request.toolCapabilities),
+          minimumValidAgents: requiredAgentSkeleton(model),
 	          requestedToolCapabilities: request.toolCapabilities,
           generatedInteractionFields: request.interaction.fields,
 	          allowedSchedulerClasses: ['latency_first', 'balanced', 'reasoning'],
