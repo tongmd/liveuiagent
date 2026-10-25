@@ -1,4 +1,5 @@
 import { appWorldCatalogLine } from './appworld-schema.js';
+import { AppWorldRequestNotStartedError } from './appworld-request-error.js';
 import { MailReplyEvidence } from './mail-reply-evidence.js';
 import { NativeWorkflow } from './native-workflow.js';
 import { actionDeadlineAt, actionDeadlineError, remainingActionMs, actionRetryDelay, withActionDeadline } from './action-deadline.js';
@@ -5777,7 +5778,7 @@ export async function runAppWorldGrounding(input: {
   // 语义的回合知道上一批产出了什么。
   recentTurns?: Array<Record<string, unknown>>;
   llm?: LlmRuntimeConfig;
-}): Promise<{ calls: AppWorldCallResult[]; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; deadlineExceeded?: boolean; executionEvidence?: { attemptedApiCalls: number; successfulApiCalls: number; unknownDispatchOutcomes: number; totalApiAttemptLimit: number; zeroSuccessfulCallCause?: string } } | null> {
+}): Promise<{ calls: AppWorldCallResult[]; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; deadlineExceeded?: boolean; executionEvidence?: { attemptedApiCalls: number; successfulApiCalls: number; unknownDispatchOutcomes: number; notStartedApiCalls: number; totalApiAttemptLimit: number; zeroSuccessfulCallCause?: string } } | null> {
   // The ablation keeps planning/catalog access but supplies no external facts.
   // Guard the shared executor as well as its current callers.
   if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') return null;
@@ -5866,10 +5867,11 @@ export async function runAppWorldGrounding(input: {
   const totalApiAttemptLimit = 64;
   let apiAttemptCount = 0;
   let unknownDispatchOutcomes = 0;
-  const zeroSuccessfulCallCause = () => apiAttemptCount ? 'dispatch_without_successful_response'
+  let notStartedApiCalls = 0;
+  const zeroSuccessfulCallCause = () => apiAttemptCount ? (unknownDispatchOutcomes ? 'dispatch_without_successful_response' : 'local_preflight_rejected')
     : historyLog.some(item => item.api === '(write-verifier)') ? 'write_verifier_rejected'
     : historyLog.some(item => item.api === '(decision)') ? 'decision_failed' : 'no_dispatch_proposed';
-  const executionEvidence = () => ({ ...(!calls.length && !webCallCount ? { zeroSuccessfulCallCause: zeroSuccessfulCallCause() } : {}), attemptedApiCalls: apiAttemptCount, successfulApiCalls: calls.length + webCallCount, unknownDispatchOutcomes, totalApiAttemptLimit });
+  const executionEvidence = () => ({ ...(!calls.length && !webCallCount ? { zeroSuccessfulCallCause: zeroSuccessfulCallCause() } : {}), attemptedApiCalls: apiAttemptCount, successfulApiCalls: calls.length + webCallCount, unknownDispatchOutcomes, notStartedApiCalls, totalApiAttemptLimit });
   // Read-back 门的机械依据:实体列表必须来自"最后一次写之后"的读调用。
   // prompt 只劝不拦(联系人删除后 done 仍回旧列表,张三永远删不掉),这里硬拦。
   let lastWriteAt = -1;
@@ -6061,7 +6063,8 @@ export async function runAppWorldGrounding(input: {
             webCallCount += 1;
             historyLog.push({ api: webTool.apiName, ok: true, response: compactText(JSON.stringify(response), 800) });
           } catch (error) {
-            historyLog.push({ api: webTool.apiName, ok: false, error: compactText((error as Error).message, 240) });
+            unknownDispatchOutcomes += 1;
+            historyLog.push({ api: webTool.apiName, ok: false, dispatchOutcome: 'unknown', automaticRetry: false, error: compactText((error as Error).message, 240) });
           }
           continue;
         }
@@ -6086,8 +6089,10 @@ export async function runAppWorldGrounding(input: {
           historyLog.push({ api: capability.apiName, ok: true, response: compactText(JSON.stringify(result.response ?? ''), 400) });
         } catch (error) {
           if (bridgeAttempted && replyRecipients) mailEvidence.failedAttempt(capability, args, replyRecipients, error);
-          if (bridgeAttempted) unknownDispatchOutcomes += 1;
-          historyLog.push({ api: capability.apiName, ok: false, ...(bridgeAttempted ? { dispatchOutcome: 'unknown', automaticRetry: false } : {}), error: compactText((error as Error).message, 240) });
+          const notStarted = bridgeAttempted && error instanceof AppWorldRequestNotStartedError;
+          if (notStarted) notStartedApiCalls += 1;
+          else if (bridgeAttempted) unknownDispatchOutcomes += 1;
+          historyLog.push({ api: capability.apiName, ok: false, ...(bridgeAttempted ? { dispatchOutcome: notStarted ? 'not_started' : 'unknown', automaticRetry: false } : {}), error: compactText((error as Error).message, 240) });
         }
       }
     }
@@ -6118,7 +6123,7 @@ export async function runAppWorldGrounding(input: {
       pass: verdictRaw?.pass === true && lastWriteAt <= lastReadAt && calls.length + webCallCount > 0,
       deficiencies: (Array.isArray(verdictRaw?.deficiencies) ? verdictRaw.deficiencies : []).map((item: unknown) => compactText(String(item), 160)).filter(Boolean).slice(0, 5),
     };
-    if (!calls.length && !webCallCount) evaluation.deficiencies.unshift(`No successful API evidence: ${apiAttemptCount} dispatch attempts, ${unknownDispatchOutcomes} unknown dispatch outcomes; cause=${zeroSuccessfulCallCause()}. No completion is verified; do not automatically repeat writes. Planning, gate rejection and no proposed calls are different causes; inspect attempts.`);
+    if (!calls.length && !webCallCount) evaluation.deficiencies.unshift(`No successful API evidence: ${apiAttemptCount} tool-call attempts, ${unknownDispatchOutcomes} unknown dispatch outcomes, ${notStartedApiCalls} trusted preflight rejections; cause=${zeroSuccessfulCallCause()}. No completion is verified; do not automatically repeat writes. Planning, gate rejection and no proposed calls are different causes; inspect attempts.`);
     if(lastWriteAt > lastReadAt) evaluation.deficiencies.unshift('not_verified: no successful read-back after the last write');
     const mailGaps = mailEvidence.deficiencies();
     if (mailGaps.length) { evaluation.pass = false; evaluation.deficiencies.unshift(...mailGaps); }

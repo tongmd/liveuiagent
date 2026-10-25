@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {runAppWorldGrounding} from '../server/liveuiagent.js';
+import {AppWorldRequestNotStartedError} from '../server/appworld-request-error.js';
 import {withActionDeadline} from '../server/action-deadline.js';
 
 async function fixture(t:any, decide:(body:any)=>any, dispatch:(id:string,args:any)=>any) {
@@ -42,12 +43,12 @@ test('a model ignoring finish still cannot dispatch more than 64 actual API atte
 
 test('failed dispatches consume the same hard bound and preserve unknown outcome diagnostics',async t=>{
  const f=await fixture(t,body=>body.messages[0].content.includes('You are an INDEPENDENT evaluator')?{pass:false,deficiencies:['No successful response.']}:{calls:Array.from({length:10},read)},()=>{throw Error('Response was lost after dispatch');});
- const output=await f.run();assert.equal(f.operations.length,64);assert.equal(output?.executionEvidence?.successfulApiCalls,0);assert.equal(output?.executionEvidence?.unknownDispatchOutcomes,64);assert.equal(output?.evaluation?.pass,false);assert.match(output!.evaluation!.deficiencies.join(' '),/64 dispatch attempts, 64 unknown/);assert(output!.attempts.some(x=>x.dispatchOutcome==='unknown'&&x.automaticRetry===false));
+ const output=await f.run();assert.equal(f.operations.length,64);assert.equal(output?.executionEvidence?.successfulApiCalls,0);assert.equal(output?.executionEvidence?.unknownDispatchOutcomes,64);assert.equal(output?.evaluation?.pass,false);assert.match(output!.evaluation!.deficiencies.join(' '),/64 tool-call attempts, 64 unknown/);assert(output!.attempts.some(x=>x.dispatchOutcome==='unknown'&&x.automaticRetry===false));
 });
 
 test('zero proposed calls are evaluated and reported without inventing write-gate rejection',async t=>{
  let reviews=0;const f=await fixture(t,body=>body.messages[0].content.includes('You are an INDEPENDENT evaluator')?(reviews++,{pass:false,deficiencies:['Required ingredients were not supplied; do not invent them.']}):{done:true,summary:'Missing required ingredients',entities:[]},()=>{throw Error('must not dispatch');});
- const output=await f.run();assert.equal(f.operations.length,0);assert.equal(reviews,2);assert.equal(output?.evaluation?.pass,false);assert.equal(output?.executionEvidence?.attemptedApiCalls,0);assert.match(output!.evaluation!.deficiencies.join(' '),/0 dispatch attempts/);assert.doesNotMatch(JSON.stringify(output),/write gates rejected every attempt|nothing was changed/);
+ const output=await f.run();assert.equal(f.operations.length,0);assert.equal(reviews,2);assert.equal(output?.evaluation?.pass,false);assert.equal(output?.executionEvidence?.attemptedApiCalls,0);assert.match(output!.evaluation!.deficiencies.join(' '),/0 tool-call attempts/);assert.doesNotMatch(JSON.stringify(output),/write gates rejected every attempt|nothing was changed/);
 });
 
 test('the host absolute action deadline prevents dispatch of the next batch entry',async t=>{
@@ -66,4 +67,14 @@ test('legal business field content reaches every grounding role without dropping
   const messages=f.prompts.filter(p=>p.messages[0].content.includes(role));assert(messages.length>0);for(const body of messages)assert(body.messages[1].content.includes(tail),role+' lost the actual business-field tail');
  }
  assert(!f.prompts.some(p=>p.messages[1].content.includes('currentSubmission')),'no new hidden prompt channel');
+});
+
+
+for(const trusted of [true,false])test(`only a trusted local preflight type proves no dispatch (${trusted})`,async t=>{
+ let decisions=0;const f=await fixture(t,body=>body.messages[0].content.includes('You are an INDEPENDENT evaluator')?{pass:false,deficiencies:['No verified mutation; do not retry an unknown write.']}:++decisions===1?{calls:[{api:'create_item',args:{name:'Actual item'}}]}:{done:true,summary:'Unable to verify mutation',entities:[]},()=>{
+  if(trusted)throw new AppWorldRequestNotStartedError(new Error('Local arguments rejected'));
+  throw Object.assign(new Error('AppWorldRequestNotStartedError: not_started'),{name:'AppWorldRequestNotStartedError',appWorldBusinessRequest:'not_started',body:{not_started:true}});
+ });
+ const output=await f.run();assert.equal(f.operations.length,1,'the executor never automatically resubmits the failed write');assert.equal(output?.executionEvidence?.attemptedApiCalls,1);assert.equal(output?.executionEvidence?.notStartedApiCalls,trusted?1:0);assert.equal(output?.executionEvidence?.unknownDispatchOutcomes,trusted?0:1);
+ assert(output!.attempts.some(x=>x.dispatchOutcome===(trusted?'not_started':'unknown')));assert.equal(output?.evaluation?.pass,false);
 });
