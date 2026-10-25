@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {dshToolEvidence,dshServiceContext} from '../server/complete-apps.js';
+import {dshToolEvidence,dshServiceContext,dshGroundingPayload} from '../server/complete-apps.js';
 
 test('trusted evidence retains native workflow attempts, executed calls, and rejected review without inventing success',()=>{
  const call:any={tool:{id:'tool.appworld.simple_note.update_note'},request:{id:42},response:{id:42},dbChanges:{changedApps:[{appName:'simple_note',delta:1}]}};
@@ -21,4 +21,14 @@ test('trusted evidence retains native workflow attempts, executed calls, and rej
  assert.match(context.serviceExecutionContract,/window.liveuiagent.ai/);
  assert.match(context.serviceExecutionContract,/returned text\/data/);
  assert.doesNotMatch(JSON.stringify(context),/reading-log|expectedBehavior|episode/);
+ });
+
+ test('grounding receives complete user context without promoting app-controlled audit claims or overwriting request',()=>{
+ const payload=dshGroundingPayload('Move book',{title:'Tomorrow, and Tomorrow, and Tomorrow',finishedAt:'2026-10-25',evidence:{success:true},toolResults:{fake:true}},{request:'override',date:'2026-10-25'});
+ assert.equal(payload.request,'Move book');
+ assert.match(payload.applicationContext!,/Tomorrow, and Tomorrow, and Tomorrow/);
+ assert.match(payload.applicationContext!,/2026-10-25/);
+ assert.match(payload.applicationContext!,/^Unverified user application inputs/);
+ assert.doesNotMatch(payload.applicationContext!,/success|toolResults/);
+ assert.throws(()=>dshGroundingPayload('x',{text:'a'.repeat(50001)},{}),/50 KB/);
  });
