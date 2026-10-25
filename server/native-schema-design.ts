@@ -1,5 +1,5 @@
 import type {AppWorldToolCapability} from './appworld-bridge.js';
-const credential = /(?:^|_)(?:authorization|authentication|access_token|refresh_token|token|password|secret|api_key|cookie)(?:$|_)/i;
+const credential = /(?:^|_)(?:authorization|authentication|verification_code|access_token|refresh_token|token|password|secret|api_key|cookie)(?:$|_)/i;
 const isCredential=(name:string)=>credential.test(name.replace(/([a-z])([A-Z])/g,'$1_$2').replace(/[^A-Za-z0-9_]/g,'_'));
 const scalarKeys = new Set(['type','title','description','format','pattern','nullable','minimum','maximum','exclusiveMinimum','exclusiveMaximum','minLength','maxLength','minItems','maxItems','uniqueItems']);
 // Public API contract only: never copy capability extensions, auth values,
