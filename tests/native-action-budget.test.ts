@@ -49,14 +49,15 @@ test('parent deadline only shortens host action budget and client JSON cannot ex
 });
 
 test('real elapsed inference timeout cannot commit its late result or replay the executor',async t=>{
- const {invoke,stored}=setup(t,80);const before=stored();let executionCalls=0,lateFinished=false;
+ // This is a deadline/commit contract, not an 80 ms runtime performance target.
+ const {invoke,stored}=setup(t,1000);const before=stored();let executionCalls=0,lateFinished=false;
  const started=Date.now();
  await assert.rejects(invoke(async(req:any)=>{
-  if(req.messages[0].content.includes('backend agent')){executionCalls++;await new Promise(r=>setTimeout(r,140));lateFinished=true;}
+  if(req.messages[0].content.includes('backend agent')){executionCalls++;await new Promise(r=>setTimeout(r,1700));lateFinished=true;}
   return response(req);
  }),(e:any)=>e.code==='action_deadline_exceeded'&&e.status===504);
- assert.ok(Date.now()-started<1000,'server total deadline is bounded rather than child 60s timeout');
- await new Promise(r=>setTimeout(r,160));assert.equal(lateFinished,true);assert.equal(executionCalls,1);assert.deepEqual(stored(),before);
+ assert.ok(Date.now()-started<3000,'server total deadline is bounded rather than child 60s timeout');
+ await new Promise(r=>setTimeout(r,1800));assert.equal(lateFinished,true);assert.equal(executionCalls,1);assert.deepEqual(stored(),before);
  const next=await invoke(async(req:any)=>response(req));assert.equal(next.workflowExecution.status,'completed');
 });
 
@@ -67,7 +68,8 @@ test('default Native action owns a sixteen minute budget independent of client J
 });
 
 test('real shorter parent deadline wins over host timeout with no downstream executor',async t=>{
- const {invoke,stored}=setup(t,500);const before=stored();let calls=0;
- await assert.rejects(withActionDeadline(Date.now()+50,()=>invoke(async(req:any)=>{calls++;await new Promise(r=>setTimeout(r,100));return response(req);})),(e:any)=>e.code==='action_deadline_exceeded'&&e.status===504);
- await new Promise(r=>setTimeout(r,120));assert.equal(calls,1);assert.deepEqual(stored(),before);
+ // Give role dispatch room while preserving a genuinely shorter parent budget.
+ const {invoke,stored}=setup(t,5000);const before=stored();let calls=0;
+ await assert.rejects(withActionDeadline(Date.now()+500,()=>invoke(async(req:any)=>{calls++;await new Promise(r=>setTimeout(r,1000));return response(req);})),(e:any)=>e.code==='action_deadline_exceeded'&&e.status===504);
+ await new Promise(r=>setTimeout(r,1200));assert.equal(calls,1);assert.deepEqual(stored(),before);
 });
