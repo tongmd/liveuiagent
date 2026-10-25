@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createLiveUIAgentRuntime } from '../runtime.mjs';
+import { connectedStarterHtml } from '../host-action-starter.mjs';
 
 const frontendDir = fileURLToPath(new URL('../public/', import.meta.url));
 const html = '<!doctype html><html><head><title>Counter</title></head><body><button id="add">Add</button><output>0</output><script>document.querySelector("#add").onclick=()=>document.querySelector("output").value++;</script><!--' + 'fixture '.repeat(200) + '--></body></html>';
@@ -209,15 +210,39 @@ test('different apps overlap within the limit and same-app actions remain FIFO',
   assert.equal(peak,2);
 });
 
-test('connected generation begins with a working host boundary while pure local generation remains unseeded',async t=>{
-  const connected=await fixture(t,{async run({work,onEvent}){
+test('connected generation and revisions expose the current read-only host reference without replacing existing app data',async t=>{
+  let calls=0, existingHtml;
+  const context={connectedServices:[{name:'simple_note',description:'Notes'}]};
+  const connected=await fixture(t,{async run({work,onEvent,task}){
+    calls++;
     const initial=await readFile(path.join(work,'index.html'),'utf8');
-    assert.match(initial,/liveui-task-form/);assert.match(initial,/window.liveuiagent.ai/);
-    onEvent({type:'tool_call',name:'write_file'});
-    await writeFile(path.join(work,'app.json'),JSON.stringify({name:'Reading shelves',description:'A service-backed reading view',features:['Run reading requests'],checks:[]}));return {};
+    const reference=path.join(work,'.liveui-host-reference.html');
+    assert.equal(await readFile(reference,'utf8'),connectedStarterHtml());
+    assert.equal((await fs.stat(reference)).mode & 0o222,0);
+    assert.match(task,/Read \.liveui-host-reference\.html/);
+    assert.match(task,/preserving its design, functions, user drafts\/preferences and actual saved data/);
+    if(calls===1){
+      assert.equal(initial,connectedStarterHtml());
+      existingHtml=initial.replace('<title>Workspace</title>','<title>Existing reading design</title>');
+      await writeFile(path.join(work,'index.html'),existingHtml);
+      await writeFile(path.join(work,'app.json'),JSON.stringify({name:'Reading shelves',description:'A service-backed reading view',features:['Run reading requests'],checks:[]}));
+    }else{
+      assert.equal(initial,existingHtml,'revision retains the existing interface instead of reseeding it');
+      assert.equal(JSON.parse(await readFile(path.join(work,'app.json'),'utf8')).name,'Reading shelves');
+    }
+    onEvent({type:'tool_call',name:'write_file'});return {};
   }});
-  const c=await connected.api('generate','POST',{prompt:'Keep my reading shelves in notes',context:{connectedServices:[{name:'simple_note',description:'Notes'}]}});
+  const c=await connected.api('generate','POST',{prompt:'Keep my reading shelves in notes',context});
   const done=await connected.finished(c.data.id);assert.equal(done.status,'done',done.error);assert.equal(done.repairAttempts||0,0);
-  const local=await fixture(t,{async run(input){await assert.rejects(()=>readFile(path.join(input.work,'index.html'),'utf8'),{code:'ENOENT'});return writer().run(input)}});
+  const store={verified:'actual saved result',draft:'preserve this unfinished request'};
+  await connected.api('apps/'+done.appId+'/store','PUT',store);
+  const revision=await connected.api('generate','POST',{prompt:'Preserve my reading design and update the service wiring',appId:done.appId,context});
+  const revised=await connected.finished(revision.data.id);assert.equal(revised.status,'done',revised.error);assert.equal(calls,2);
+  const reopened=await connected.api('apps/'+done.appId);assert.equal(reopened.data.html,existingHtml);assert.deepEqual(reopened.data.store,store);
+  const local=await fixture(t,{async run(input){
+    await assert.rejects(()=>readFile(path.join(input.work,'index.html'),'utf8'),{code:'ENOENT'});
+    await assert.rejects(()=>readFile(path.join(input.work,'.liveui-host-reference.html'),'utf8'),{code:'ENOENT'});
+    return writer().run(input);
+  }});
   const l=await local.api('generate','POST',{prompt:'A local counter',context:{connectedServices:[]}});assert.equal((await local.finished(l.data.id)).status,'done');
 });
