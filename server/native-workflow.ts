@@ -5,8 +5,6 @@ export type WorkflowNode = { id: string; role?: string; name?: string; purpose?:
 export type WorkflowRecord = { executionId: string; appId: string; owner: string; actionId: string; stage: string; nodeId: string; status: 'running' | 'ok' | 'failed'; input?: unknown; output?: unknown; at: string; startedAt?: string; finishedAt?: string };
 /** Host implementation budget, not user intent or an authorization limit. */
 export const NATIVE_ROLE_TRANSPORT_LIMITS = Object.freeze({constraintsCount:4,totalHandoffUnicodeCharacters:4096});
-/** Compatibility alias for the shared total, not a separate instructions cap. */
-export const NATIVE_INSTRUCTIONS_UNICODE_LIMIT = NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters;
 export const nativeRoleTransportPolicy = `Your handoff is a concise role-specific increment for the single host executor: at most ${NATIVE_ROLE_TRANSPORT_LIMITS.constraintsCount} constraints, and instructions plus all constraints plus expectedOutcome together at most ${NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters} Unicode characters. These are transport limits, not business authorization. Do not copy the original request, upstream contracts, entity lists or entire state into your answer; refer to supplied fields and contribute only what your role adds. The host rejects oversized contracts without truncation.`;
 
 type ModelCall = (node: WorkflowNode, input: Record<string, unknown>, mode: 'plan' | 'review') => Promise<Record<string, unknown>>;

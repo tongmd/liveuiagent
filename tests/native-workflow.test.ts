@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { NativeWorkflow, NATIVE_INSTRUCTIONS_UNICODE_LIMIT, NATIVE_ROLE_TRANSPORT_LIMITS, type WorkflowRecord } from '../server/native-workflow.js';
+import { NativeWorkflow, NATIVE_ROLE_TRANSPORT_LIMITS, type WorkflowRecord } from '../server/native-workflow.js';
 
 const chain = ['agents.orchestrator', 'agents.action', 'agents.app', 'agents.data', 'agents.memory'];
 const specs = Object.fromEntries(chain.map(id => [id, { id, role: id.split('.')[1], purpose: `Execute ${id}` }]));
@@ -106,7 +106,7 @@ test('role projection omits only duplicate static graph and preserves full reque
 });
 
 test('compact role contracts are validated in Unicode characters and never silently truncated', async () => {
-  for (const invalid of [ { instructions: '文'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1) }, { constraints: Array(5).fill('one') }, { constraints: ['文'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters)] }, { expectedOutcome: '文'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters) } ]) {
+  for (const invalid of [ { instructions: '文'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters + 1) }, { constraints: Array(5).fill('one') }, { constraints: ['文'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters)] }, { expectedOutcome: '文'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters) } ]) {
     let calls = 0;
     const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {},
       call: async () => { calls++; return { proceed: true, instructions: 'Act', constraints: [], expectedOutcome: 'Verified', ...invalid }; } });
@@ -154,7 +154,7 @@ test('independent reviewer retains complete observed results and staged business
 test('one real HTTP contract repair preserves the full original context and original validation failure', async () => {
   const records: WorkflowRecord[] = []; const requests: any[] = [];
   const originalRequest = { text: 'FULL-BEGIN-' + 'unchanged-request-'.repeat(3000) + '-FULL-END', targetId: 7 };
-  const invalidOutput = { proceed: true, instructions: 'x'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1), constraints: ['Never duplicate a write'], expectedOutcome: 'Verified target' };
+  const invalidOutput = { proceed: true, instructions: 'x'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters + 1), constraints: ['Never duplicate a write'], expectedOutcome: 'Verified target' };
   const validOutput = { proceed: true, instructions: 'Use the original targetId and preserve its safety constraints.', constraints: ['Never duplicate a write'], expectedOutcome: 'Verified target' };
   const server = http.createServer(async (req, res) => {
     let raw = ''; for await (const chunk of req) raw += chunk;
@@ -187,7 +187,7 @@ test('one real HTTP contract repair preserves the full original context and orig
 
 test('two invalid plan contracts fail after exactly one read-only repair and no business execution', async () => {
   let calls = 0, businessWrites = 0; const records: WorkflowRecord[] = [];
-  const invalidOutput = { proceed: true, instructions: 'x'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1), constraints: [], expectedOutcome: 'Target' };
+  const invalidOutput = { proceed: true, instructions: 'x'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters + 1), constraints: [], expectedOutcome: 'Target' };
   const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: r => records.push(r), call: async () => { calls++; return invalidOutput; } });
   await assert.rejects(async () => { await workflow.plan({ originalRequest: 'Write once' }); businessWrites++; }, /contract was not truncated/);
   assert.equal(calls, 2); assert.equal(businessWrites, 0); assert.equal(workflow.handoffs.length, 0);
@@ -201,7 +201,7 @@ test('explicit refusal, transport failure and independent review rejection are n
     let calls = 0; const records: WorkflowRecord[] = [];
     const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: r => records.push(r), call: async () => {
       calls++; if (scenario === 'transport') throw new Error('Transport unavailable');
-      return scenario === 'review' ? { pass: false, reason: 'Missing actual evidence' } : { proceed: false, reason: 'No permission', instructions: 'x'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1) };
+      return scenario === 'review' ? { pass: false, reason: 'Missing actual evidence' } : { proceed: false, reason: 'No permission', instructions: 'x'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters + 1) };
     } });
     await assert.rejects(scenario === 'review' ? workflow.review({ toolResults: [] }) : workflow.plan({ originalRequest: 'Write once' }), /No permission|Transport unavailable|Missing actual evidence/);
     assert.equal(calls, 1); assert.equal(records.filter(r => r.stage === 'plan_repair').length, 0);
@@ -222,7 +222,7 @@ test('a repair response without strict approval is rejected without a third call
   for (const approval of [false, 'false', 'true', null, undefined]) {
     let calls = 0;
     const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {}, call: async () => {
-      calls++; return calls === 1 ? { proceed: true, instructions: 'x'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1), constraints: [], expectedOutcome: 'Verified target' } : { proceed: approval, instructions: 'Concise', constraints: [], expectedOutcome: 'Verified target' };
+      calls++; return calls === 1 ? { proceed: true, instructions: 'x'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters + 1), constraints: [], expectedOutcome: 'Verified target' } : { proceed: approval, instructions: 'Concise', constraints: [], expectedOutcome: 'Verified target' };
     } });
     await assert.rejects(workflow.plan({ originalRequest: 'Write once' }), /rejected/);
     assert.equal(calls, 2); assert.equal(workflow.handoffs.length, 0);
@@ -258,7 +258,7 @@ test('audit snapshots remain unchanged after business state, output and handoffs
 
 
 test('657 Unicode instructions remain complete through real HTTP worker handoffs with original request and context unchanged',async t=>{
- assert.equal(NATIVE_INSTRUCTIONS_UNICODE_LIMIT,NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters);
+ assert.equal(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters,4096);
  const instruction='Follow the exact requested record, preserve other records, and verify the read-back. '.repeat(8).slice(0,657);assert.equal(Array.from(instruction).length,657);
  const received:any[]=[];const originalRequest={text:'Original complete request '.repeat(200),target:'the same target',optional:false,value:0};
  const server=http.createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const value=JSON.parse(raw);received.push(value);res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({proceed:true,instructions:instruction,constraints:['Do not duplicate writes'],expectedOutcome:'Actual requested target independently read back'}));});
