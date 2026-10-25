@@ -1,3 +1,4 @@
+import {factorNativeReviewInput} from './native-review-factor.js';
 import { randomUUID } from 'node:crypto';
 
 export type WorkflowNode = { id: string; role?: string; name?: string; purpose?: string; model?: string; inputs?: unknown; outputs?: unknown; stateReads?: unknown; stateWrites?: unknown };
@@ -123,7 +124,10 @@ export class NativeWorkflow {
     const input = { modelInvocationId: randomUUID(), model: this.nodes[0]?.model, outcome: projectedOutcome, workerContracts: this.handoffs };
     this.record('review', node.id, 'running', input);
     try {
-      const output = await this.options.call(node, input, 'review');
+      const projection=factorNativeReviewInput(input);
+      this.record('review_projection',node.id,'running',projection.receipt);
+      this.record('review_projection',node.id,'ok',undefined,projection.receipt);
+      const output = await this.options.call(node, projection.input, 'review');
       if (output.pass !== true) throw new Error(`native result review rejected: ${String(output.reason || 'verification did not pass')}`);
       this.record('review', node.id, 'ok', undefined, output);
       return output;

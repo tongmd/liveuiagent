@@ -40,7 +40,8 @@ test('real HTTP model workers pass role-specific handoffs to subsequent workers 
     }
     assert.deepEqual(requests[5].input.outcome, { saved: 'first' });
     assert.ok(records.every(record => record.owner === 'owner-a' && record.appId === 'a' && record.executionId === workflow.executionId));
-    assert.equal(records.filter(record => record.status === 'ok').length, 6);
+    assert.equal(records.filter(record => record.status === 'ok' && record.stage !== 'review_projection').length, 6);
+    assert.equal(records.filter(record => record.status === 'ok' && record.stage === 'review_projection').length, 1, 'separate host projection receipt is not an extra model execution');
   } finally { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); }
 });
 
