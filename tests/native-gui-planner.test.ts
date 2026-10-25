@@ -5,7 +5,7 @@ import http from 'node:http';
 import {createGuiInteractionPlanner,validateInteractionInput,validateInteractionStep} from '../server/gui-interaction-planner.js';
 import {planNativeGuiInteractionStep} from '../server/liveuiagent.js';
 import {withActionDeadline,remainingActionMs} from '../server/action-deadline.js';
-const view={visibleText:'Books',fields:[{target:'e1',label:'Book title',type:'text',value:'',required:true},{target:'e2',label:'Shelf',type:'select-one',value:'todo',options:[{label:'To read',value:'todo'},{label:'Finished',value:'done'}]},{target:'e3',label:'Finished',type:'checkbox',value:'on',checked:false}],buttons:[{target:'e4',label:'Add book',actionId:'record.add'}]};
+const view={visibleText:'Books',fields:[{target:'e1',label:'Book title',type:'text',value:'',required:true},{target:'e2',label:'Shelf',type:'select-one',value:'todo',options:[{label:'To read',value:'todo'},{label:'Finished',value:'done'}]},{target:'e3',label:'Finished',type:'checkbox',value:'on',checked:false}],buttons:[{target:'e4',label:'Add book',actionId:'record.add',contextText:'Piranesi — To read'}]};
 const input=()=>({appId:'owned',harness:'dsh',model:'fixture-selected',userMessage:'Add Piranesi to my to-read shelf',snapshot:structuredClone(view),observations:[]});
 async function setup(t:any,overrides:any={}){
  let plans=0,dispatches=0;const modelInputs:any[]=[];
