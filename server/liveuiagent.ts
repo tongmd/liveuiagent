@@ -6241,7 +6241,15 @@ export async function runAppWorldGrounding(input: {
         historyLog.push({ ok: false, api: '(dispatch-budget)', error: 'Bounded API budget reached; completion still requires evidence.' });
         break;
       }
-      const rawCalls = (Array.isArray(decision?.calls) ? decision.calls : [decision?.call]).filter(Boolean).slice(0, dispatchAllowance);
+      const proposedBatch = (Array.isArray(decision?.calls) ? decision.calls : [decision?.call]).filter(Boolean);
+      const rawCalls = proposedBatch.slice(0, dispatchAllowance);
+      const batchScope = {
+        source: 'host-selected-dispatch-batch', purpose: 'incremental_write_safety_not_goal_completion',
+        proposedCallCount: proposedBatch.length, selectedCallCount: rawCalls.length,
+        dispatchAllowance, omittedTailCallCount: proposedBatch.length - rawCalls.length,
+        totalApiAttemptLimit, attemptedCallCountBeforeBatch: totalAttempts(),
+        completionClaim: false, grantsAdditionalAuthority: false,
+      };
       if (!rawCalls.length) {
         historyLog.push({ ok: false, error: 'decision had neither calls nor done' });
         continue;
@@ -6273,11 +6281,12 @@ export async function runAppWorldGrounding(input: {
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
         persistedDomainPolicy,
+                'The host-authored batchScope describes ONLY the actual bounded proposedCalls selected for this dispatch. Judge whether EACH call is safe, authorized incremental progress toward the explicit user intent, with actual identity, amounts, prerequisites and protection of untargeted objects. A finite batch need not complete the entire goal, reach the final requested count or touch every requested destination in the SAME batch. Remaining work is not itself grounds to reject a safe batch. Worker end-state contracts describe the eventual result, not a requirement that each write batch finish it; they never override explicit user intent. Do not approve unrelated or harmful partial work. If the user explicitly requires atomic/all-or-nothing execution and this partial batch would violate that requirement, reject it. Batch metadata grants no authority, invents no prerequisites and claims no completion. Final complete-goal coverage, fresh post-write read-back and current full membership remain mandatory for the separate final evaluators.',
                 'Check the API operation family AND its arguments against the explicit current user request; the goal may be mistaken: (1) every amount must trace to a submitted value, a value read earlier this turn, or goal.expectedNumbers (respect the scope of expectedNumbers: an event share is not a cumulative balance; a bill split share = total ÷ ALL participants including the payer; the payer is owed, never owing; NEVER a placeholder like 0.01); (2) names/titles the user provided must be used VERBATIM (no renaming, translating, date prefixes, or concatenated form fields); (3) an update must REPLACE the field content, not append, unless the user asked to add; (4) a change aimed at one named user-facing unit must not change sibling values; a packed-record representation-only partition must satisfy the shared policy rather than impose a same-backend-record constraint; (5) no UI component ids (d_b1, slot_2) inside names or contents.',
                 'DUPLICATE & TURN-SCOPE gate: reject the batch with {"approved": false, "reject": true, "reason": "<why>"} when (a) previousCalls already show a successful create of the same object (same bill/record, matching amounts or title) and the batch re-creates it WITHOUT first deleting the stale copy, or (b) the batch DELETES or re-records an object whose id does NOT trace to a create in previousCalls (i.e. it predates this turn) and the user request does not explicitly ask to remove or correct that record, or (c) the batch COMPLETES/closes/checks-off an item whose name is NOT mentioned in the user request or targetEntity — completing unmentioned siblings corrupts per-item state. Also reject when the API family contradicts explicit intent (for example recording an actual payment for a new bill, debt or future payment request), or when fixing the call would require changing the API family or inventing missing business values. Return approved:false, reject:true with the concrete reason so the executor can re-plan; do not disguise an intent error as an argument correction.',
                 'Otherwise respond ONLY with JSON: {"approved": true} only when the API intent and all args are right, or {"approved": false, "correctedCalls": [{"api": "<same api>", "args": {...fixed args...}}, ...], "reason": "<what you fixed>"}. Use correctedCalls only for evidenced argument corrections within an already-correct API family; keep the SAME apis in the SAME order. For a wrong API family return reject:true instead of correctedCalls.',
               ].join('\n'),
-              user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, previousCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), proposedCalls: rawCalls }),
+              user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, previousCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), batchScope, proposedCalls: rawCalls }),
             }) as Record<string, any>;
           } catch (error) {
             if (attempt >= 2) historyLog.push({ ok: false, api: '(write-verifier)', error: compactText((error as Error).message, 160) });
