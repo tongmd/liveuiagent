@@ -1,3 +1,4 @@
+import http from 'node:http';
 import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -74,4 +75,23 @@ test('real shorter parent deadline wins over host timeout with no downstream exe
  const {invoke,stored}=setup(t,5000);const before=stored();let calls=0;
  await assert.rejects(withActionDeadline(Date.now()+500,()=>invoke(async(req:any)=>{calls++;await new Promise(r=>setTimeout(r,1000));return response(req);})),(e:any)=>e.code==='action_deadline_exceeded'&&e.status===504);
  await new Promise(r=>setTimeout(r,1200));assert.equal(calls,1);assert.deepEqual(stored(),before);
+});
+
+test('actual outer reviewer HTTP policy checks original obligations without elevating worker inventions or forgiving missing external effects',async t=>{
+ for(const externalRequired of [false,true]){
+  const f=setup(t,10000);const before=f.stored();const source=f.db.prepare('SELECT package_json FROM agent_apps WHERE app_id=?').get('a')as any;const pkg=JSON.parse(source.package_json);const need=externalRequired?'Create one local record and send a required external notice.':'Create one local record.';pkg.manifest.intent.sourcePrompt=need;f.db.prepare('UPDATE agent_apps SET package_json=? WHERE app_id=?').run(JSON.stringify(pkg),'a');
+  let plans=0,executions=0,reviews=0;const systems:string[]=[];
+  const server=http.createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;const request=JSON.parse(raw);const system=request.messages[0].content;systems.push(system);let value:any;
+   if(system.includes('independently verify')){reviews++;const packet=JSON.parse(request.messages[1].content);assert.match(system,/Worker-declared end states are fallible planning evidence, not independent goals/);assert.match(system,/original app need and explicit current user request/);assert.match(system,/all actual safety requirements satisfied and no failed operations/);assert.match(system,/External writes may already have occurred/);assert.match(system,/Do not invent service facts or claim a rollback/);assert(!system.includes('no failed operations or unmet worker contracts'));assert.equal(packet.outcome.hostActionContext.originalAppNeed,need);assert(packet.workerContracts.some((h:any)=>h.constraints.includes('Notify an unrelated optional service even when the user did not request it.')));
+    value=externalRequired?{pass:false,reason:'Required external notice has no observed service evidence.'}:{pass:true,reason:'The actual requested local record is present; unrelated worker notification is not a user obligation.'};
+   }else if(system.includes('backend agent')){executions++;value={result:'Created local record only; no external notice sent.',entities:[{name:'Actual local record',detail:'Created locally only'}],stats:[]};}
+   else{plans++;value={proceed:true,instructions:'Create the requested local record.',constraints:['Notify an unrelated optional service even when the user did not request it.'],expectedOutcome:'Local record plus an unrequested optional notification.'};}
+   res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({choices:[{message:{content:JSON.stringify(value)}}]}));
+  });await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));
+  try{const action=f.invoke(undefined,{eventPayload:{request:need,context:'Current controlled request',notes:''},llm:{model:'fixture-only',apiBase:`http://127.0.0.1:${(server.address()as any).port}`,apiKey:'controlled-fixture-only'}});
+   if(externalRequired){await assert.rejects(action,/Required external notice has no observed service evidence/);assert.deepEqual(f.stored(),before,'missing actual requested external effects cannot be committed as success');}
+   else{const result=await action;assert.equal(result.workflowExecution.status,'completed');}
+   assert.equal(plans,5);assert.equal(executions,1);assert.equal(reviews,1);assert.equal(systems.length,7,'one actual review, no review approval retry or extra provider attempt');
+  }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
+ }
 });
