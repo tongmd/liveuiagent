@@ -12,7 +12,8 @@ import { createHash } from 'node:crypto';
 import { createEvaluatorArtifacts } from './evaluator-artifacts.js';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
-import { createLiveUIRuntime, type LlmRuntimeConfig } from './liveuiagent.js';
+import { createGuiInteractionPlanner } from './gui-interaction-planner.js';
+import { createLiveUIRuntime, planNativeGuiInteractionStep, type LlmRuntimeConfig } from './liveuiagent.js';
 import { createScheduledAgentGateway } from './agent-scheduler.js';
 import { runEvaluatorAgent } from './evaluator-agent.js';
 import { runGuiEvaluatorAgent } from './gui-evaluator-agent.js';
@@ -150,6 +151,7 @@ function errorPayload(err: any) {
     ...(err?.artifactsDir ? { artifactsDir:err.artifactsDir } : {}),
     ...(err?.workflowExecution ? { workflowExecution:err.workflowExecution } : {}),
     ...(err?.nativeInference ? { nativeInference:err.nativeInference } : {}),
+    ...(Number.isInteger(err?.plannerModelCalls) ? {plannerModelCalls:err.plannerModelCalls} : {}),
   };
 }
 
@@ -451,6 +453,24 @@ app.post('/agent/settings/test', async (req, res, next) => {
     res.json(await testLlmConnection(db, requestUser(req), body));
   } catch (e) { next(e); }
 });
+
+// Pure step planning: no app action, storage write or evaluator behavior loop.
+app.post('/evaluator/interaction-step', createGuiInteractionPlanner({
+  owner: requestUser,
+  authorize(appId, owner) {
+    const row = db.prepare('SELECT owner FROM agent_apps WHERE app_id=?').get(appId) as {owner:string}|undefined;
+    if (!row || (row.owner && row.owner !== owner)) throw Object.assign(Error('Native app not found'), {status:404});
+  },
+  resolve(req, input) {
+    // Only model/harness selection crosses this boundary. Credentials stay in
+    // the same server resolver and DSH adapter used by Native runtime actions.
+    const selected = Object.create(req) as express.Request;
+    selected.body = {appId:input.appId,harness:input.harness,llm:{model:input.model}};
+    const harness = runtimeSettings.forRequest(selected,input.appId);
+    return {harness, llm:llmConfigFromRequest(selected)};
+  },
+  plan: planNativeGuiInteractionStep,
+}));
 
 app.post('/evaluator/run', async (req, res, next) => {
   try {
