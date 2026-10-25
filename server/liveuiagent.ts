@@ -986,6 +986,9 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
       'accent: the app\'s brand color as a 6-digit hex (#rrggbb) that FITS the domain — warm appetizing tones for food, violet/indigo for music, greens for cleaning or health, gold/teal for money. Medium saturation and medium-dark brightness so white text stays readable on it; never pale pastels or near-black.',
       'actions: exactly 3 buttons a real consumer app for this need would offer, ordered by importance. Each is {label, description, perItem?}. label: 2-8 characters/words, starts with a verb, prompt language — the first one is the main thing the user came to do (like 给我推荐 or 换一批), never generic verb+field combos like 保存口味 or 刷新食材. description: one sentence describing what happens when tapped. Together the 3 actions must cover the FULL lifecycle the need implies — if the need involves playing something, include a stop/pause action; if it involves building a list, include a revise/remove action. Money coming back to the user is RECORDING a repayment (标记已还 / Mark repaid) — never word it as "request" unless the need is explicitly about sending payment requests. Set "perItem": true on the ONE action that operates on a single listed object (mark ONE task done, remove ONE entry, record ONE person\'s repayment) when the lifecycle involves acting on individual items — that action gets a button on each list row.',
       'Each slot must be a user-visible instruction slot for a persistent app workflow.',
+      'TASK INPUT COVERAGE: derive slots from the user operations before preferences. For each requested create/add/edit operation, include how the user identifies the object and supplies each explicitly user-controlled business value (including values set separately for each object). Existing listed-row identity may supply the target of an item action, but never a new value the user must enter. A global default or rule cannot replace a per-object value. Do not infer that saved/existing items make their editable values unnecessary.',
+      'Allocate the 3-6 slots to core task inputs first; remove optional settings to make room. Monitoring, discovery and editing are different operations: settings for when/how to check do not provide a way to add or change an object. Cover the requested lifecycle with reachable inputs and actions, including an empty-list entry path where the user must create or add items. Do not turn every app into a generic Request field.',
+      'Mark required only the inputs needed to perform a requested business operation; optional preferences and settings must remain optional. Order object identity and core editable values before optional preferences. If a row action already carries the existing object identity, do not add a redundant required identity slot just to repeat that selection.',
       'If the prompt is terse (e.g. "每天吃什么"), expand the use case yourself like a product designer: design the 3-6 inputs a daily-use consumer app for that need would ask for (preferences, constraints, context, adjustments). hintLabels are optional hints, not requirements.',
       'Do not return generic labels such as prompt, context, state, nextStep, result, input, output, feedback, or notes.',
       'Do not mention internal workflow fields.',
@@ -2968,7 +2971,7 @@ function workflowStepView(route: { id: string; entryActionId: string }, index: n
 // 拒因写进 lastDesignRejectReason(同步校验,无竞态):泛化反馈 3 轮收敛不了,
 // 设计器重试环要拿到"哪个组件哪条规则"级别的精确反馈。
 let lastDesignRejectReason = '';
-function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: string; type?: FieldType; options?: Array<{ label: string; value: string }> }>; actionIds: string[]; requireItemButtonFor?: string; requireWidgets?: boolean }): Array<Record<string, unknown>> | null {
+function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: string; type?: FieldType; required?: boolean; options?: Array<{ label: string; value: string }> }>; actionIds: string[]; requireItemButtonFor?: string; requireWidgets?: boolean }): Array<Record<string, unknown>> | null {
   lastDesignRejectReason = '';
   const reject = (why: string) => { if (!lastDesignRejectReason) lastDesignRejectReason = why; return null; };
   if (!Array.isArray(raw) || raw.length < 3 || raw.length > 70) return reject('components must be an array of 3-70 objects');
@@ -3227,6 +3230,10 @@ function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: str
       const label = compactText(String(node.label || slot), 60);
       if (!label || label.length > 18 || isGenericVisibleFieldLabel(label)) return bad(`label "${label}" must be a SPECIFIC human label of 2-18 chars (never generic words)`);
       const spec = slotById.get(slot);
+      if (opts.requireWidgets && spec?.required) {
+        if (itemScoped.has(id)) return bad(`required slot "${slot}" must have an editable composer input outside the /entities list, accessible even when the list is empty`);
+        if (node.hidden === true || node.visible === false || node.disabled === true || node.readOnly === true || node.readonly === true || node.editable === false) return bad(`required slot "${slot}" must be visible and editable, not hidden, disabled or read-only`);
+      }
       const declaredType = spec?.type ?? 'string';
       const wantedVariant = variantForType[declaredType];
       const gotVariant = String(node.variant || 'shortText');
@@ -3298,6 +3305,10 @@ function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: str
   // 与 QA 门(validateA2uiSurfaceQuality ≥3 语义槽位)同一条线:设计器只放 1-2 个
   // 输入位会在生成后段被 QA 抛死且不进重试环 —— 在这里拦下并给精确拒因。
   if (fieldCount < Math.min(3, slotSet.size)) return reject(`only ${fieldCount} input(s) designed — expose at least ${Math.min(3, slotSet.size)} of the ${slotSet.size} business slots, each with the variant its type requires`);
+  if (opts.requireWidgets) {
+    const missing = opts.slots.filter((slot) => slot.required && !boundSlots.has(slot.name)).map((slot) => slot.name);
+    if (missing.length) return reject(`missing editable composer input(s) for required business slots: ${missing.join(', ')}; labels or result text do not substitute for inputs`);
+  }
   if (!topLevelButtonCount) return reject('missing at least one composer Button OUTSIDE the /entities list (a row button cannot be the only entry point)');
   if (!entityListCount) return reject('missing the List bound to /entities');
   if (!resultLineCount) return reject('missing a Text bound to /draft/result');
@@ -6192,7 +6203,7 @@ export async function designAppSurface(input: {
   name: string;
   description: string;
   sourcePrompt: string;
-  businessFields: Array<{ name: string; label: string; type?: FieldType; options?: Array<{ label: string; value: string }> }>;
+  businessFields: Array<{ name: string; label: string; type?: FieldType; required?: boolean; options?: Array<{ label: string; value: string }> }>;
   actions: Array<{ actionId: string; label: string; perItem?: boolean }>;
   llm?: LlmRuntimeConfig;
 }): Promise<Array<Record<string, unknown>>> {
@@ -6204,6 +6215,7 @@ export async function designAppSurface(input: {
     'StatGrid{path:"/stats"} — renders the app\'s REAL computed aggregates as a grid of up to 4 label/value cells. It takes no children and no literal content: /stats is the live array the grounding step computed. Include it once when the app tracks aggregates (totals, remaining counts, ranges, countdowns). It renders nothing when there are no aggregates yet, so it is always safe.',
     'Badge{text} — a small pill for a short status or category. Inside the /entities item subtree bind {"path":"tag"} (the record\'s real group/category) to label each row; outside it may bind {"path":"/draft/state"}. Text longer than a couple of words does not belong in a Badge.',
     'SectionHeading{title, kicker?, meta?} — replaces a bare h2/caption pair: title is the section name, kicker is a short uppercase eyebrow above it, meta renders as a small live pill on the right. Use it to head the content list (title may bind {"path":"/entitiesTitle"}) and the composer section instead of plain Texts. Do not put the same value in more than one place on the screen: if the StatBlock hero already shows {"path":"/draft/statValue"}, no SectionHeading meta may bind it too — give meta a literal that describes the section, or omit meta entirely.',
+    'Every required slot must have a visible, editable composer TextField outside the /entities list, reachable even when no items exist. A label, result sentence, hidden/disabled/read-only control or a row-only control cannot substitute. Optional settings may be omitted for a compact layout. Existing row actions supply their selected object identity; do not invent a duplicate identity input or replace task-specific inputs with a generic Request field.',
     'THE INPUTS — a typed slot must get its real control, never a bare text box. Every slot in the input carries a "component" field naming the exact TextField variant you MUST use for that slot; any other variant is rejected:',
     'variant "date" — a tap-to-open calendar: the user picks a day off a month grid instead of typing a date.',
     'variant "choice" — the slot\'s closed choice set rendered as tappable pills. Emit only {id, component, label, value, variant} — the real options come from the business model (the input lists them under "choices" so you can judge how much room the row needs); never write an options array yourself and never invent a choice.',
@@ -6219,7 +6231,7 @@ export async function designAppSurface(input: {
     'Every TextField label must be a SPECIFIC human label of 2-18 characters — count them: English labels run long, so prefer compact forms ("Unpaid balance", not "Carry unpaid balance"). Button child Texts are literal 1-18 chars.',
     'Respond ONLY with JSON: {"components": [ ... ]}',
   ].join('\n');
-  const slots = input.businessFields.map((field) => ({ name: field.name, type: field.type, options: field.options }));
+  const slots = input.businessFields.map((field) => ({ name: field.name, type: field.type, required: field.required, options: field.options }));
   const actionIds = input.actions.map((action) => action.actionId);
   let feedback = '';
   for (let round = 1, maxRounds = designAttempts(); round <= maxRounds; round++) {
@@ -6239,6 +6251,7 @@ export async function designAppSurface(input: {
             return {
               slot: field.name,
               label: field.label,
+              required: Boolean(field.required),
               type,
               // 该槽位必须使用的输入 variant 直接算给设计器,省掉它自己做类型映射的出错空间。
               component: type === 'date' ? 'TextField variant "date"' : type === 'select' ? 'TextField variant "choice"' : type === 'boolean' ? 'TextField variant "toggle"' : type === 'number' ? 'TextField variant "stepper"' : 'TextField variant "shortText" or "longText"',
