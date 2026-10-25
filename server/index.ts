@@ -1,3 +1,4 @@
+import {readNativeHostExperiments,nativeHostCaptureRoot,bindNativeHostExperiments} from './native-host-experiments.js';
 import {requireActionRequestId} from './native-action-request.js';
 import {hostNativeActionNotStartedProof} from './native-action-not-started.js';
 import 'dotenv/config';
@@ -36,6 +37,9 @@ if (!Number.isFinite(port)) throw new Error('PORT must be numeric');
 const dbPath = path.resolve(root, requireEnv('DB_PATH'));
 const generatedAppsDir = path.resolve(root, requireEnv('GENERATED_APPS_DIR'));
 
+const nativeExperiments=readNativeHostExperiments(process.env);
+const nativeDshRoot=path.resolve(process.env.LIVEUI_NATIVE_DSH_ROOT||path.join(path.dirname(dbPath),'native-dsh-workers'));
+
 fs.mkdirSync(generatedAppsDir, { recursive: true });
 
 const db = openDb(dbPath);
@@ -43,14 +47,15 @@ ensureLlmSettingsTable(db);
 const nativeHarnessBindings=createNativeHarnessBindings(db);
 const nativeDshCommand=process.env.LIVEUI_NATIVE_DSH_COMMAND?.trim();
 const nativeDsh=nativeDshCommand?createDshNativeInference({
-  root:path.resolve(process.env.LIVEUI_NATIVE_DSH_ROOT||path.join(path.dirname(dbPath),'native-dsh-workers')),
+  root:nativeDshRoot,
+  diagnosticInputRoot:nativeHostCaptureRoot(nativeDshRoot,nativeExperiments),
   projectRoot:root,command:nativeDshCommand,
   diagnosticRoot:path.join(path.dirname(path.resolve(process.env.LIVEUI_NATIVE_DSH_ROOT||path.join(path.dirname(dbPath),'native-dsh-workers'))),'native-inference-diagnostics'),
   args:process.env.LIVEUI_NATIVE_DSH_ARGS?JSON.parse(process.env.LIVEUI_NATIVE_DSH_ARGS):undefined,
   timeoutMs:Number(process.env.LIVEUI_NATIVE_DSH_TIMEOUT_MS||120000),
   maxConcurrent:Number(process.env.LIVEUI_NATIVE_DSH_MAX_CONCURRENT||4),
 }):undefined;
-const liveuiagentRuntime = createLiveUIRuntime(db, { registryRoot: generatedAppsDir, projectRoot: root });
+const liveuiagentRuntime = createLiveUIRuntime(db, { registryRoot: generatedAppsDir, projectRoot: root,innerWorkerPlanning:nativeExperiments.innerWorkerPlanning });
 const agentGateway = createScheduledAgentGateway(liveuiagentRuntime);
 const app = express();
 
@@ -117,6 +122,7 @@ function llmConfigFromRequest(req: express.Request): LlmRuntimeConfig | undefine
     && !String(body.appId||body.selectedAppId||'').startsWith('dsh_') && body.delivery!=='html') {
     if(!nativeDsh)throw Object.assign(new Error('Native DSH inference transport is not configured'),{code:'dsh_native_unavailable',status:503});
     const provider=resolved.llm.apiBase&&resolved.llm.apiKey?{apiBase:resolved.llm.apiBase,apiKey:resolved.llm.apiKey}:undefined;
+    resolved.llm=bindNativeHostExperiments(resolved.llm,nativeExperiments);
     resolved.llm.nativeInferenceConcurrency=nativeDsh.maxConcurrent;
     resolved.llm.chatCompletion=(request,options)=>nativeDsh.chatCompletion(request,{timeoutMs:options?.timeoutMs??120000,roleLabel:options?.roleLabel,provider});
   }
