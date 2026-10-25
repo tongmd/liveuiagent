@@ -77,3 +77,11 @@ body:has(.liveui-catalog-empty:not([hidden])) .material-system-core .frontend-pr
  body:has(.liveui-catalog-empty:not([hidden])) .material-system-core .frontend-prompt.liveui-composer{top:auto!important;bottom:calc(8px + var(--liveui-keyboard-inset,0px))!important}
 }
 body.liveui-keyboard-open:has(.liveui-catalog-empty:not([hidden])) .material-system-core .frontend-prompt.liveui-composer{top:auto!important;bottom:calc(8px + var(--liveui-keyboard-inset,0px))!important}
+
+/* Activity is a readable overlay, not a second scrolling page. */
+body:has(.liveui-composer) .history-panel{width:min(440px,calc(100vw - 32px));height:auto;max-height:min(620px,calc(100dvh - 90px));grid-template-rows:auto minmax(0,1fr);background:#fff;backdrop-filter:none;z-index:180}
+.history-list{min-height:0;overscroll-behavior:contain}.history-item{padding:14px 16px!important;border-bottom:1px solid #e5ebe7;font:13px/1.65 system-ui!important;overflow-wrap:anywhere;white-space:pre-wrap}.history-item span{font-size:inherit!important}.history-prompt{display:block;margin-bottom:7px;color:#243f30}.history-response{display:block;color:#4c6255}.history-item small{display:block;margin-top:7px}.history-head{padding:14px 16px!important}.history-head button{min-width:32px;min-height:32px;font-size:22px!important}
+@media(max-width:620px){body:has(.liveui-composer) .history-panel{top:62px;left:12px;width:calc(100vw - 24px);max-height:calc(100dvh - 80px);box-shadow:0 12px 60px #173b2d44}.history-item{font-size:14px!important}}
+body:has(.history-panel) .liveui-catalog-empty{visibility:hidden!important}
+body:has(.liveui-composer) .history-panel{background:#fff!important;opacity:1!important}
+.history-panel .history-prompt span{color:#233d2c!important}.history-panel .history-response span{color:#344e3e!important}.history-panel .history-response b{color:#617768!important}
