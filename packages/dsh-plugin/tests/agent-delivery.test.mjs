@@ -1,14 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { validateBrowserDelivery } from '../browser-delivery.mjs';
-const app = (handler, extra = '') => `<html><head></head><body><form id="taskForm" data-liveui-action="agent.invoke"><label>Task<textarea id="task" name="task"></textarea></label><button type="submit" data-liveui-action="agent.invoke">Run task</button></form><p id="result"></p><p id="status"></p>${extra}<script>document.querySelector('#taskForm').onsubmit=async event=>{event.preventDefault();const task=document.querySelector('#task').value;const output=document.querySelector('#result');${handler}};</script></body></html>`;
-const good = `const reply=await window.liveuiagent.ai(task,{request:task});if(reply.ok===false||reply.data?.ok===false){output.textContent=reply.error||reply.data?.error||reply.text;return;}output.textContent=reply.text;`;
+const app = (handler, extra = '') => `<html><head></head><body><form id="taskForm" data-liveui-action="agent.invoke"><label>Task<textarea id="task" name="task"></textarea></label><button type="submit" data-liveui-action="agent.invoke">Run task</button></form><p id="result"></p><p id="status"></p><ul data-liveui-view="records"></ul>${extra}<script>document.querySelector('#taskForm').onsubmit=async event=>{event.preventDefault();const task=document.querySelector('#task').value;const output=document.querySelector('#result');${handler}};</script></body></html>`;
+const good = `const reply=await window.liveuiagent.ai(task,{request:task});if(reply.ok===false||reply.data?.ok===false){output.textContent=reply.error||reply.data?.error||reply.text;return;}output.textContent=reply.text;document.querySelector('[data-liveui-view="records"]').replaceChildren(...(reply.data?.entities||[]).map(item=>{const li=document.createElement('li');li.textContent=[item.name,item.detail,item.group].filter(Boolean).join(' · ');return li}));`;
 const check = html => validateBrowserDelivery(html,{requireAgentAction:true});
 test('real primary form submission invokes SDK, forwards synthetic input and visibly renders host failure', async () => {
   const result=await check(app(good));
   assert.equal(result.ok,true,JSON.stringify(result));
   assert.equal(result.scope,'browser-agent-action-contract');
-  assert.deepEqual(result.agentAction,{calls:2,forwardedInput:true,displayedHostError:true,displayedHostSuccess:true,failureCalls:1,successCalls:1,scope:'synthetic-host-failure-and-success',realServiceExecuted:false});
+  assert.deepEqual(result.agentAction,{displayedDomainRecords:true,preservedRecordsOnFailure:true,calls:3,forwardedInput:true,displayedHostError:true,displayedHostSuccess:true,failureCalls:1,successCalls:1,scope:'synthetic-host-failure-and-success',realServiceExecuted:false});
   assert.equal(result.businessBehaviorVerified,false);
 });
 test('local-only save cannot satisfy the service contract despite valid HTML and JavaScript', async () => {
@@ -64,12 +64,12 @@ test('a success-only callback ReferenceError is rejected even when failure rende
 
 test('a bound form may contain ordinary helper buttons without making them primary',async()=>{
  const html=app(good).replace('<label>','<button type="button">Preset</button><button type="button">Clear filter</button><label>');
- const result=await check(html);assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.agentAction.calls,2);
+ const result=await check(html);assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.agentAction.calls,3);
 });
 test('multiple real submit controls remain ambiguous even without explicit button bindings',async()=>{
  const html=app(good).replace('</form>','<button type="submit">Other submit</button></form>');const result=await check(html);assert.equal(result.ok,false);assert.match(result.errors.map(e=>e.message).join(' '),/found 2/);
 });
 test('an external form-owned submit is primary while unrelated form controls stay separate',async()=>{
  const html=app(good).replace('<button type="submit" data-liveui-action="agent.invoke">Run task</button>','').replace('</form>','</form><button form="taskForm" type="submit" data-liveui-action="agent.invoke">Run task</button><form><button type="submit">Unrelated</button></form>');
- const result=await check(html);assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.agentAction.calls,2);
+ const result=await check(html);assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.agentAction.calls,3);
 });

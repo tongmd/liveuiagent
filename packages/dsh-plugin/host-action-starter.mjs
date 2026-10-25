@@ -9,16 +9,19 @@ function hostController() {
   const result = document.getElementById('liveui-task-result');
   const entities = document.getElementById('liveui-task-entities');
   const stats = document.getElementById('liveui-task-stats');
+  const records = document.querySelector('[data-liveui-view="records"][data-liveui-default-projection]');
   const key = 'liveui.observed-service-result.v1';
   let busy = false, observed;
   const text = value => typeof value === 'string' ? value : String(value ?? '');
   function render(value, notify = true) {
     result.textContent = text(value.text);
     entities.replaceChildren(); stats.replaceChildren();
+    if (records) records.replaceChildren();
     for (const item of Array.isArray(value.data?.entities) ? value.data.entities : []) {
       const row = document.createElement('li');
-      row.textContent = [item.name, item.detail].filter(Boolean).map(text).join(' · ');
+      row.textContent = [item.name, item.detail, item.group].filter(value => value !== undefined && value !== null && value !== '').map(text).join(' · ');
       entities.append(row);
+      if (records) records.append(row.cloneNode(true));
     }
     for (const item of Array.isArray(value.data?.stats) ? value.data.stats : []) {
       const term = document.createElement('dt'), detail = document.createElement('dd');
@@ -36,11 +39,15 @@ function hostController() {
       const applicationContext = {...(context && typeof context === 'object' ? context : {input: context}), ...(observed ? {lastVerified: {text: observed.text, data: observed.data}} : {})};
       const response = await window.liveuiagent.ai(request, applicationContext);
       if (response?.ok !== true) throw Error(response?.error || response?.data?.error || response?.text || 'The requested outcome was not verified');
-      observed = response; render(response);
+      observed = response;
       // This is a visible cache of an actual successful host response, never a
       // user-input echo or a substitute for the host's execution audit.
-      localStorage.setItem(key, JSON.stringify({schemaVersion: 1, observedAt: new Date().toISOString(), result: response}));
-      status.textContent = ''; status.dataset.state = 'ready';
+      let cacheError = '';
+      try { localStorage.setItem(key, JSON.stringify({schemaVersion: 1, observedAt: new Date().toISOString(), result: response})); }
+      catch { cacheError = 'Completed, but this result could not be saved for reopening.'; }
+      render(response);
+      status.textContent = cacheError; status.dataset.state = 'ready';
+      status.dataset.cache = cacheError ? 'unavailable' : 'saved';
       return response;
     } catch (error) {
       status.textContent = error?.message || 'The task could not be completed'; status.dataset.state = 'error';
@@ -70,7 +77,7 @@ export function connectedStarterHtml() {
 <!-- Keep this primary workflow visible outside domain tabs. Style it without removing its SDK behavior. -->
 <section id="liveui-host-workflow"><form id="liveui-task-form" data-liveui-action="agent.invoke"><label for="liveui-task">Task</label><textarea id="liveui-task" name="task" placeholder="What would you like to do?" required></textarea><button id="liveui-task-submit" type="submit" data-liveui-action="agent.invoke">Run</button></form><p id="liveui-task-status" role="status" aria-live="polite"></p><div id="liveui-task-result" aria-live="polite"></div><ul id="liveui-task-entities"></ul><dl id="liveui-task-stats"></dl></section>
 <!-- Build the requested task-specific views here. Listen for liveui:result and read window.liveuiapp.lastResult. Domain actions can call window.liveuiapp.perform(task,fields). -->
-<section id="liveui-domain-view"></section></main><script>(${hostController.toString()})();</script></body></html>`;
+<section id="liveui-domain-view"><ul data-liveui-view="records" data-liveui-default-projection></ul></section></main><script>(${hostController.toString()})();</script></body></html>`;
 }
 
 export async function seedConnectedApp(work) {

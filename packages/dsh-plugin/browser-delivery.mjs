@@ -19,7 +19,7 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
   const token = randomBytes(10).toString('hex');
   const syntheticRequest = `Process this current user request: delivery-check-${token}`;
   const serviceError = `Connected service unavailable: delivery-error-${token}`;
-  const serviceSuccess = {ok:true,status:'succeeded',text:`Observed service result: delivery-success-${token}`,data:{entities:[{id:`delivery-${token}`,name:`Observed entity ${token}`,detail:'Read back from the synthetic host',group:'Observed'}],stats:[{label:`Observed count ${token}`,value:'1'}],evaluation:{pass:true,deficiencies:[]}}};
+  const serviceSuccess = {ok:true,status:'succeeded',text:`Observed service result: delivery-success-${token}`,data:{entities:[{id:`delivery-${token}`,name:`Observed entity ${token}`,detail:`Observed detail ${token}`,group:`unknown-group-${token}`},{name:`Second entity ${token}`,detail:`Second detail ${token}`,group:`other-group-${token}`}],stats:[{label:`Observed count ${token}`,value:'1'}],evaluation:{pass:true,deficiencies:[]}}};
   let actionVerification;
   const errors = [];
   const add = (code, message) => { if (errors.length < 12 && !errors.some(e => e.code === code && e.message === message)) errors.push({ code, message: String(message).slice(0, 600) }); };
@@ -87,9 +87,11 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
           // trusted-click boundary; failure UI state must not mask success bugs.
           actionPhase = false; outcome = 'success'; agentCalls.length = 0;
           frame = await loadApp();
-          const success = await verifyAgentAction(frame, syntheticRequest + ' success path', serviceSuccess.text, agentCalls, () => { actionPhase = true; }, true);
+          const success = await verifyAgentAction(frame, syntheticRequest + ' success path', serviceSuccess.text, agentCalls, () => { actionPhase = true; }, serviceSuccess.data.entities);
           await new Promise(resolve => setTimeout(resolve, settleMs));
-          actionVerification = {calls:failure.calls + success.calls,forwardedInput:true,displayedHostError:true,displayedHostSuccess:true,failureCalls:failure.calls,successCalls:success.calls,scope:'synthetic-host-failure-and-success',realServiceExecuted:false};
+          actionPhase = false; outcome = 'failure'; agentCalls.length = 0;
+          const retained = await verifyAgentAction(frame, syntheticRequest + ' retained failure', serviceError, agentCalls, () => { actionPhase = true; });
+          actionVerification = {displayedDomainRecords:true,preservedRecordsOnFailure:true,calls:failure.calls + success.calls + retained.calls,forwardedInput:true,displayedHostError:true,displayedHostSuccess:true,failureCalls:failure.calls,successCalls:success.calls,scope:'synthetic-host-failure-and-success',realServiceExecuted:false};
         }
       }
       catch (error) { add('agent_action_contract', error.message); }
@@ -126,7 +128,7 @@ function installDeliverySdk(channel, agentEnabled) {
   addEventListener('securitypolicyviolation', event => parent.postMessage({ channel, violation: 'Blocked ' + event.violatedDirective }, '*'));
 }
 
-async function verifyAgentAction(frame, request, serviceError, calls, beginAction, successPath = false) {
+async function verifyAgentAction(frame, request, serviceError, calls, beginAction, successEntities = null) {
   const binding = await frame.evaluate(() => {
     const visible = node => { const r = node.getBoundingClientRect(), s = getComputedStyle(node); return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden'; };
     const candidates = new Set(), hiddenControls = new Set();
@@ -153,7 +155,7 @@ async function verifyAgentAction(frame, request, serviceError, calls, beginActio
     const choices = named.length === 1 ? named : textareas.length === 1 ? textareas : textInputs;
     if (choices.length !== 1) throw Error(`Expected one clear natural-language task input in the primary action form; found ${choices.length}. Keep it separate from secondary record-entry fields.`);
     button.setAttribute('data-delivery-primary', 'true'); choices[0].setAttribute('data-delivery-request', 'true');
-    return { before: document.body.innerText, required: fields.filter(node => node.required && node !== choices[0]).map((node, i) => { node.setAttribute('data-delivery-required', String(i)); return { index:i, tag:node.tagName, type:node.type }; }) };
+    return { before: document.body.innerText, records: [...document.querySelectorAll('[data-liveui-view="records"]')].map(node => node.innerText), required: fields.filter(node => node.required && node !== choices[0]).map((node, i) => { node.setAttribute('data-delivery-required', String(i)); return { index:i, tag:node.tagName, type:node.type }; }) };
   });
   for (const field of binding.required) {
     const selector = `[data-delivery-required="${field.index}"]`;
@@ -182,12 +184,42 @@ async function verifyAgentAction(frame, request, serviceError, calls, beginActio
   }
   if (!calls.length) throw Error('The primary user action did not call window.liveuiagent.ai. Wire its submit/click handler to await the host bridge; browser-only saves are not external service operations.');
   if (!calls.some(call => JSON.stringify(call).includes(request))) throw Error('The host call discarded the current natural-language input. Forward the complete entered request and fields in prompt/context.');
-  if (successPath) {
+  if (successEntities) {
     if (!after.includes(serviceError)) throw Error('The host returned ok:true but its actual observed result was not visibly shown. Render the returned text/data rather than a local success placeholder.');
+    await verifyDomainProjection(frame, successEntities);
     return {calls:calls.length,forwardedInput:true,displayedHostSuccess:true,scope:'synthetic-host-success',realServiceExecuted:false};
   }
   if (!after.includes(serviceError)) throw Error('The host returned ok:false but the actual error was not visibly shown. Render returned text/data.error and do not silently hide a failed service operation.');
+  const recordsAfter = await frame.evaluate(() => [...document.querySelectorAll('[data-liveui-view="records"]')].map(node => node.innerText));
+  if (JSON.stringify(recordsAfter) !== JSON.stringify(binding.records)) throw Error('The host returned ok:false but the domain records changed. Preserve prior observed records on failure.');
   const fresh = after.split('\n').map(line => line.trim()).filter(line => line && !binding.before.split('\n').map(x => x.trim()).includes(line));
   if (fresh.some(line => /^(success(?:ful(?:ly)?)?|saved|added|created|updated|done|completed)[.!]?$/i.test(line) || /\b(?:successfully (?:saved|added|created|updated)|(?:saved|added|created|updated) successfully|operation completed)\b/i.test(line))) throw Error('The host returned ok:false but the app displayed a success claim. Show the real error and do not mark external writes as successful.');
   return { calls: calls.length, forwardedInput: true, displayedHostError: true, scope:'synthetic-host-failure', realServiceExecuted:false };
+}
+
+// Inspect only designated domain record surfaces, never the generic host result.
+async function verifyDomainProjection(frame, entities) {
+  const missing = await frame.evaluate(entities => {
+    const core = '#liveui-host-workflow,#liveui-task-result,#liveui-task-entities,#liveui-task-stats';
+    const visible = node => {
+      for (let e = node; e; e = e.parentElement) {
+        const s = getComputedStyle(e);
+        if (s.display === 'none' || s.visibility === 'hidden' || Number(s.opacity) === 0) return false;
+      }
+      const r = node.getBoundingClientRect(); return r.width > 0 && r.height > 0;
+    };
+    const texts = [...document.querySelectorAll('[data-liveui-view="records"]')]
+      .filter(node => !node.matches('html,body') && !node.closest(core) && !node.querySelector(core) && visible(node))
+      .map(node => {
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        const parts = []; let item;
+        while ((item = walker.nextNode())) {
+          const parent = item.parentElement;
+          if (parent && !parent.closest(core) && !parent.closest('script,style,template') && visible(parent)) parts.push(item.textContent);
+        }
+        return parts.join(' ').replace(/\s+/g, ' ');
+      });
+    return entities.flatMap((entity, index) => ['name','detail','group'].filter(key => entity[key] != null && entity[key] !== '' && !texts.some(text => text.includes(String(entity[key]).replace(/\s+/g, ' ')))).map(key => `entity ${index + 1} ${key}`));
+  }, entities);
+  if (missing.length) throw Error('The host returned actual entities but the visible domain record surface omitted ' + missing.join(', ') + '. Render all returned name/detail/group in a data-liveui-view="records" collection outside the core host result. Keep unknown groups with a generic record fallback; do not require unpromised service fields.');
 }
