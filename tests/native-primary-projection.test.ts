@@ -1,3 +1,5 @@
+import {nativeViewBudget} from '../server/native-view-budget.js';
+import {viewFixture} from './fixtures/native-view-surface.js';
 import test from 'node:test';import assert from 'node:assert/strict';import Database from 'better-sqlite3';
 import {parsePrimaryMembership,primaryProjectionDeficiencies,type PrimaryMembership} from '../server/native-primary-projection.js';
 import {createAppStateAdapter,createInitialAppStateAdapter} from '../server/native-app-state.js';import {normalizeGroundingEntities} from '../server/grounding-entities.js';
@@ -5,14 +7,14 @@ import {groundingViewContext} from '../server/grounding-view.js';import {runAppW
 const reply=(value:any)=>({choices:[{message:{content:JSON.stringify(value)}}]});const fields=[{name:'member_name',type:'string'}];
 const catalog=Array.from({length:20},(_,i)=>({name:'Public '+i,id:String(i+1)}));
 const cap:any={id:'tool.appworld.directory.search',permission:'tool.appworld.directory.search',source:'appworld',appName:'directory',apiName:'search',method:'GET',path:'/directory/search',label:'Search public objects',purpose:'Search global discovery catalog, not saved membership',inputSchema:{type:'object'}};
-async function flow(t:any,kind:PrimaryMembership,entities:any[],options:{seed?:boolean;stats?:any[];verdict?:boolean;prior?:any[];writeFirst?:boolean}={}){
+async function flow(t:any,kind:PrimaryMembership,entities:any[],options:{seed?:boolean;stats?:any[];verdict?:boolean;prior?:any[];writeFirst?:boolean;viewBudget?:boolean}={}){
  const db=new Database(':memory:');db.exec('CREATE TABLE agent_apps(app_id TEXT,owner TEXT)');db.prepare('INSERT INTO agent_apps VALUES(?,?)').run('fixture','alice');db.prepare('INSERT INTO agent_apps VALUES(?,?)').run('other','bob');t.after(()=>db.close());
  const full=createAppStateAdapter(db,'alice','fixture',fields,['storage.app','app_state.write'])!;
  if(options.seed)full.call('app_state.upsert_record',{recordKind:'primary_member',recordId:'member-one',values:{member_name:'Chosen member'}});
  const adapter=options.writeFirst?full:createInitialAppStateAdapter(db,'alice','fixture',fields,['storage.app','app_state.write'])!;
  let decisions=0;let reads=0;const inputs:any[]=[];
  const bridge:any={getCapabilities:async()=>[cap],callTool:async(id:string,args:any)=>{assert.equal(id,cap.id);reads++;return{tool:cap,request:args,requestSource:'bridge-returned-request',response:catalog};}};
- const output=await runAppWorldGrounding({bridge,appState:adapter,permissions:[cap.permission],payload:{},appName:'Membership fixture',appPurpose:'The original need determines the declared primary collection.',viewContext:{itemLabel:'Member',primaryMembership:kind,perItemActions:[]},priorProjection:options.prior?{entities:options.prior,stats:[]}:undefined,llm:{model:'fixture',chatCompletion:async(request,call)=>{
+ const output=await runAppWorldGrounding({projectionCapacity:options.viewBudget?(proposal)=>{try{const fixture=viewFixture(proposal.entities.length);nativeViewBudget(fixture.surface,fixture.descriptor);return [];}catch(error){return [String((error as Error).message)];}}:undefined,bridge,appState:adapter,permissions:[cap.permission],payload:{},appName:'Membership fixture',appPurpose:'The original need determines the declared primary collection.',viewContext:{itemLabel:'Member',primaryMembership:kind,perItemActions:[]},priorProjection:options.prior?{entities:options.prior,stats:[]}:undefined,llm:{model:'fixture',chatCompletion:async(request,call)=>{
   const label=call!.roleLabel;inputs.push({label,system:request.messages[0].content,user:JSON.parse(request.messages[1].content)});
   if(label==='Grounding Requirement Agent')return reply({objective:'Read current membership',projectionPolicy:'retain_existing',deliverables:[],expectedNumbers:[]});
   if(label==='Grounding Evaluator Agent')return reply({pass:options.verdict!==false,deficiencies:options.verdict===false?['Required external business result missing']:[]});
@@ -49,9 +51,8 @@ test('service-owned collections and explicit discovery are not forced into local
 test('local read association cannot waive the independent external business verdict',async t=>{
  const{output}=await flow(t,'app_local',[{name:'Chosen member',appRecordId:'member-one'}],{seed:true,verdict:false});assert.equal(output?.evaluation?.pass,false);
 });
-test('twenty-one raw rows stay complete for review and fail capacity even when evaluator approves',async t=>{
- const raw=[...catalog,{name:'New member',id:'21'}];const{output,inputs}=await flow(t,'service_collection',raw);assert.equal(output?.entities.length,21);assert.equal(output?.evaluation?.pass,false);assert(output?.evaluation?.deficiencies.some(x=>x.startsWith('projection_capacity:')));assert.equal(inputs.find(x=>x.label==='Grounding Evaluator Agent').user.visibleEntities.length,21);
- const stored:any={runtimeState:{entities:[{name:'Old persisted row'}],entityStats:[]}};assert.equal(applyVerifiedInitialContent(stored,output),false);assert.deepEqual(stored.runtimeState.entities,[{name:'Old persisted row'}]);assert.equal(normalizeGroundingEntities(raw,new Set(),[],[]).length,21);
+test('twenty-five raw rows remain complete for independent review under actual bounded surface',async t=>{
+ const raw=Array.from({length:25},(_,i)=>({name:'Member '+i,id:String(i)}));const{output,inputs}=await flow(t,'service_collection',raw,{viewBudget:true});assert.equal(output?.entities.length,25);assert.equal(output?.evaluation?.pass,true);assert.equal(inputs.find(x=>x.label==='Grounding Evaluator Agent').user.visibleEntities.length,25);assert.equal(normalizeGroundingEntities(raw,new Set(),[],[]).length,25);
 });
 test('none rejects invented primary rows; missing actual read cannot verify empty local membership',()=>{
  assert(primaryProjectionDeficiencies('none',[{name:'Unexpected'}],[],[]).length>0);assert(primaryProjectionDeficiencies('app_local',[],[],[]).length>0);
@@ -64,7 +65,7 @@ test('new BusinessSlot designs must declare membership independently of display 
 });
 
 test('capacity failure preserves one committed local write and blocks later writes even after more reads',async t=>{
- const raw=[...catalog,{name:'New member',id:'21'}];const{output,adapter}=await flow(t,'service_collection',raw,{writeFirst:true});assert.equal(output?.evaluation?.pass,false);assert.equal(adapter.listAll('primary_member')[0].revision,1);assert.equal(output?.appStateCalls.filter(x=>x.api==='app_state.upsert_record'&&x.ok===true).length,1);assert(output?.appStateCalls.some(x=>x.dispatchBlocked===true));
+ const raw=Array.from({length:34},(_,i)=>({name:'Member '+i,id:String(i)}));const{output,adapter}=await flow(t,'service_collection',raw,{writeFirst:true,viewBudget:true});assert.equal(output?.evaluation?.pass,false);assert.equal(adapter.listAll('primary_member')[0].revision,1);assert.equal(output?.appStateCalls.filter(x=>x.api==='app_state.upsert_record'&&x.ok===true).length,1);assert(output?.appStateCalls.some(x=>x.dispatchBlocked===true));
 });
 test('one membership cannot duplicate rows and a missing-record read cannot prove an empty collection',()=>{
  const response={source:'app-state',operation:'read',scope:'authenticated-current-owner-app',persisted:true,record:{recordId:'one',revision:1,values:{member_name:'Member'}}};const calls=[{source:'app-state',api:'app_state.read_record',request:{recordId:'one'},order:1,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments',response}];

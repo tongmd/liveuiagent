@@ -1,9 +1,11 @@
+import {nativeViewBudget} from './native-view-budget.js';
 import {parsePrimaryMembership,type PrimaryMembership} from './native-primary-projection.js';
 // Existing design metadata describes a projection, not business authorization.
 export type GroundingViewContext = {
   itemLabel: string;
   primaryMembership?:PrimaryMembership;
   collectionLabel?: string;
+  viewResourceBudget?: ReturnType<typeof nativeViewBudget>;
   perItemActions: Array<{ id: string; label: string }>;
 };
 export function groundingViewContext(pkg: any): GroundingViewContext | undefined {
@@ -12,11 +14,14 @@ export function groundingViewContext(pkg: any): GroundingViewContext | undefined
   const primaryMembership=intent?.primaryMembership===undefined?undefined:parsePrimaryMembership(intent.primaryMembership);
   if (!itemLabel && primaryMembership===undefined) return undefined;
   const collectionLabel = typeof intent?.presentation?.collection === 'string' ? intent.presentation.collection.trim() : '';
-  return {itemLabel,...(primaryMembership ? {primaryMembership} : {}),...(collectionLabel ? {collectionLabel} : {}),perItemActions:Object.entries(pkg?.actions?.actions ?? {})
+  const surface=pkg?.ui?.meta?.a2ui;
+  const viewResourceBudget=surface?nativeViewBudget(surface,pkg.ui.meta.hostCommand):undefined;
+  return {itemLabel,...(viewResourceBudget?{viewResourceBudget}:{}),...(primaryMembership ? {primaryMembership} : {}),...(collectionLabel ? {collectionLabel} : {}),perItemActions:Object.entries(pkg?.actions?.actions ?? {})
     .filter(([, action]: [string, any]) => action?.perItem === true)
     .map(([id, action]: [string, any]) => ({id,label:String(action.label || id)}))};
 }
 export const groundingViewPolicy = [
+  'projectionDisplayMode=complete-grounded is only a host full-display resource policy. It does not prove current world state, membership, business completion, permissions or a benchmark score.',
   'priorProjection, when supplied, is the complete last verified UI projection, potentially stale. It is not fresh world truth, new intent or write authorization. Use its full entities/stats to identify tracked units and verify current coverage from real reads; never silently replace it with only the current mutation result.',
   'Primary-list projection is separate from complete business evidence. viewContext is fallible UI design metadata, never new user intent, a required business field, or authorization to call an extra service. Do not add deliverables or writes to satisfy it; explicit current intent and actual API requirements take precedence.',
   'When supplied, itemLabel describes the tracked primary row unit, collectionLabel is only its display label, and perItemActions describe its row affordances. It is not the internal workflow-history collection. Return actual primary units compatible with those affordances, not every object encountered or created. Containers, account summaries and discovery context remain in complete API evidence and, when relevant, verified summary/stats; do not turn them into actionable item rows.',

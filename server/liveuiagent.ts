@@ -1,4 +1,5 @@
 import {opaqueIdentity} from './opaque-identity.js';
+import {nativeViewBudget} from './native-view-budget.js';
 import {authorizedGroundingCapabilities,nativeActionContext,nativeActionContextPolicy} from './native-action-context.js';
 import {NativeCommandReceipts,type CommandReceiptBinding} from './native-command-receipts.js';
 import {HOST_COMMAND_ACTION,HOST_COMMAND_PREPARE,parseHostCommandPrepareEvent,parseHostCommandEvent,businessSurfaceWithoutHostCommand,appendHostCommand,assertHostCommandDescriptor,hostCommandDescriptor} from './native-host-command.js';
@@ -2947,9 +2948,9 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
   if (!records.length) throw new Error(`A2UI state for ${plan.signature} missing records in ${collection}`);
   const latest = records[0] as Record<string, unknown>;
   // 真实创建/获取的对象(跨轮累计),渲染成表面上的实体列表。
-  const entities = (Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities as Array<Record<string, unknown>> : [])
-    .filter((item) => item && typeof item === 'object' && String(item.name || '').trim())
-    .slice(0, 30)
+  const availableEntities = (Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities as Array<Record<string, unknown>> : [])
+    .filter((item) => item && typeof item === 'object' && String(item.name || '').trim());
+  const entities = (stored.runtimeState.projectionDisplayMode === 'complete-grounded' ? availableEntities : availableEntities.slice(0,30))
     .map((item) => {
       const bareName = String(item.name);
       // grounding 写的 group 有两种含义:真正的分类(播放列表 / Produce),或者这条记录
@@ -5213,6 +5214,7 @@ export function applyVerifiedInitialContent(stored: StoredApp, initial: {
   evaluation: { pass: boolean; deficiencies?: string[] } | null;
 } | null) {
   if (initial?.evaluation?.pass !== true) return false;
+  stored.runtimeState.projectionDisplayMode = 'complete-grounded';
   stored.runtimeState.entities = initial.entities;
   stored.runtimeState.entityStats = initial.stats;
   if (initial.summary && stored.runtimeState.intentResult && typeof stored.runtimeState.intentResult === 'object') {
@@ -5377,6 +5379,7 @@ function enrichAppRecord(stored: StoredApp): StoredApp {
           : message),
       };
     }
+    if(stored.runtimeState.projectionDisplayMode === 'complete-grounded')nativeViewBudget(meta.a2ui,meta.hostCommand);
     return stored;
   }
   const plan = deriveA2uiPlan(stored);
@@ -5387,6 +5390,7 @@ function enrichAppRecord(stored: StoredApp): StoredApp {
     if(typeof stored.runtimeState.hostCommandRequestId!=='string')throw Error('host command app missing persisted request nonce');
     a2ui=appendHostCommand(a2ui,actions,stored.runtimeState.hostCommandRequestId,stored.runtimeState.hostCommandPrepareAllowed!==true,typeof stored.runtimeState.hostCommandRenewedFrom==='string'?stored.runtimeState.hostCommandRenewedFrom:null).surface as A2UISurfaceSpec;
   }
+  if(stored.runtimeState.projectionDisplayMode === 'complete-grounded')nativeViewBudget(a2ui,(stored.appPackage.ui.meta as any).hostCommand);
   const uiMeta = requiredObject<Record<string, unknown>>(stored.appPackage.ui.meta, `app ${stored.appId} missing ui meta while enriching`);
   stored.appPackage.ui = {
     ...stored.appPackage.ui,
@@ -5396,6 +5400,28 @@ function enrichAppRecord(stored: StoredApp): StoredApp {
     },
   };
   return stored;
+}
+
+function projectionCapacityCheck(stored:StoredApp,turn?:{actionId:string;payload:Record<string,any>;isCommand:boolean}) {
+  return (proposal:{entities:unknown[];stats:Array<{label:string;value:string}>;summary:string;appStateCalls:Array<Record<string,any>>}):string[]=>{
+    try {
+      const scratch=structuredClone(stored);
+      const records=new Map((Array.isArray(scratch.runtimeState.appRecords)?scratch.runtimeState.appRecords:[]).map((record:any)=>[record.recordId,record]));
+      for(const call of proposal.appStateCalls)if(call.source==='app-state'&&call.ok===true&&call.executionState==='succeeded'&&call.requestSource==='host-bound-app-state-dispatched-arguments'&&call.response?.scope==='authenticated-current-owner-app'&&call.response?.persisted===true&&['app_state.read_record','app_state.list_records'].includes(call.api)){
+        for(const record of [...(call.response.record?[call.response.record]:[]),...(Array.isArray(call.response.records)?call.response.records:[])])records.set(record.recordId,record);
+      }
+      scratch.runtimeState.appRecords=[...records.values()];
+      if(turn){
+        const payload={...turn.payload,entities:proposal.entities,entityStats:proposal.stats,result:proposal.summary};
+        if(turn.isCommand)stageHostCommandResult(scratch,payload,true);else updateStoredAgentApp(scratch,turn.actionId,payload,true);
+      }else {scratch.runtimeState.entities=proposal.entities;scratch.runtimeState.entityStats=proposal.stats;}
+      // Exact real display mapping/compiler on a private in-memory clone. This
+      // cannot authorize business work, persist history or repeat a write.
+      scratch.runtimeState.projectionDisplayMode = 'complete-grounded';
+      enrichAppRecord(scratch);
+      return [];
+    }catch(error){return[String(error instanceof Error?error.message:error).startsWith('projection_capacity:')?String((error as Error).message):'projection_capacity: cannot verify full Native view: '+String((error as Error).message)];}
+  };
 }
 
 function findAccent(ui: Record<string, any>) {
@@ -5617,7 +5643,9 @@ function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Reco
   const priorEntities = Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities as Array<Record<string, unknown>> : [];
   const entityKey = (item: Record<string, unknown>) => `${String(item.name).trim()}|${String(item.id ?? '').trim()}`;
   const dedupedTurnEntities = turnEntities.filter((item, index) => turnEntities.findIndex((candidate) => entityKey(candidate) === entityKey(item)) === index);
-  const mergedEntities = (authoritativeEntities || dedupedTurnEntities.length ? dedupedTurnEntities : priorEntities).slice(0, 30);
+  const completeEntities = authoritativeEntities ? turnEntities : (dedupedTurnEntities.length ? dedupedTurnEntities : priorEntities);
+  const mergedEntities = authoritativeEntities ? completeEntities : completeEntities.slice(0, 30);
+  if(authoritativeEntities)stored.runtimeState.projectionDisplayMode='complete-grounded';else delete stored.runtimeState.projectionDisplayMode;
   const latestSummary = businessPayloadSummary(interaction, businessValues, 6);
   const memoryText = rows.slice(0, 4)
     .flatMap((row) => [
@@ -5882,6 +5910,7 @@ export async function runAppWorldGrounding(input: {
   viewContext?: GroundingViewContext;
   // Last verified UI projection only: not fresh world evidence or business authorization.
   priorProjection?: { entities: unknown[]; stats: unknown[] };
+  projectionCapacity?: (proposal:{entities:unknown[];stats:Array<{label:string;value:string}>;summary:string;appStateCalls:Array<Record<string,any>>})=>string[];
   actionLabel?: string;
   actionDescription?: string;
   targetEntity?: { name: string; id: string } | null;
@@ -6332,6 +6361,7 @@ export async function runAppWorldGrounding(input: {
     const readOnlyRepairBefore=projectionReadOnlyRepair;
     const coverageGaps = projectionCoverageGaps(goal.projectionPolicy, input.priorProjection?.entities ?? [], entities);
     const membershipGaps=primaryProjectionDeficiencies(input.viewContext?.primaryMembership,proposedEntities,appStateCalls,input.appState?.recordFields ?? [],stats);
+    membershipGaps.push(...(input.projectionCapacity?.({entities,stats,summary,appStateCalls}) ?? []));
     coverageGaps.push(...membershipGaps);
     if(membershipGaps.some(gap=>gap.startsWith('projection_capacity:')))projectionReadOnlyRepair=true;
     if (coverageGaps.length) {
@@ -7047,6 +7077,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
               appName: String(appPackage.manifest.name),
               appPurpose: plan.sourcePrompt,
               viewContext: groundingViewContext(appPackage),
+              projectionCapacity:projectionCapacityCheck(stored),
               actionLabel: "First open",
               actionDescription: 'Read-only initial load: read the actual primary membership store according to primaryMembership. For app_local, list the authenticated owner/app records first; an empty local collection remains empty even when global discovery returns objects. For service_collection read actual collection membership; discovery is only explicitly requested browsing, never saved membership. Verify all collection stats against those members. Make NO write calls.',
               llm: input.llm,
@@ -7279,6 +7310,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             appName: String(stored.appPackage.manifest.name || input.appId),
             appPurpose: String(stored.appPackage.manifest.intent?.sourcePrompt || ''),
             viewContext: groundingViewContext(stored.appPackage),
+            projectionCapacity:projectionCapacityCheck(stored,{actionId,payload:rawPayload,isCommand}),
             priorProjection: { entities: Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : [], stats: Array.isArray(stored.runtimeState.entityStats) ? stored.runtimeState.entityStats : [] },
             actionLabel: String(action.label || ''),
             actionDescription: String(action.description || ''),
@@ -7350,6 +7382,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       });
       nativeWorkflow.record('commit', 'agents.data', 'running');
       const agentResult = trace(traceLog, 'State Agent', 'Commit orchestration turn and mutate visible state', { actionId, payload, appWorldDbChanges: appWorldTraceSummary(toolResults) }, isCommand ? stageHostCommandResult(stored,payload,authoritativeEntities) : updateStoredAgentApp(stored, actionId, payload, authoritativeEntities));
+      if(authoritativeEntities)stored.runtimeState.projectionDisplayMode='complete-grounded';
       hydrateAppState(stored,appState);
       await nativeWorkflow.review({ originalRequest: input.eventPayload, hostActionContext:hostActionContract, result: rawPayload.result,
         entities: rawPayload.entities, stats: rawPayload.entityStats, toolResults,
