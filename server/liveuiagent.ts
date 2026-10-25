@@ -236,6 +236,8 @@ export type LlmRuntimeConfig = {
   chatCompletion?: (request: Record<string, unknown>, options?: { timeoutMs: number; roleLabel?: string }) => Promise<unknown>;
   /** Server-owned Native inference capacity; never accepted from browser JSON. */
   nativeInferenceConcurrency?: number;
+  /** Explicit isolated experiment only; never changes GUI or direct HTTP/provider defaults. */
+  experimentalNativeBusinessThinking?: 'enabled-low';
   personalContext?: string;
   /** Host-only generated planning data; never user preference memory or browser config. */
   workerPlanningContext?: WorkerPlanningContext;
@@ -1892,7 +1894,7 @@ export async function nativeModelTransport(llm: LlmRuntimeConfig, url: string, i
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
-      llm.chatCompletion(applyNativeStructuredJsonPolicy(JSON.parse(String(init.body))), { timeoutMs: budget, roleLabel }),
+      llm.chatCompletion(applyNativeStructuredJsonPolicy(JSON.parse(String(init.body)), {experimentalBusinessThinking:llm.experimentalNativeBusinessThinking,roleLabel}), { timeoutMs: budget, roleLabel }),
       new Promise<never>((_, reject) => { timer = setTimeout(() => reject(totalBudgetLimited ? actionDeadlineError() : new Error('native inference adapter deadline exceeded')), budget); }),
     ]);
     remainingActionMs();

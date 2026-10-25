@@ -51,3 +51,17 @@ test('bounded policy does not accept truncated or incomplete output and cannot a
   finally{await adapter.dispose();await upstream.close();await fs.rm(root,{recursive:true,force:true});}
  }
 });
+
+test('thinking-low requires explicit isolated business experiment; GUI/global/model/caps remain unchanged',async()=>{
+ const original=request({thinking:{type:'enabled'},reasoning_effort:'high',max_tokens:8192});
+ assert.equal(applyNativeStructuredJsonPolicy(original).reasoning_effort,'none');
+ const llm:any={model:'DeepSeek-V4.1-Flash',experimentalNativeBusinessThinking:'enabled-low',chatCompletion:async(r:any)=>{received=r;return {choices:[{message:{content:'{}'}}]};}};let received:any;
+ const before=structuredClone(original);
+ await nativeModelTransport(llm,'http://unused.invalid',{body:JSON.stringify(original)},5000,'Grounding Evaluator Agent');
+ assert.equal(received.reasoning_effort,'low');assert.deepEqual(received.thinking,{type:'enabled'});assert.equal(received.max_tokens,8192);assert.equal(received.model,original.model);assert.deepEqual(original,before);
+ for(const role of ['Native GUI Step Planner','UI Designer Agent',undefined]){await nativeModelTransport(llm,'http://unused.invalid',{body:JSON.stringify(original)},5000,role);assert.equal(received.reasoning_effort,'none');assert.deepEqual(received.thinking,{type:'disabled'});}
+ const nonDeepSeek={...original,model:'other-model'};assert.deepEqual(applyNativeStructuredJsonPolicy(nonDeepSeek,{experimentalBusinessThinking:'enabled-low',roleLabel:'Grounding Evaluator Agent'}),nonDeepSeek);
+ assert.equal(applyNativeStructuredJsonPolicy({...original,max_tokens:1024},{experimentalBusinessThinking:'enabled-low',roleLabel:'Grounding Evaluator Agent'}).max_tokens,1024);
+ assert.equal(applyNativeStructuredJsonPolicy({...original,max_tokens:32768},{experimentalBusinessThinking:'enabled-low',roleLabel:'Grounding Evaluator Agent'}).max_tokens,8192);
+ assert.equal(nativeStructuredJsonPolicyMetadata(applyNativeStructuredJsonPolicy(original,{experimentalBusinessThinking:'enabled-low',roleLabel:'Grounding Evaluator Agent'}))?.reasoningEffort,'low');
+});
