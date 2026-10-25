@@ -138,6 +138,11 @@ export function createDshNativeInference(config:Config) {
         return {id:'dsh-native-'+randomUUID(),object:'chat.completion',model:request.model,
           choices:[{index:0,message:{role:'assistant',content:JSON.stringify(parsed)},finish_reason:'stop'}],
           execution:{harness:'dsh',delivery:'native',toolsExecutedBy:'host'}};
+      } catch(error) {
+        const details=relay?.diagnostics();
+        if(details?.code&&!controller.signal.aborted)throw Object.assign(new Error(String(details.message)),{code:details.code,nativeInference:details});
+        if(error&&typeof error==='object'&&details)Object.assign(error,{nativeInference:details});
+        throw error;
       } finally {
         clearTimeout(timer);running.delete(controller);
         try {await runner?.dispose();} finally {try {await relay?.close();} finally {try {if(dir)await fs.rm(dir,{recursive:true,force:true});} finally {if(acquired)release();completions.delete(completion);markComplete();}}}

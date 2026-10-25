@@ -7,7 +7,7 @@ const inference={model:'original-selected-model',temperature:0.15,response_forma
 const dshBody={model:inference.model,messages:[{role:'system',content:'DSH system'},{role:'user',content:'full-original-handoff'}],stream:true,tools:[],temperature:1,max_tokens:32768};
 test('relay preserves original role parameters on the actual wire while keeping DSH messages, model and stream',async()=>{
  let wire:any,auth:string|undefined,calls=0;
- const upstream=await fixture(async(req,res)=>{calls++;auth=req.headers.authorization;let body='';for await(const c of req)body+=c;wire=JSON.parse(body);res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: [DONE]\n\n');});
+ const upstream=await fixture(async(req,res)=>{calls++;auth=req.headers.authorization;let body='';for await(const c of req)body+=c;wire=JSON.parse(body);res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({choices:[{delta:{},finish_reason:'stop'}]})+'\n\ndata: [DONE]\n\n');});
  const relay=await createNativeDshRelay({provider:{apiBase:upstream.base,apiKey:'actual-provider-secret'},request:inference,signal:new AbortController().signal});
  try{assert.notEqual(relay.provider.apiKey,'actual-provider-secret');assert.equal(relay.provider.apiBase.includes('127.0.0.1'),true);
  const response=await fetch(relay.provider.apiBase+'/chat/completions',{method:'POST',headers:{authorization:'Bearer '+relay.provider.apiKey,'content-type':'application/json'},body:JSON.stringify(dshBody)});assert.equal(response.status,200);await response.text();
@@ -46,5 +46,12 @@ test('an explicit host token cap removes the competing DSH adapter token default
 test('non-streaming JSON token length termination is rejected before a successful response is sent',async()=>{
  const upstream=await fixture((_req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{message:{content:'{"ok":true}'},finish_reason:'length'}]}));});
  const relay=await createNativeDshRelay({provider:{apiBase:upstream.base,apiKey:'secret'},request:{model:'same',messages:[],max_tokens:1024},signal:new AbortController().signal});
- try{const response=await fetch(relay.provider.apiBase+'/chat/completions',{method:'POST',headers:{authorization:'Bearer '+relay.provider.apiKey},body:JSON.stringify({model:'same',messages:[],stream:false})});assert.equal(response.status,502);assert.equal((await response.json()).error.code,'native_relay_upstream_error');}finally{await relay.close();await upstream.close();}
+ try{const response=await fetch(relay.provider.apiBase+'/chat/completions',{method:'POST',headers:{authorization:'Bearer '+relay.provider.apiKey},body:JSON.stringify({model:'same',messages:[],stream:false})});assert.equal(response.status,502);assert.equal((await response.json()).error.code,'native_relay_upstream_error');assert.equal(relay.diagnostics().code,'dsh_native_output_truncated');assert.equal(relay.diagnostics().finish_reason,'length');}finally{await relay.close();await upstream.close();}
+});
+
+test('truncation diagnostics preserve token metadata without retaining private reasoning text',async()=>{
+ const privateReasoning='private model reasoning must not be retained';
+ const upstream=await fixture((_req,res)=>{res.writeHead(200,{'content-type':'text/event-stream'});res.write('data: '+JSON.stringify({choices:[{delta:{reasoning_content:privateReasoning},finish_reason:null}]})+'\n\n');setTimeout(()=>res.end('data: '+JSON.stringify({choices:[{delta:{},finish_reason:'length'}],usage:{prompt_tokens:4000,completion_tokens:1024,total_tokens:5024,completion_tokens_details:{reasoning_tokens:1024}}})+'\n\n'),10);});
+ const relay=await createNativeDshRelay({provider:{apiBase:upstream.base,apiKey:'secret'},request:{model:'same',messages:[],max_tokens:1024},signal:new AbortController().signal});
+ try{await assert.rejects(async()=>{const response=await fetch(relay.provider.apiBase+'/chat/completions',{method:'POST',headers:{authorization:'Bearer '+relay.provider.apiKey},body:JSON.stringify({model:'same',messages:[],stream:true})});await response.text();});const details=relay.diagnostics();assert.equal(details.code,'dsh_native_output_truncated');assert.equal(details.finish_reason,'length');assert.equal(details.reasoning_tokens,1024);assert.equal(details.reasoningCharacters,privateReasoning.length);assert.ok(!JSON.stringify(details).includes(privateReasoning));}finally{await relay.close();await upstream.close();}
 });

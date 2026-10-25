@@ -142,6 +142,7 @@ function errorPayload(err: any) {
     ...(err?.trace ? { trace: err.trace } : {}),
     ...(err?.artifactsDir ? { artifactsDir:err.artifactsDir } : {}),
     ...(err?.workflowExecution ? { workflowExecution:err.workflowExecution } : {}),
+    ...(err?.nativeInference ? { nativeInference:err.nativeInference } : {}),
   };
 }
 

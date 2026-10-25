@@ -12,6 +12,12 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
  const sockets=new Set<import('node:net').Socket>();
  const requests=new Set<AbortController>();
  let closed=false;let providerRequests=0;
+ const diagnostics:Record<string,unknown>={responseBytes:0};
+ const recordFailure=(code:string,message:string)=>{if(!diagnostics.code){diagnostics.code=code;diagnostics.message=message;}};
+ const inspect=(value:any)=>{
+  if(value?.usage){for(const name of ['prompt_tokens','completion_tokens','total_tokens'])if(Number.isFinite(value.usage[name]))diagnostics[name]=value.usage[name];const reasoning=value.usage.completion_tokens_details?.reasoning_tokens;if(Number.isFinite(reasoning))diagnostics.reasoning_tokens=reasoning;}
+  for(const choice of value?.choices||[]){if(choice.finish_reason)diagnostics.finish_reason=choice.finish_reason;if(typeof choice.delta?.content==='string')diagnostics.contentCharacters=Number(diagnostics.contentCharacters||0)+choice.delta.content.length;if(typeof choice.delta?.reasoning_content==='string')diagnostics.reasoningCharacters=Number(diagnostics.reasoningCharacters||0)+choice.delta.reasoning_content.length;}
+ };
  const protectedFields=new Set(['model','messages','tools','tool_choice','parallel_tool_calls','stream','stream_options']);
  const parameters=Object.fromEntries(Object.entries(input.request).filter(([name])=>!protectedFields.has(name)));
  function fail(res:http.ServerResponse,status:number,code:string){if(!res.headersSent){res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:code,code}}));}else res.destroy();}
@@ -46,22 +52,24 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
    if(providerRequests!==0)return fail(res,409,'native_relay_retry_forbidden');
    providerRequests++;
    const upstreamResponse=await (input.fetchImpl??fetch)(upstream,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+input.provider.apiKey},body:serialized,signal:controller.signal,redirect:'error'});
+   diagnostics.upstreamStatus=upstreamResponse.status;if(!upstreamResponse.ok)recordFailure('dsh_native_provider_http',`Native model provider returned HTTP ${upstreamResponse.status}`);
    let responseBytes=0;const decoder=new TextDecoder();let sseBuffer='';
    const isSse=Boolean(upstreamResponse.headers.get('content-type')?.includes('text/event-stream'));
-   const rejectLength=(value:any)=>{if(value?.choices?.some((choice:any)=>choice.finish_reason==='length'))throw new Error('Native model output reached its token limit');};
+   const rejectLength=(value:any)=>{inspect(value);if(value?.choices?.some((choice:any)=>choice.finish_reason==='length')){recordFailure('dsh_native_output_truncated','Native model output reached its token limit');throw new Error('Native model output reached its token limit');}};
    const responseHeaders={'content-type':upstreamResponse.headers.get('content-type')||'application/json','cache-control':'no-store'};
    if(!isSse){
     const buffered:Buffer[]=[];
-    if(upstreamResponse.body)for await(const chunk of upstreamResponse.body as any){controller.signal.throwIfAborted();responseBytes+=chunk.length;if(responseBytes>16*1024*1024)throw new Error('Native relay response too large');buffered.push(Buffer.from(chunk));}
+    if(upstreamResponse.body)for await(const chunk of upstreamResponse.body as any){controller.signal.throwIfAborted();responseBytes+=chunk.length;diagnostics.responseBytes=responseBytes;if(responseBytes>16*1024*1024)throw new Error('Native relay response too large');buffered.push(Buffer.from(chunk));}
     const bytes=Buffer.concat(buffered);let parsed;try{parsed=JSON.parse(bytes.toString('utf8'));}catch{if(upstreamResponse.ok)throw new Error('Native provider returned invalid JSON');}
     if(parsed)rejectLength(parsed);res.writeHead(upstreamResponse.status,responseHeaders);res.end(bytes);return;
    }
    res.writeHead(upstreamResponse.status,responseHeaders);
-   if(upstreamResponse.body){for await(const chunk of upstreamResponse.body as any){if(controller.signal.aborted)throw controller.signal.reason;responseBytes+=chunk.length;if(responseBytes>16*1024*1024)throw new Error('Native relay response too large');
+   if(upstreamResponse.body){for await(const chunk of upstreamResponse.body as any){if(controller.signal.aborted)throw controller.signal.reason;responseBytes+=chunk.length;diagnostics.responseBytes=responseBytes;if(responseBytes>16*1024*1024)throw new Error('Native relay response too large');
     if(isSse){sseBuffer=(sseBuffer+decoder.decode(chunk,{stream:true})).replace(/\r\n/g,'\n');let end;while((end=sseBuffer.indexOf('\n\n'))>=0){const event=sseBuffer.slice(0,end);sseBuffer=sseBuffer.slice(end+2);const data=event.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');if(data&&data!=='[DONE]'){let parsed;try{parsed=JSON.parse(data);}catch{}if(parsed)rejectLength(parsed);}}if(sseBuffer.length>limit)throw new Error('Native relay event too large');}
     if(!res.write(chunk))await new Promise<void>((resolve,reject)=>{res.once('drain',resolve);res.once('close',()=>reject(new Error('Relay client closed')));});}}
+   if(isSse&&!diagnostics.finish_reason){recordFailure('dsh_native_stream_incomplete','Native model stream ended without a finish reason');throw new Error('Native model stream ended without a finish reason');}
    res.end();
-  }catch{fail(res,input.signal.aborted?504:502,input.signal.aborted?'native_relay_deadline':'native_relay_upstream_error');}
+  }catch{if(!input.signal.aborted)recordFailure('dsh_native_upstream_transport','Native model stream ended unexpectedly');fail(res,input.signal.aborted?504:502,input.signal.aborted?'native_relay_deadline':'native_relay_upstream_error');}
   finally{input.signal.removeEventListener('abort',abort);res.removeListener('close',disconnected);requests.delete(controller);}
  });
  server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
@@ -79,5 +87,5 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
  const abortAll=()=>{void close();};
  input.signal.addEventListener('abort',abortAll,{once:true});
  if(input.signal.aborted)await close();
- return {provider:{apiBase:`http://127.0.0.1:${address.port}/v1`,apiKey:key},close};
+ return {diagnostics:():Record<string,unknown>=>({...diagnostics,providerRequests}),provider:{apiBase:`http://127.0.0.1:${address.port}/v1`,apiKey:key},close};
 }
