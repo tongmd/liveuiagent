@@ -44,10 +44,10 @@ async function runtimeFixture(t:any){
 test('actual runtime commits verified empty rows through reopen, but failed or omitted rows preserve prior data',async t=>{
  const f=await runtimeFixture(t);
  const malformed:any={malformed_blank:[{name:''}],malformed_null:[null],malformed_primitive:['not an entity'],malformed_array:[[]],malformed_nonstring:[{name:42}],malformed_mixed:[{name:'Valid row'},{name:''}]};
- for(const mode of ['verified','failed','missing','review_failed',...Object.keys(malformed)]){
+ for(const mode of ['verified','retain','failed','missing','review_failed',...Object.keys(malformed)]){
   f.reset();let decision=0;const captures:any[]=[];
   const chatCompletion=async(request:any)=>{const sys=request.messages[0].content,input=JSON.parse(request.messages[1].content.split("\n")[0]);captures.push({sys,input});
-   if(sys.includes('You analyze a GUI'))return reply({objective:'Read actual current parcels',deliverables:['Current parcel list']});
+   if(sys.includes('You analyze a GUI'))return reply({objective:'Read actual current parcels',...(mode==='retain'?{projectionPolicy:'retain_existing'}:{}),deliverables:['Current parcel list']});
    if(sys.includes('You are an INDEPENDENT evaluator'))return reply({pass:mode!=='failed',deficiencies:mode==='failed'?['Full current list could not be verified']:[]});
    if(sys.includes('You are the backend workflow'))return reply(decision++===0?{calls:[{api:'read_items',args:{}}]}:{done:true,summary:'No current parcels',...(mode==='missing'?{}:{entities:malformed[mode]??[]}),stats:[]});
    return reply(sys.includes('independently verify')?{pass:mode!=='review_failed',reason:mode==='review_failed'?'Independent final review rejected this result':'Observed current empty parcel list'}:{proceed:true,instructions:'Read the current parcels only',constraints:[],expectedOutcome:'Verified current list'});
@@ -57,7 +57,7 @@ test('actual runtime commits verified empty rows through reopen, but failed or o
   const stored=JSON.parse(f.stored().runtime_state_json);assert.deepEqual(stored.entities,mode==='verified'?[]:[{id:'old-1',name:'Old parcel',detail:'Previously observed'}]);
   assert.deepEqual(stored.entityStats,mode==='verified'?[]:[{label:'Parcels',value:'1'}]);
   const reopened=await f.runtime.queryState({user:'fixture-owner'});assert.deepEqual(reopened.apps[0].runtimeState.entities,stored.entities);assert.equal(reopened.apps[0].appPackage.ui.meta.a2ui.initialData.entities.length,mode==='verified'?0:1);
-  const requirements=captures.find(x=>x.sys.includes('You analyze a GUI'));assert.deepEqual(requirements.input.viewContext,descriptor);assert.equal(requirements.input.goal,undefined,'view metadata must not inject new goal obligations');
+  const requirements=captures.find(x=>x.sys.includes('You analyze a GUI'));assert.deepEqual(requirements.input.priorProjection,{entities:[{id:'old-1',name:'Old parcel',detail:'Previously observed'}],stats:[{label:'Parcels',value:'1'}]});assert.deepEqual(requirements.input.viewContext,descriptor);assert.equal(requirements.input.goal,undefined,'view metadata must not inject new goal obligations');
  }
 });
 

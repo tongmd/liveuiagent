@@ -14,8 +14,29 @@ export function groundingViewContext(pkg: any): GroundingViewContext | undefined
     .map(([id, action]: [string, any]) => ({id,label:String(action.label || id)}))};
 }
 export const groundingViewPolicy = [
+  'priorProjection, when supplied, is the complete last verified UI projection, potentially stale. It is not fresh world truth, new intent or write authorization. Use its full entities/stats to identify tracked units and verify current coverage from real reads; never silently replace it with only the current mutation result.',
   'Primary-list projection is separate from complete business evidence. viewContext is fallible UI design metadata, never new user intent, a required business field, or authorization to call an extra service. Do not add deliverables or writes to satisfy it; explicit current intent and actual API requirements take precedence.',
   'When supplied, itemLabel describes the tracked primary row unit, collectionLabel is only its display label, and perItemActions describe its row affordances. It is not the internal workflow-history collection. Return actual primary units compatible with those affordances, not every object encountered or created. Containers, account summaries and discovery context remain in complete API evidence and, when relevant, verified summary/stats; do not turn them into actionable item rows.',
   'Keep every requested business deliverable, successful write, quantity and post-write read-back verifiable in apiCalls, even when the object is not a primary row. A clean list cannot hide an unfinished container or item write. Legitimate supporting-object writes are not forbidden merely because their objects are not rows.',
   'Fetch the full relevant current primary list, retaining untouched and settled units where the app tracks them; a narrow mutation does not authorize changing siblings or dropping them from the view. Never invent missing people/items. An explicitly returned entities:[] means verified no primary units, not a missing result. Omitted entities is not a verified empty list.',
 ].join('\n');
+
+export type ProjectionPolicy = 'retain_existing' | 'replace_or_filter' | 'unspecified';
+export function parseProjectionPolicy(value: unknown): ProjectionPolicy {
+  return value === 'retain_existing' || value === 'replace_or_filter' ? value : 'unspecified';
+}
+// Tokens only detect a missing prior unit; name/group are not business identities.
+export function projectionCoverageGaps(policy: ProjectionPolicy, prior: unknown[], current: unknown[]): string[] {
+  if (policy !== 'retain_existing') return [];
+  const row = (value: any) => value && typeof value === 'object' && !Array.isArray(value) && typeof value.name === 'string' && value.name.trim() ? value : null;
+  return prior.flatMap(value => {
+    const old = row(value); if (!old) return [];
+    const retained = current.some(value => {
+      const next = row(value); if (!next) return false;
+      return typeof old.id === 'string' && old.id.trim()
+        ? next.id === old.id
+        : next.name === old.name && String(next.group ?? '') === String(old.group ?? '');
+    });
+    return retained ? [] : [`projection_coverage: retain_existing omitted prior unit ${JSON.stringify({name: old.name, ...(old.id ? {id: old.id} : {}), ...(old.group ? {group: old.group} : {})})}; read-only repair must verify the full tracked list, preserve confirmed write receipts, and never repeat writes`];
+  });
+}

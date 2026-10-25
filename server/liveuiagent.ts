@@ -1,6 +1,6 @@
 import { independentInferencePair } from './inference-pair.js';
 import { nativeRowSlotContext } from './native-row-context.js';
-import { groundingViewContext, groundingViewPolicy, type GroundingViewContext } from './grounding-view.js';
+import { groundingViewContext, groundingViewPolicy, parseProjectionPolicy, projectionCoverageGaps, type GroundingViewContext } from './grounding-view.js';
 import { appWorldCatalogLine } from './appworld-schema.js';
 import { actualGroundingEvidence, attemptedGroundingEvidence, groundingEvidenceHistory } from './grounding-evidence.js';
 import { AppWorldRequestNotStartedError } from './appworld-request-error.js';
@@ -5791,6 +5791,8 @@ export async function runAppWorldGrounding(input: {
   appName: string;
   appPurpose?: string;
   viewContext?: GroundingViewContext;
+  // Last verified UI projection only: not fresh world evidence or business authorization.
+  priorProjection?: { entities: unknown[]; stats: unknown[] };
   actionLabel?: string;
   actionDescription?: string;
   targetEntity?: { name: string; id: string } | null;
@@ -5858,14 +5860,16 @@ export async function runAppWorldGrounding(input: {
       ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
       `Wired services this turn can write to: ${wiredServices}.`,
       'Turn the submission into an executable goal contract. Respond ONLY with JSON:',
-      '{"objective": "<one sentence: what must be true afterwards>", "targetCount": <explicit quantity the user named, or null>, "deliverables": ["<concrete object that must exist and be visible afterwards — NAME the wired service and object type that holds it>", ...], "expectedNumbers": [{"label": "<derived quantity>", "value": "<the number, with its arithmetic>"}]}',
+      '{"objective": "<one sentence: what must be true afterwards>", "targetCount": <explicit quantity the user named, or null>, "deliverables": ["<concrete object that must exist and be visible afterwards — NAME the wired service and object type that holds it>", ...], "projectionPolicy": "retain_existing|replace_or_filter|unspecified", "expectedNumbers": [{"label": "<derived quantity>", "value": "<the number, with its arithmetic>"}]}',
       'Bind every deliverable to the service whose object model fits its semantics: anything the user will check off, complete, or track progress on = individual todoist tasks (a note that merely lists the items is NOT that deliverable); playable music = spotify; money owed = the expense/payment service. Classify money intent from the full current submission: a NEW bill, shared cost, debt, or request for someone to pay creates an expense or payment-request object supported by the service; it does NOT assert that money has already changed hands. Record a PAYMENT only when the user explicitly reports an actual repayment or instructs an actual transfer. Future reimbursement language such as asking someone to pay back does not establish a completed repayment. Name an API family only when its documented semantics match that intent. Every money turn additionally delivers the visible PER-PERSON balance list (one entry per member INCLUDING settled ones, read from the balance API after the write). When a container (project/playlist/group) is a deliverable, its content items are SEPARATE deliverables living INSIDE that container. Container nesting: when the user names both an umbrella (a project/board name) and subgroups (per-meeting, per-category), the umbrella is ONE project and each subgroup is a SECTION inside it — never a sibling project per subgroup.',
+      'projectionPolicy describes UI coverage only, never business authorization. Choose retain_existing for ordinary additions or marking/updating a tracked unit: untouched primary units must remain visible. Choose replace_or_filter only when the current user explicitly requests replacing, clearing, deleting from, or filtering the visible collection; otherwise unspecified if coverage intent cannot be determined. Do not infer new business obligations from UI metadata.',
       'expectedNumbers: compute every number the request implies but does not state — a bill split share = total ÷ ALL participants INCLUDING the payer (e.g. "186.45 / 3 = 62.15 per person"). Label each derived number with its scope (this event share, repayment amount, or final cumulative balance) and show its arithmetic in the value. A new event share is an INCREMENT, not the final cumulative balance; derive a final balance only from a fresh existing balance plus the signed change. Never assume the existing balance is zero. Use [] when nothing is derived.',
       'When a targetEntity is given, the contract is about exactly that one object: the objective and deliverables must reference it by its name/id, never a broader batch.',
     ].join('\n'),
-    user: JSON.stringify({ userRequest, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}) }),
+    user: JSON.stringify({ userRequest, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}) }),
   }) as Record<string, any>;
   const goal = {
+    projectionPolicy: parseProjectionPolicy(goalRaw?.projectionPolicy),
     objective: compactText(String(goalRaw?.objective || userRequest.join('；')), 200),
     targetCount: Number.isFinite(Number(goalRaw?.targetCount)) && Number(goalRaw?.targetCount) > 0 ? Number(goalRaw.targetCount) : null,
     deliverables: (Array.isArray(goalRaw?.deliverables) ? goalRaw.deliverables : []).map((item: unknown) => compactText(String(item), 120)).filter(Boolean).slice(0, 6),
@@ -5883,6 +5887,7 @@ export async function runAppWorldGrounding(input: {
   let stats: Array<{ label: string; value: string }> = [];
   let evaluation: { pass: boolean; deficiencies: string[] } | null = null;
   let feedback: string[] = [];
+  let projectionReadOnlyRepair = false;
   // ② propose(真实执行)→ ③ 独立 evaluator 评审 → ④ 按缺口驱动的多轮修复:
   // goal 数得出缺几件,轮数跟缺口走(上限 4);一轮零新增成功调用即停(防旋转)。
   let callsAtRoundStart = 0;
@@ -5960,7 +5965,7 @@ export async function runAppWorldGrounding(input: {
         user: JSON.stringify({
           userRequest,
           goal,
-          ...(input.viewContext ? { viewContext: input.viewContext } : {}),
+          ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}),
           ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}),
           previousCalls: groundingEvidenceHistory(historyLog),
           ...(input.recentTurns?.length ? { previousTurns: input.recentTurns } : {}),
@@ -6030,6 +6035,10 @@ export async function runAppWorldGrounding(input: {
           || capabilities.find((tool) => tool.apiName.startsWith(apiName) || apiName.startsWith(tool.apiName));
         return cap && String(cap.method || '').toUpperCase() !== 'GET';
       });
+      if (hasWrite && projectionReadOnlyRepair) {
+        historyLog.push({ok:false,api:'(projection-coverage)',error:'Read-only coverage repair rejects all further writes; reuse confirmed receipts and read the full current primary list.'});
+        continue;
+      }
       if (hasWrite) {
         // 校验器抖动重试一次:空响应若恰好落在错参批次上,错误金额就裸奔执行了。
         // 两次都失败则拒绝该批写操作,绝不回退到未核准的原参数。
@@ -6049,7 +6058,7 @@ export async function runAppWorldGrounding(input: {
                 'DUPLICATE & TURN-SCOPE gate: reject the batch with {"approved": false, "reject": true, "reason": "<why>"} when (a) previousCalls already show a successful create of the same object (same bill/record, matching amounts or title) and the batch re-creates it WITHOUT first deleting the stale copy, or (b) the batch DELETES or re-records an object whose id does NOT trace to a create in previousCalls (i.e. it predates this turn) and the user request does not explicitly ask to remove or correct that record, or (c) the batch COMPLETES/closes/checks-off an item whose name is NOT mentioned in the user request or targetEntity — completing unmentioned siblings corrupts per-item state. Also reject when the API family contradicts explicit intent (for example recording an actual payment for a new bill, debt or future payment request), or when fixing the call would require changing the API family or inventing missing business values. Return approved:false, reject:true with the concrete reason so the executor can re-plan; do not disguise an intent error as an argument correction.',
                 'Otherwise respond ONLY with JSON: {"approved": true} only when the API intent and all args are right, or {"approved": false, "correctedCalls": [{"api": "<same api>", "args": {...fixed args...}}, ...], "reason": "<what you fixed>"}. Use correctedCalls only for evidenced argument corrections within an already-correct API family; keep the SAME apis in the SAME order. For a wrong API family return reject:true instead of correctedCalls.',
               ].join('\n'),
-              user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), previousCalls: groundingEvidenceHistory(historyLog), mailRecipientEvidence: mailEvidence.facts(), proposedCalls: rawCalls }),
+              user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), previousCalls: groundingEvidenceHistory(historyLog), mailRecipientEvidence: mailEvidence.facts(), proposedCalls: rawCalls }),
             }) as Record<string, any>;
           } catch (error) {
             if (attempt >= 2) historyLog.push({ ok: false, api: '(write-verifier)', error: compactText((error as Error).message, 160) });
@@ -6153,7 +6162,7 @@ export async function runAppWorldGrounding(input: {
         'Treat the goal contract as a fallible plan: fail a repayment/transfer write for a new bill, shared debt, or future payment request unless the user explicitly requested that transfer or reported a completed repayment. Do not approve only because execution matched a mistaken goal. A successful read alone never fulfills a requested mutation. Also fail if a write lacks a successful read AFTER the last write verifying the changed target and current state; step/time limits and mustFinish do not waive this evidence requirement. When evidence is incomplete, return pass:false with the missing evidence, not assumed success.',
         'Also fail when any visibleEntities entry names an object or id that does not appear in a successful API response inside apiCalls: entities are a read-back of the world, and a row whose name/id cannot be traced to response evidence is fabricated no matter how plausible it looks (e.g. inventing inbox subjects the API never returned).',
       ].join('\n'),
-      user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities, visibleStats: stats }),
+      user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities, visibleStats: stats }),
     }) as Record<string, any>;
     evaluation = {
       pass: verdictRaw?.pass === true && entitiesProvided && lastWriteAt <= lastReadAt && calls.length + webCallCount > 0,
@@ -6164,6 +6173,13 @@ export async function runAppWorldGrounding(input: {
     if(lastWriteAt > lastReadAt) evaluation.deficiencies.unshift('not_verified: no successful read-back after the last write');
     const mailGaps = mailEvidence.deficiencies();
     if (mailGaps.length) { evaluation.pass = false; evaluation.deficiencies.unshift(...mailGaps); }
+    const coverageGaps = projectionCoverageGaps(goal.projectionPolicy, input.priorProjection?.entities ?? [], entities);
+    if (coverageGaps.length) {
+      // Lock only when coverage is the sole remaining failure, not unfinished business.
+      if (evaluation.pass && evaluation.deficiencies.length === 0) projectionReadOnlyRepair = true;
+      evaluation.pass = false;
+      evaluation.deficiencies.unshift(...coverageGaps);
+    }
     if (evaluation.pass || !evaluation.deficiencies.length) break;
     if (apiAttemptCount >= totalApiAttemptLimit) break;
     if (round > 1 && calls.length + webCallCount === callsAtRoundStart) break; // 上一轮零进展,再来一轮只会重复
@@ -7052,6 +7068,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             appName: String(stored.appPackage.manifest.name || input.appId),
             appPurpose: String(stored.appPackage.manifest.intent?.sourcePrompt || ''),
             viewContext: groundingViewContext(stored.appPackage),
+            priorProjection: { entities: Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : [], stats: Array.isArray(stored.runtimeState.entityStats) ? stored.runtimeState.entityStats : [] },
             actionLabel: String(action.label || ''),
             actionDescription: String(action.description || ''),
             webPermissions: permissions.filter((permission) => Boolean(findWebTool(permission))),
