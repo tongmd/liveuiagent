@@ -5,5 +5,6 @@ export function opaqueIdentity(value:unknown):string {
  if(typeof value!=='string'&&(typeof value!=='number'||!Number.isSafeInteger(value)))throw Error('Opaque identity must be a string or safe integer');
  const result=String(value);
  if(result.length>1000)throw Error('Opaque identity exceeds 1000 characters');
+ if(!result.trim())return '';
  return result;
 }
