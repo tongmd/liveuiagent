@@ -1,3 +1,4 @@
+import {writeGuiPlanningDiagnostics} from './gui-planning-diagnostics.js';
 import { writeGroundingDiagnostics, type GroundingDiagnosticsReceipt } from './grounding-diagnostics.js';
 import { stateDisplayPaths, stateDisplayFields, stateDisplayValues } from './native-state-display.js';
 import {resolveControlPreparation} from './gui-interaction-planner.js';
@@ -975,7 +976,7 @@ export async function planNativeGuiInteractionStep(system: string, input: unknow
     // Completion caps include model reasoning, not only the small final step JSON.
     // Match the existing Native role budget while keeping the planner/action deadlines.
     user: JSON.stringify(input), temperature: 0, maxTokens: 8192});
- try{return resolveControlPreparation(preparation,input);}catch(error){if((error as any)?.code==='invalid_gui_interaction')Object.assign(error as object,{planningContractInvalid:true});throw error;}
+ try{const step=resolveControlPreparation(preparation,input);writeGuiPlanningDiagnostics(input,preparation,step);return step;}catch(error){if((error as any)?.code==='invalid_gui_interaction'){writeGuiPlanningDiagnostics(input,preparation,undefined,error);Object.assign(error as object,{planningContractInvalid:true});}throw error;}
 }
 
 export async function makeBusinessFields(prompt: string, subject: string, tokens: string[], context: {
