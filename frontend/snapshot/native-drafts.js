@@ -57,7 +57,7 @@
   class Draft {
     constructor(app, data, notify, options = {}) {
       this.app = app; this.server = clone(data); this.data = clone(data); this.notify = notify;
-      this.schema = schema(app); this.dirty = new Set(); this.revisions = new Map(); this.pendingClear = {}; this.closed = false; this.queue = Promise.resolve();
+      this.schema = schema(app); this.dirty = new Set(); this.edited = new Set(); this.revisions = new Map(); this.pendingClear = {}; this.closed = false; this.queue = Promise.resolve();
       this.identity = options.identity || ownerScope; this.storage = options.storage || (() => global.localStorage);
       this.hash = options.hash || hash; this.delay = options.delay ?? 250;
       this.ready = this.initialize();
@@ -93,7 +93,7 @@
     }
     mutate(mutator) {
       const next = clone(this.data); mutator(next);
-      for (const path of this.schema.paths) if (get(next, path) !== get(this.data, path)) { this.dirty.add(path); this.revisions.set(path, (this.revisions.get(path) || 0) + 1); }
+      for (const path of this.schema.paths) if (get(next, path) !== get(this.data, path)) { this.dirty.add(path); this.edited.add(path); this.revisions.set(path, (this.revisions.get(path) || 0) + 1); }
       this.data = next; this.notify(clone(next)); this.schedule();
     }
     schedule() { clearTimeout(this.timer); this.timer = setTimeout(() => this.persist(), this.delay); }
@@ -102,8 +102,8 @@
       try {
         const stored = this.read();
         for (const [path, value] of Object.entries(this.pendingClear)) if (stored[path] === value) delete stored[path];
-        for (const path of this.dirty) if (typeof get(this.data, path) === 'string') stored[path] = get(this.data, path);
-        this.write(stored); this.pendingClear = {};
+        for (const path of this.edited) if (typeof get(this.data, path) === 'string') stored[path] = get(this.data, path);
+        this.write(stored); this.pendingClear = {}; this.edited.clear();
       } catch { /* Never replace current input when storage is unavailable. */ }
     }
     persist(completedSnapshot) {
@@ -122,13 +122,13 @@
     }
     snapshot(actionId) {
       const allowed = actionId === undefined ? this.schema.paths : this.schema.actionPaths[actionId.replace(/^actions\./, '')] || [];
-      const values = Object.fromEntries(Object.entries(this.values()).filter(([path]) => allowed.includes(path))); for (const path of Object.keys(values)) this.dirty.add(path);
+      const values = Object.fromEntries(Object.entries(this.values()).filter(([path]) => allowed.includes(path))); for (const path of Object.keys(values)) { this.dirty.add(path); this.edited.add(path); }
       this.persist(); return { values, revisions: Object.fromEntries(this.revisions) };
     }
     complete(snapshot) {
       const cleared = {};
       for (const [path, value] of Object.entries(snapshot.values)) if (get(this.data, path) === value && (this.revisions.get(path) || 0) === (snapshot.revisions[path] || 0)) {
-        this.dirty.delete(path); cleared[path] = value; const serverValue = get(this.server, path);
+        this.dirty.delete(path); this.edited.delete(path); cleared[path] = value; const serverValue = get(this.server, path);
         if (typeof serverValue === 'string') put(this.data, path, serverValue);
       }
       this.notify(clone(this.data)); return this.persist(cleared);
