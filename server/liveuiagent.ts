@@ -6838,6 +6838,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
           if (step.status !== 'running') trace(traceLog, agentSpecs[step.nodeId]?.name || step.nodeId, `${step.stage} native workflow step`, step.input, step.output, step.status === 'failed' ? 'rejected' : 'ok');
         },
       });
+      nativeWorkflow.record('turn', 'agents.orchestrator', 'running', { originalRequest: input.eventPayload });
       const workerHandoffs = await nativeWorkflow.plan({
         originalRequest: rawPayload, action: { id: actionId, label: action.label, description: action.description },
         appPurpose: stored.appPackage.manifest.intent?.sourcePrompt,
@@ -6955,6 +6956,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
           ...requiredArray<unknown>(stored.runtimeState.recentActions, `app ${input.appId} missing recentActions`).slice(0, 8),
         ],
       };
+      nativeWorkflow.record('commit', 'agents.memory', 'running');
       db.transaction(() => {
       saveStoredApp(db, options.registryRoot, stored);
       const workflow = stored.appPackage.ui?.meta?.a2ui as A2UISurfaceSpec | undefined;
@@ -6987,6 +6989,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       trace(traceLog, 'Memory Agent', 'Record app turn in context memory', { actionId }, stored.runtimeState);
       nativeWorkflow.record('commit', 'agents.data', 'ok', undefined, { collection: agentResult.collection, records: agentResult.records.length });
       nativeWorkflow.record('commit', 'agents.memory', 'ok', undefined, { workflowId: actionWorkflowId });
+      nativeWorkflow.record('turn', 'agents.orchestrator', 'ok', undefined, { persisted: true });
       return {
         statePatch: {
           target: 'app.runtimeState',

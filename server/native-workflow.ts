@@ -47,7 +47,7 @@ export class NativeWorkflow {
   }
   async review(outcome: Record<string, unknown>) {
     const node: WorkflowNode = { id: 'agents.result-reviewer', role: 'Independent result verifier', purpose: 'Check actual observed results against the original request and worker contracts. Never infer success from a plan or hide failed tools.' };
-    const input = { modelInvocationId: randomUUID(), outcome, workerContracts: this.handoffs };
+    const input = { modelInvocationId: randomUUID(), model: this.nodes[0]?.model, outcome, workerContracts: this.handoffs };
     this.record('review', node.id, 'running', input);
     try {
       const output = await this.options.call(node, input, 'review');
