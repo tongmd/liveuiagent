@@ -5916,7 +5916,7 @@ export async function runAppWorldGrounding(input: {
       });
       if (hasWrite) {
         // 校验器抖动重试一次:空响应若恰好落在错参批次上,错误金额就裸奔执行了。
-        // 两次都失败则按原参数继续(不拦执行),如实记录。
+        // 两次都失败则拒绝该批写操作,绝不回退到未核准的原参数。
         let check: Record<string, any> | null = null;
         for (let attempt = 1; attempt <= 2 && !check; attempt++) {
           try {
@@ -5938,17 +5938,30 @@ export async function runAppWorldGrounding(input: {
             if (attempt >= 2) historyLog.push({ ok: false, api: '(write-verifier)', error: compactText((error as Error).message, 160) });
           }
         }
-        // 重复重建硬拒:同一账单已成功建过又不先删旧版就再建,批次整体不执行
-        // (iter15 实锤:186.45 的 ÷2 与 ÷3 两版并存,人均 155.37)。拒绝进 history,
-        // 执行 agent 下一步看到原因后改为 删旧→建新 或转去修其他缺口。
-        if (check?.approved === false && check?.reject === true) {
-          historyLog.push({ ok: false, api: '(write-verifier)', error: compactText(`write batch rejected: ${String(check.reason || 'The proposed write violates the current request')}. Replan respecting the user intent; do not automatically delete historical records.`, 240) });
+        // Fail closed: model output is not authorization until it satisfies one
+        // of these two exact protocols. Never execute the original write batch
+        // after a timeout, missing approval or malformed correction.
+        const verifierNotRejected = check?.reject === undefined || check?.reject === false;
+        const correctionsValid = check?.approved === false && verifierNotRejected
+          && Array.isArray(check.correctedCalls) && check.correctedCalls.length === rawCalls.length
+          && check.correctedCalls.every((call: any, index: number) => {
+            if (!call || typeof call !== 'object' || Array.isArray(call)
+              || typeof call.api !== 'string' || call.api !== rawCalls[index]?.api
+              || !call.args || typeof call.args !== 'object' || Array.isArray(call.args)) return false;
+            const capability = capabilities.find(tool => tool.apiName === call.api);
+            return capability && (capability.requiredParams ?? []).every(key => Object.hasOwn(call.args,key) && call.args[key] !== undefined && call.args[key] !== null);
+          });
+        if(check?.approved === true && verifierNotRejected) {
+          verifiedCalls = rawCalls;
+        } else if(correctionsValid) {
+          verifiedCalls = check!.correctedCalls;
+          historyLog.push({ok:true,api:'(write-verifier)',response:compactText(String(check!.reason || 'args corrected'),200)});
+        } else {
+          const reason = check?.reason || (!check ? 'Verifier returned no usable decision after its bounded attempts'
+            : check.approved === false ? 'Verifier rejected the batch without a complete valid same-API correction'
+            : 'Verifier did not return a strict boolean approval');
+          historyLog.push({ok:false,api:'(write-verifier)',error:compactText(`write batch rejected: ${String(reason)}. Replan respecting the user intent; do not automatically delete historical records.`,240)});
           continue;
-        }
-        if (check?.approved === false && Array.isArray(check.correctedCalls) && check.correctedCalls.length === rawCalls.length
-          && check.correctedCalls.every((call: any, index: number) => String(call?.api || '') === String((rawCalls[index] as any)?.api || ''))) {
-          verifiedCalls = check.correctedCalls;
-          historyLog.push({ ok: true, api: '(write-verifier)', response: compactText(String(check.reason || 'args corrected'), 200) });
         }
       }
       for (const rawCall of verifiedCalls) {
