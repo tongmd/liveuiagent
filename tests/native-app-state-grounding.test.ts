@@ -114,3 +114,11 @@ for(const scenario of ['local_unknown','external_unknown','local_get_failure','e
  }
  db.close();
 });
+
+test('actual worker callback factors only model-wire plan packet and records private receipt while raw workflow input stays full',async t=>{
+ const f=await runtimeFixture(t);const evidence={call:{api:'actual-read',request:{page:0},response:{body:'z'.repeat(10000),amount:0.01}}};const state=JSON.parse(f.stored().runtime_state_json);state.lastActionPayload={toolResults:evidence};const data={agent_turns:[{toolResults:structuredClone(evidence),unique:'preserved'}]};f.db.prepare('UPDATE agent_apps SET runtime_state_json=?,data_json=? WHERE app_id=?').run(JSON.stringify(state),JSON.stringify(data),'parcels');let wire:any;let system='';
+ await assert.rejects(f.runtime.action({appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{subject:'Read parcels'},llm:{model:'fixture',chatCompletion:async(request:any)=>{system=request.messages[0].content;wire=JSON.parse(request.messages[1].content);throw Error('fixture-stop-before-any-business');}}}as any),/fixture-stop/);
+ assert(system.includes('hostPlanEvidenceFactorization'));assert.equal(wire.assignedWorker.id,'agents.orchestrator');assert.equal(wire.hostPlanEvidenceFactorization.aliases.length,1);assert.deepEqual(wire.context.currentState.lastActionPayload.toolResults,evidence);
+ const raw=f.db.prepare("SELECT input_json FROM agent_workflow_execution_steps WHERE stage='plan' AND status='running' LIMIT 1").get()as any;const original=JSON.parse(raw.input_json);assert.deepEqual(original.context.records.agent_turns[0].toolResults,evidence);assert.equal(original.hostPlanEvidenceFactorization,undefined);
+ const recorded=f.db.prepare("SELECT output_json FROM agent_workflow_execution_steps WHERE stage='plan_wire_projection' AND status='ok' LIMIT 1").get()as any;const receipt=JSON.parse(recorded.output_json);const{restoreNativePlanInput}=await import('../server/native-plan-factor.js');assert.deepEqual(restoreNativePlanInput(wire,receipt),{assignedWorker:wire.assignedWorker,...original});
+});
