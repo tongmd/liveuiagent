@@ -98,5 +98,5 @@ test('four actual role prompts scope local-kind proof to app_local without weake
 
  test('four actual role prompts preserve container membership and original service obligations',async t=>{
  const result=await flow(t,'service_collection',catalog,{writeFirst:true});
- for(const role of ['Grounding Requirement Agent','AppWorld Grounding Agent','Write Verifier Agent','Grounding Evaluator Agent']){const system=result.inputs.find(x=>x.label===role).system;assert.match(system,/entries inside an actual service container or document/);assert.match(system,/exact real service record\/container identifier/);assert.match(system,/local cache, index or preferences cannot replace the original service obligation/);assert.match(system,/authorized actual container mutation and fresh read-back/);}
+ for(const role of ['Grounding Requirement Agent','AppWorld Grounding Agent','Write Verifier Agent','Grounding Evaluator Agent']){const system=result.inputs.find(x=>x.label===role).system;assert.match(system,/entries inside an actual service container or document/);assert.match(system,/omit entities\[\]\.id/);assert.match(system,/shared container ID is provenance, not a unique member ID/);assert.match(system,/local cache, index or preferences cannot replace the original service obligation/);assert.match(system,/authorized actual container mutation and fresh read-back/);}
  });
