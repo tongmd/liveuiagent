@@ -42,9 +42,9 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
     });
     const channel = randomBytes(16).toString('hex');
     await page.exposeFunction('__deliveryViolation', (key, message) => { if (key === channel) add('browser_policy_violation', message); });
-    if (requireAgentAction) await page.exposeFunction('__deliveryAgentAction', (key, prompt, context) => {
+    if (requireAgentAction) await page.exposeFunction('__deliveryAgentAction', (key, prompt, context, primaryAction) => {
       if (key !== channel) throw Error('Invalid delivery bridge channel');
-      if (!actionPhase) { add('agent_action_before_submit', 'Call the host service from the bound primary submit action, not startup or input-change handlers'); throw Error('Service actions require an explicit user action'); }
+      if (!actionPhase || !primaryAction) { add('agent_action_before_submit', 'Call the host service from the bound primary submit action, not startup or input-change handlers'); throw Error('Service actions require an explicit user action'); }
       agentCalls.push({ prompt, context });
       return { ok: false, text: serviceError, error: serviceError, data: { ok: false, error: serviceError } };
     });
@@ -58,8 +58,8 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       const iframe = document.querySelector('#app');
       addEventListener('message', event => { if (event.source !== iframe.contentWindow || event.data?.channel !== channel) return;
         if (event.data.type === 'agent') {
-          const { id, prompt, context } = event.data;
-          window.__deliveryAgentAction(channel, prompt, context).then(value => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', value }, '*'), error => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', error: error.message }, '*'));
+          const { id, prompt, context, primaryAction } = event.data;
+          window.__deliveryAgentAction(channel, prompt, context, primaryAction).then(value => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', value }, '*'), error => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', error: error.message }, '*'));
         } else void window.__deliveryViolation(channel, event.data.violation); });
       iframe.srcdoc = html;
     }, { html: injected, channel });
@@ -92,13 +92,14 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
 
 
 function installDeliverySdk(channel, agentEnabled) {
-  const values = Object.create(null), pending = new Map(); let sequence = 0;
+  const values = Object.create(null), pending = new Map(); let sequence = 0, primaryAction = false;
+  addEventListener('click', event => { if (event.isTrusted && event.target.closest?.('[data-delivery-primary="true"]')) primaryAction = true; }, true);
   const storage = { getItem: k => Object.hasOwn(values, String(k)) ? values[String(k)] : null, setItem: (k, v) => { values[String(k)] = String(v); }, removeItem: k => { delete values[k]; }, clear: () => { for (const k of Object.keys(values)) delete values[k]; }, key: i => Object.keys(values)[i] ?? null, get length() { return Object.keys(values).length; } };
   Object.defineProperty(window, 'localStorage', { value: storage });
   window.liveuiagent = { storage, ai: (prompt, context) => {
     if (!agentEnabled) return Promise.reject(Error('AI actions require a user action; unavailable during delivery startup verification'));
     const id = ++sequence;
-    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); parent.postMessage({ channel, id, type: 'agent', prompt, context }, '*'); });
+    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); parent.postMessage({ channel, id, type: 'agent', prompt, context, primaryAction }, '*'); });
   }, download: () => { throw Error('Downloads require a user action during delivery verification'); } };
   addEventListener('message', event => {
     if (event.source !== parent || event.data?.channel !== channel || event.data?.type !== 'agent-reply') return;
