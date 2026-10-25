@@ -45,3 +45,14 @@ test('an input-change SDK call cannot masquerade as a working primary submit act
   const result=await check(html);
   assert.equal(result.ok,false);assert(result.errors.some(error=>error.code==='agent_action_before_submit'));
 });
+
+test('a correctly bound primary action hidden behind a tab reports visibility rather than missing wiring', async () => {
+  const hidden=app(good).replace('<body>','<body><h1>Reading organizer</h1><button>Notes</button>').replace('<form','<section hidden><form').replace('</form>','</form></section>');
+  const result=await check(hidden);
+  assert.equal(result.ok,false);
+  const error=result.errors.find(error=>error.code==='agent_action_contract');
+  assert.match(error.message,/bound primary action control\(s\), but all are hidden on initial open/);
+  assert.match(error.message,/initially visible/);
+  assert.match(error.message,/without prior tab navigation/);
+  assert.doesNotMatch(error.message,/Mark the real primary form/);
+});

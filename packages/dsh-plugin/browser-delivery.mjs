@@ -112,12 +112,15 @@ function installDeliverySdk(channel, agentEnabled) {
 async function verifyAgentAction(frame, request, serviceError, calls, beginAction) {
   const binding = await frame.evaluate(() => {
     const visible = node => { const r = node.getBoundingClientRect(), s = getComputedStyle(node); return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden'; };
-    const candidates = new Set();
+    const candidates = new Set(), hiddenControls = new Set();
     for (const node of document.querySelectorAll('[data-liveui-action="agent.invoke"]')) {
       for (const control of node instanceof HTMLFormElement ? node.elements : [node]) {
-        if (control.matches('button,input[type="submit"],input[type="button"]') && visible(control)) candidates.add(control);
+        if (control.matches('button,input[type="submit"],input[type="button"]')) {
+          if (visible(control)) candidates.add(control); else hiddenControls.add(control);
+        }
       }
     }
+    if (!candidates.size && hiddenControls.size) throw Error(`Found ${hiddenControls.size} bound primary action control(s), but all are hidden on initial open. Move the primary task form and submit button out of hidden tabs/panels, or make that panel initially visible. The real service workflow must be usable immediately without prior tab navigation.`);
     if (candidates.size !== 1) throw Error(`Expected one visible agent.invoke action after form/button deduplication; found ${candidates.size}. Mark the real primary form and submit button with data-liveui-action="agent.invoke".`);
     const button = [...candidates][0];
     const fields = [...(button.form ? button.form.elements : document.querySelectorAll('input,textarea'))].filter(node => visible(node) && !node.disabled);
