@@ -22,7 +22,7 @@ Copy `examples/liveuiagent.patch.yml` outside the checkout and set `dataDir` and
 | `owner` | Required | Stable operator label; all requests share this workspace |
 | `frontendDir` | Packaged `public/` | Optional absolute frontend directory |
 | `model` | `DSH profile` | Default model label; provider settings belong to the DSH profile or a supported request override |
-| `maxPending` | `8` | Queue bound; one unfinished task per operator |
+| `maxPending` | `8` | Queued-task bound; actions and revisions of the same app remain ordered |
 | `timeoutMs` | `900000` | Task timeout before cancellation |
 | `runner.command` | `dsh` | Executable launched without a shell |
 | `runner.args` | `[--profile, headless, --json]` | Arguments; `{work}` and `{home}` expand per task |
