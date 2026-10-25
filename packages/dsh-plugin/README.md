@@ -32,6 +32,14 @@ Each task has its own working directory and `DSH_HOME`. The shipped `headless` p
 
 The command runner advertises model/provider override capabilities through `GET /api/runtime-settings`. Overrides must satisfy the runner's capabilities and supply the provider configuration it requires. Unsupported overrides fail explicitly. Working-directory separation is not an OS sandbox: tasks run with the service account's permissions.
 
+## Delivery verification
+
+Install Chrome or Chromium on the service host. Set `CHROME_PATH` when it is outside the standard installation paths. The service uses a real browser to reject blank applications, script errors, external network dependencies and agent calls during startup. A missing browser is an explicit delivery failure.
+
+Generation first writes metadata and a working application within four minutes, then allows one bounded repair if delivery checks fail. A passing startup check confirms the app opens; it does not establish that its business workflows succeed.
+
+When hosted through LiveUIAgent with AppWorld enabled, connected-service actions call `window.liveuiagent.ai(prompt, context)`. The host plans and executes real service APIs, reviews the outcome, and persists its own execution evidence. Generated code must display errors and treat only `ok === true` as verified success. Standalone DSH action execution does not acquire this service integration automatically.
+
 ## API and storage
 
 Routes are relative to `basePath`:
