@@ -232,7 +232,7 @@ export class CompleteAppBrowser {
     this.actionDeadlineAt=undefined;
     await this.page?.evaluate(channel=>document.querySelector<HTMLIFrameElement>('#app')?.contentWindow?.postMessage({channel,type:'action-deadline',deadlineAt:undefined},'*'),this.channel);
   }
-  private identityRealm(): Pick<Frame, 'evaluate' | 'evaluateHandle'> {
+  protected identityRealm(): Pick<Frame, 'evaluate' | 'evaluateHandle'> {
     // CDP Frame implements this realm in the pinned Puppeteer version; its
     // public declaration omits the internal accessor. Match its evaluation
     // interface without using application-visible globals for identity.
