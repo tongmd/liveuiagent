@@ -134,7 +134,13 @@ export function DynamicAppRenderer({ app, onAction, busy }: RendererProps) {
 
   // A committed server revision is authoritative after an action or reopen.
   useEffect(() => {
-    setData(JSON.parse(JSON.stringify(model.data)));
+    setData(current => {
+      const next = JSON.parse(JSON.stringify(model.data));
+      // A poll is not a submitted command. Preserve its visible draft while the
+      // same host-issued request remains current; only a new committed nonce clears it.
+      if(next.hostCommand?.requestId && next.hostCommand.requestId===current.hostCommand?.requestId && typeof current.hostCommand.draft==='string')next.hostCommand.draft=current.hostCommand.draft;
+      return next;
+    });
   }, [model]);
 
   function mutateData(mutator: (draft: Record<string, any>) => void) {

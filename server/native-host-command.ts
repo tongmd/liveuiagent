@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 /** Host-only candidate protocol. Not installed into generated packages yet. */
 export const HOST_COMMAND_ACTION = 'host.app.command';
 const PREFIX = 'host_app_command_';
@@ -5,10 +6,10 @@ export const HOST_COMMAND_MAX_BYTES = 8192;
 export type HostCommandDescriptor = {
   schemaVersion: 1; actionId: typeof HOST_COMMAND_ACTION;
   containerId: 'host_app_command_container'; inputId: 'host_app_command_input';
-  buttonId: 'host_app_command_execute'; inputPath: '/hostCommand/draft';
+  buttonId: 'host_app_command_execute'; inputPath: '/hostCommand/draft'; requestIdPath:'/hostCommand/requestId';
 };
 export const hostCommandDescriptor = (): HostCommandDescriptor => ({schemaVersion:1,actionId:HOST_COMMAND_ACTION,
-  containerId:'host_app_command_container',inputId:'host_app_command_input',buttonId:'host_app_command_execute',inputPath:'/hostCommand/draft'});
+  containerId:'host_app_command_container',inputId:'host_app_command_input',buttonId:'host_app_command_execute',inputPath:'/hostCommand/draft',requestIdPath:'/hostCommand/requestId'});
 const fail = (reason: string): never => {throw new Error(`host_command_contract: ${reason}`);};
 function object(value: unknown): Record<string, any> {
   if(!value || typeof value!=='object' || Array.isArray(value))return fail('object required');
@@ -34,7 +35,7 @@ export function hostCommandComponents(): Record<string,any>[] {
   {id:d.containerId,component:'Column',children:[d.inputId,d.buttonId],align:'stretch'},
   {id:d.inputId,component:'TextField',label:'Ask this app',value:{path:d.inputPath},variant:'longText'},
   {id:PREFIX+'execute_label',component:'Text',text:'Execute'},
-  {id:d.buttonId,component:'Button',child:PREFIX+'execute_label',action:{event:{name:d.actionId,context:{command:{path:d.inputPath}}}}},
+  {id:d.buttonId,component:'Button',child:PREFIX+'execute_label',action:{event:{name:d.actionId,context:{command:{path:d.inputPath},requestId:{path:d.requestIdPath}}}}},
  ];
 }
 function assertNoReserved(value:unknown, structuralKey?:string):void {
@@ -55,7 +56,7 @@ function assertSurfaceNamespace(surfaceInput:unknown){
 }
 /** Append host controls to the known root column after model validation. Does not
  * alter business actions, slots or permissions and never accepts model host metadata. */
-export function appendHostCommand(surfaceInput:unknown, businessActions:unknown):{surface:Record<string,any>;descriptor:HostCommandDescriptor} {
+export function appendHostCommand(surfaceInput:unknown, businessActions:unknown, requestId:string = randomUUID()):{surface:Record<string,any>;descriptor:HostCommandDescriptor} {
  assertSurfaceNamespace(surfaceInput);assertNoReserved(businessActions);
  const surface=structuredClone(object(surfaceInput));
  const updates=object(surface).messages;
@@ -71,7 +72,7 @@ export function appendHostCommand(surfaceInput:unknown, businessActions:unknown)
  if(root?.component!=='Card'||column?.component!=='Column'||!Array.isArray(column.children))return fail('known root card/column required');
  column.children.push(hostCommandDescriptor().containerId);
  components.push(...hostCommandComponents());
- const data=object(surface.initialData);surface.initialData={...data,hostCommand:{draft:''}};
+ const data=object(surface.initialData);surface.initialData={...data,hostCommand:{draft:'',requestId}};
  for(const message of updates)if(message?.updateDataModel){
   if(!equal(message.updateDataModel.value,data))return fail('surface/data-model mismatch');
   message.updateDataModel.value=structuredClone(surface.initialData);
@@ -93,7 +94,7 @@ export function businessSurfaceWithoutHostCommand(surfaceInput:unknown,rawDescri
  if(root?.component!=='Card'||column?.component!=='Column'||!Array.isArray(column.children)||column.children.at(-1)!==d.containerId||column.children.filter((id:any)=>id===d.containerId).length!==1)return fail('host block must be root reachable');
  column.children.pop();
  groups[0].updateComponents.components=components.filter(node=>!String(node.id).startsWith(PREFIX));
- const state=exact(surface.initialData.hostCommand,['draft']);if(typeof state.draft!=='string')return fail('draft must be text');
+ const state=exact(surface.initialData.hostCommand,['draft','requestId']);if(typeof state.draft!=='string'||typeof state.requestId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(state.requestId))return fail('draft must be text');
  delete surface.initialData.hostCommand;
  for(const message of surface.messages)if(message?.updateDataModel){
   if(!equal(message.updateDataModel.value,{...surface.initialData,hostCommand:state}))return fail('surface/data-model mismatch');

@@ -1,6 +1,6 @@
 import {authorizedGroundingCapabilities,nativeActionContext,nativeActionContextPolicy} from './native-action-context.js';
 import {NativeCommandReceipts,type CommandReceiptBinding} from './native-command-receipts.js';
-import {HOST_COMMAND_ACTION,parseHostCommandEvent,businessSurfaceWithoutHostCommand,appendHostCommand,assertHostCommandDescriptor} from './native-host-command.js';
+import {HOST_COMMAND_ACTION,parseHostCommandEvent,businessSurfaceWithoutHostCommand,appendHostCommand,assertHostCommandDescriptor,hostCommandDescriptor} from './native-host-command.js';
 import {hostCommandRoute,stageHostCommandResult} from './native-host-command-runtime.js';
 import {markNativeActionNotStarted,normalizeNativeActionId,hostNativeActionNotStartedProof} from './native-action-not-started.js';
 import { assertSurfaceContract, compileSemanticSurface, semanticSurfaceDesignPolicy, type SemanticSurfaceDesign } from './native-surface-design.js';
@@ -4611,6 +4611,7 @@ function requiredInitialBusinessValue(field: BusinessSlotSpec) {
 
 function makePackage(appId: string, plan: AgentPlan): AppPackage {
   const ui = makeUi(plan);
+  (ui.meta as Record<string,unknown>).hostCommand=hostCommandDescriptor();
   const icon = makeIconAsset(plan);
   const draft: Omit<AppPackage, 'safetyReport'> = {
     manifest: makeManifest(appId, plan),
@@ -4630,6 +4631,7 @@ function makePackage(appId: string, plan: AgentPlan): AppPackage {
         subject: plan.subject,
         functionSignature: plan.signature,
         intentActionCount: 0,
+        hostCommandRequestId:randomUUID(),
         intentResult: plan.result,
         proposal: plan.proposal,
         orchestration: plan.orchestration,
@@ -5381,7 +5383,8 @@ function enrichAppRecord(stored: StoredApp): StoredApp {
   let a2ui = makeA2uiSurface(plan, Object.keys(actions), makeA2uiState(plan, stored));
   if((stored.appPackage.ui.meta as any).hostCommand!==undefined){
     assertHostCommandDescriptor((stored.appPackage.ui.meta as any).hostCommand);
-    a2ui=appendHostCommand(a2ui,actions).surface as A2UISurfaceSpec;
+    if(typeof stored.runtimeState.hostCommandRequestId!=='string')throw Error('host command app missing persisted request nonce');
+    a2ui=appendHostCommand(a2ui,actions,stored.runtimeState.hostCommandRequestId).surface as A2UISurfaceSpec;
   }
   const uiMeta = requiredObject<Record<string, unknown>>(stored.appPackage.ui.meta, `app ${stored.appId} missing ui meta while enriching`);
   stored.appPackage.ui = {
@@ -5642,6 +5645,8 @@ function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Reco
   ].filter(Boolean).join(' · '), 120);
   stored.runtimeState = {
     ...stored.runtimeState,
+    // A later dedicated operation owns the visible result again.
+    lastCommandResult: undefined,
     subject,
     sourcePrompt,
     functionSignature,
@@ -7135,6 +7140,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       // replays stale state patches over a later app revision or enters tools.
       if(commandEvent){
         const binding={owner,appId:stored.appId,requestId:commandEvent.requestId,command:commandEvent.command,eventPayload:input.eventPayload,actionId};
+        const existing=commandReceipts.lookup(binding);
+        if(!existing)commandReceipts.assertAppResolved(owner,stored.appId);
+        if(!existing && commandEvent.requestId!==(stored.appPackage.ui.meta.a2ui as any)?.initialData?.hostCommand?.requestId)throw httpError('command request nonce does not match the current host block',400);
         const admission=commandReceipts.begin(binding);
         if(!admission.admitted){
           if(admission.state!=='completed')throw Object.assign(httpError('This command has an unresolved or failed receipt; no operation was repeated.',409),{commandReceipt:admission});
