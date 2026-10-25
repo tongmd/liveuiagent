@@ -14,5 +14,14 @@ jobs:
           cache: npm
       - run: npm ci --workspace @liveuiagent/dsh-plugin --include-workspace-root --no-audit --no-fund
       - run: npm test
+        env:
+          LIVEUIAGENT_CHROME_STARTUP_DIAGNOSTICS: "1"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: chrome-startup-diagnostics
+          path: artifacts/chrome-startup/*.json
+          if-no-files-found: ignore
+          retention-days: 7
       - run: npm run check:docs
       - run: npm run check:release

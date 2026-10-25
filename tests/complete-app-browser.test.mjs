@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import {chromeStartupProbe} from './chrome-startup-probe.mjs';
 import {CompleteAppBrowser} from '../dist-server/server/complete-app-evaluator.js';
 
 test('closed Chrome releases only its owned stdio, including pipes inherited by crash reporters',async()=>{
@@ -23,8 +24,9 @@ test('real Chrome repeated open/close destroys its exited child pipes',async t=>
   if(!candidate)continue;try{await fs.access(candidate);chrome=candidate;break;}catch{}
  }
  if(!chrome){t.skip('Chrome unavailable; browser lifecycle is unexecuted');return;}
+ const probe=process.env.LIVEUIAGENT_CHROME_STARTUP_DIAGNOSTICS==='1'?await chromeStartupProbe(chrome,path.resolve('artifacts/chrome-startup')):undefined;if(probe)t.after(()=>probe.close());
  const out=await fs.mkdtemp(path.join(os.tmpdir(),'liveui-browser-close-'));
- const browser=new CompleteAppBrowser({request:async()=>({html:'<!doctype html><html><body><h1>Saved notes</h1><label>Note<input></label><button>Save</button></body></html>',store:{}})},'fixture',out,chrome);
+ const browser=new CompleteAppBrowser({request:async()=>({html:'<!doctype html><html><body><h1>Saved notes</h1><label>Note<input></label><button>Save</button></body></html>',store:{}})},'fixture',out,probe?.executable??chrome);
  try {
   for(let i=0;i<2;i++){
    await browser.open();const child=browser.browser.process();assert.ok(child);
