@@ -41,20 +41,38 @@ test('retry waits share the absolute deadline and an inherited budget cannot be 
 test('real tool HTTP budget expires before a business write and never retries an uncertain mutation',async t=>{
  const fs=await import('node:fs/promises'),os=await import('node:os'),path=await import('node:path');
  const {createAppWorldBridge}=await import('../server/appworld-bridge.js');let delayDb=250,posts=0;
+ let expireDispatchedWrite:()=>void=()=>{};
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'tool-deadline-'));t.after(()=>fs.rm(root,{recursive:true,force:true}));
  const server=http.createServer(async(req,res)=>{let raw='';for await(const chunk of req)raw+=chunk;let value:any;
  if(req.url==='/api_docs/app_descriptions')value=[{name:'simple_note',description:'Notes'}];
  else if(req.url==='/simple_note/openapi.json')value={paths:{'/notes':{post:{operationId:'create_note',description:'Create an actual note',responses:{'200':{description:'Created'}}}}}};
  else if(req.url==='/dbs'){await wait(delayDb);value={simple_note:'/tmp/world/simple_note.db'}}
  else if(req.url==='/dbs/save')value={saved:true};
- else if(req.url==='/simple_note/notes'){posts++;await wait(250);value={id:'real-write'}}
+ else if(req.url==='/simple_note/notes'){posts++;expireDispatchedWrite();await wait(250);value={id:'real-write'}}
  else value={};if(!res.destroyed){res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify(value))}});
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();return new Promise<void>(r=>server.close(()=>r()))});
  await fs.writeFile(path.join(root,'liveuiagent.config.json'),JSON.stringify({appworld:{enabled:true,apiBase:`http://127.0.0.1:${(server.address() as any).port}`,snapshotRoot:'snapshots',apps:['simple_note'],timeoutMs:2000}}));
  const bridge=createAppWorldBridge(root)!;await bridge.getCapabilities();
  await assert.rejects(withActionDeadline(Date.now()+100,()=>bridge.callTool('tool.appworld.simple_note.create_note',{})),/deadline|timed out/);assert.equal(posts,0,'expired snapshot preparation cannot start a mutation');
  delayDb=0;
- await assert.rejects(withActionDeadline(Date.now()+100,()=>bridge.callTool('tool.appworld.simple_note.create_note',{})),/deadline|timed out/);assert.equal(posts,1,'an uncertain in-flight write must not be retried');
+ // Keep real HTTP and timers running, but advance this phase's deadline clock
+ // only once the server has actually accepted the mutation. A wall-clock race
+ // before dispatch would merely re-test the preceding zero-write scenario.
+ const deadline=Date.now()+100;let now=deadline-100;
+ const realSetTimeout=globalThis.setTimeout;const deadlineTimers=new Set<()=>void>();
+ t.mock.method(Date,'now',()=>now);
+ t.mock.method(globalThis,'setTimeout',((callback:()=>void,delay:number,...args:any[])=>{
+  // Only the bridge's abort timer follows the controlled deadline clock;
+  // undici, the HTTP server and every other timer retain real scheduling.
+  const caller=new Error().stack?.split('\n').slice(1).find(line=>!line.includes('dsh-native-deadline.test.ts')&&!line.includes('node:internal/test_runner'));
+  if(!caller?.includes('at fetchJson (')||!caller.includes('appworld-bridge.ts'))return realSetTimeout(callback,delay,...args);
+  const expire=()=>{if(now>=deadline)callback();};deadlineTimers.add(expire);
+  return realSetTimeout(expire,delay);
+ }) as typeof setTimeout);
+ expireDispatchedWrite=()=>{now=deadline;for(const expire of deadlineTimers)expire();};
+ await assert.rejects(withActionDeadline(deadline,()=>bridge.callTool('tool.appworld.simple_note.create_note',{})),(error:any)=>error.code==='action_deadline_exceeded');
+ assert.equal(now,deadline,'expiry is released by the real business request handler');
+ assert.equal(posts,1,'an uncertain in-flight write must not be retried');
 });
 
 test('host action budget starts before saved-app lookup and cannot be extended by client context',async t=>{
