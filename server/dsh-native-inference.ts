@@ -1,3 +1,4 @@
+import {nativeStructuredJsonPolicyMetadata} from './native-structured-json-policy.js';
 import {persistNativeInferenceDiagnostic} from './native-inference-diagnostics.js';
 import fs from 'node:fs/promises';
 import { createNativeDshRelay } from './dsh-native-relay.js';
@@ -98,6 +99,7 @@ export function createDshNativeInference(config:Config) {
       if(!Number.isFinite(budget)||budget<=0)throw transportError('Native DSH deadline expired','dsh_native_timeout');
       const id=randomUUID(),startedAt=Date.now();
       const diagnostic:Record<string,any>={schemaVersion:1,id,roleLabel:String(options?.roleLabel||'Unspecified role').replace(/[^A-Za-z0-9 _-]/g,'').slice(0,80),model:String(request.model).slice(0,160),requestBytes:Buffer.byteLength(JSON.stringify(request)),taskBytes:Buffer.byteLength(task),messageCount:Array.isArray(request.messages)?request.messages.length:0,budgetMs:budget,maxConcurrent,startedAt,queueWaitMs:null,acquiredAt:null,executionMs:null,outcome:'pending',runnerEvents:[],modelEventCounts:{},relay:{providerRequests:0,responseBytes:0}};
+      const policy=nativeStructuredJsonPolicyMetadata(request);if(policy)diagnostic.structuredJsonPolicy=policy;
       const controller=new AbortController();
       const timer=setTimeout(()=>controller.abort(transportError('Native DSH inference timed out','dsh_native_timeout')),budget);
       running.add(controller);

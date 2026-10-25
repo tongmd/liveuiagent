@@ -1,3 +1,4 @@
+import {nativeStructuredJsonPolicyMetadata} from './native-structured-json-policy.js';
 import http from 'node:http';
 import {randomBytes,timingSafeEqual} from 'node:crypto';
 
@@ -19,6 +20,7 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
  const requests=new Set<AbortController>();
  let closed=false;let providerRequests=0;
  const diagnostics:Record<string,unknown>={responseBytes:0};
+ const policy=nativeStructuredJsonPolicyMetadata(input.request);if(policy)diagnostics.structuredJsonPolicy=policy;
  const recordFailure=(code:string,message:string)=>{if(!diagnostics.code){diagnostics.code=code;diagnostics.message=message;}};
  const inspect=(value:any)=>{
   if(value?.usage){for(const name of ['prompt_tokens','completion_tokens','total_tokens'])if(Number.isFinite(value.usage[name]))diagnostics[name]=value.usage[name];const reasoning=value.usage.completion_tokens_details?.reasoning_tokens;if(Number.isFinite(reasoning))diagnostics.reasoning_tokens=reasoning;}

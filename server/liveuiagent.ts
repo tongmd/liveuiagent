@@ -1,5 +1,6 @@
 import {normalizeGroundingEntities} from './grounding-entities.js';
 import {schemaDesignCatalog,validateSchemaDesignRefinement} from './native-schema-design.js';
+import {applyNativeStructuredJsonPolicy} from './native-structured-json-policy.js';
 import {writeGuiPlanningDiagnostics} from './gui-planning-diagnostics.js';
 import { consumedGroundingFields, consumedSlotsFromIndices, requireConsumedSlots, rowActionSlotMap, assertExactRowBindings, assertRowActionPayload } from './native-action-slots.js';
 import { writeGroundingDiagnostics, type GroundingDiagnosticsReceipt } from './grounding-diagnostics.js';
@@ -1778,7 +1779,7 @@ async function chatFetchWithRetry(url: string, init: RequestInit, timeoutMs: num
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-async function nativeModelTransport(llm: LlmRuntimeConfig, url: string, init: RequestInit, timeoutMs: number, roleLabel?: string) {
+export async function nativeModelTransport(llm: LlmRuntimeConfig, url: string, init: RequestInit, timeoutMs: number, roleLabel?: string) {
   if (!llm.chatCompletion) return chatFetchWithRetry(url, init, timeoutMs);
   const actionBudget = remainingActionMs();
   const budget = Math.min(timeoutMs, actionBudget);
@@ -1786,7 +1787,7 @@ async function nativeModelTransport(llm: LlmRuntimeConfig, url: string, init: Re
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
-      llm.chatCompletion(JSON.parse(String(init.body)), { timeoutMs: budget, roleLabel }),
+      llm.chatCompletion(applyNativeStructuredJsonPolicy(JSON.parse(String(init.body))), { timeoutMs: budget, roleLabel }),
       new Promise<never>((_, reject) => { timer = setTimeout(() => reject(totalBudgetLimited ? actionDeadlineError() : new Error('native inference adapter deadline exceeded')), budget); }),
     ]);
     remainingActionMs();
