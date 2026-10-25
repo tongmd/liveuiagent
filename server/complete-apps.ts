@@ -19,6 +19,25 @@ function withOutputLanguage(prompt: unknown) {
   return OUTPUT_LANGUAGE_REQUEST + prompt;
 }
 
+export function createHostActionStore(db: Database.Database) {
+  db.exec('CREATE TABLE IF NOT EXISTS complete_host_actions(owner TEXT NOT NULL,job_id TEXT NOT NULL,app_id TEXT NOT NULL,result_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(owner,job_id))');
+  return {
+    save(owner:string,appId:string,grounded:NonNullable<Awaited<ReturnType<typeof runAppWorldGrounding>>>,model:string) {
+      const createdAt=new Date().toISOString();
+      const job={id:'host_'+randomUUID(),appId,status:'done',createdAt,finishedAt:createdAt,
+        execution:{harness:'dsh',actionRuntime:'host-appworld',model},
+        result:{text:grounded.summary,data:{entities:grounded.entities,stats:grounded.stats,evaluation:grounded.evaluation}},
+        evidence:dshToolEvidence(appId,grounded)};
+      db.prepare('INSERT INTO complete_host_actions VALUES (?,?,?,?,?)').run(owner,job.id,appId,JSON.stringify(job),createdAt);
+      return job;
+    },
+    load(owner:string,id:string) {
+      const row=db.prepare('SELECT result_json FROM complete_host_actions WHERE owner=? AND job_id=?').get(owner,id) as {result_json:string}|undefined;
+      return row?JSON.parse(row.result_json):undefined;
+    },
+  };
+}
+
 export function dshGroundingPayload(request: string, context: unknown, eventPayload: unknown) {
   const serialize=(value:unknown) => {
     if(value===undefined)return undefined;
@@ -54,9 +73,8 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
   executionOf?: (req: express.Request) => { model?: string; provider?: { apiBase: string; apiKey: string } };
 } = {}) {
   const toolBridge = createAppWorldBridge(process.cwd());
-  const jobEvidence = new Map<string, any>();
+  const hostActions=createHostActionStore(db);
   const toolPlans = new Map<string, Promise<string[]>>();
-  const evidenceKey = (req: express.Request, id: string) => JSON.stringify([userOf(req), id]);
   const configuredBase = process.env.LIVEUIAGENT_DSH_API_BASE?.trim();
   const userPrefix = process.env.LIVEUI_DSH_USER_PREFIX?.trim() || '';
   const emptyAccountRoot = process.env.LIVEUI_DSH_EMPTY_ACCOUNT_ROOT?.trim() || '';
@@ -111,6 +129,11 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
   async function dsh(req: express.Request, route: string, method = 'GET', data?: any) {
     const owner = userOf(req);
     if (!owner) throw error('Please sign in to your account',401);
+    if(route.startsWith('jobs/host_')){
+      const job=hostActions.load(owner,route.slice(5));
+      if(!job)throw error('Task not found',404);
+      return job;
+    }
     if (!apiBase) throw Object.assign(error('Complete app service is not configured', 503), {code:'dsh_config_required',requiredConfig:['LIVEUIAGENT_DSH_API_BASE']});
     const upstreamOwner = userPrefix + owner;
     if (upstreamOwner.length > 200) throw runtimeError('The configured application workspace identity is too long', 'dsh_workspace_identity_invalid', 503);
@@ -120,10 +143,6 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     if (!r.ok) throw Object.assign(error(value.error || 'The app service is temporarily unavailable',r.status), {code:value.code});
     // Upstream/model-generated evidence is never an authority.
     delete value.evidence;
-    if (route.startsWith('jobs/')) {
-      const evidence=jobEvidence.get(evidenceKey(req,route.slice(5)));
-      if(evidence)value.evidence=evidence;
-    }
     return value;
   }
   async function capabilities(req: express.Request) {
@@ -217,7 +236,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     const groundingPayload=dshGroundingPayload(String(body?.prompt||body?.actionId||''),body?.context,body?.eventPayload);
     const saved=await dsh(req,'apps/'+id);
     const selected = await execution(req);
-    let evidence:any;let groundedContext:any;
+
     if(toolBridge && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off') {
       const llm=llmOf(req);
       const planKey=JSON.stringify([userOf(req),appId,saved.app.revision,saved.app.description]);
@@ -230,17 +249,17 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       const grounded=await runAppWorldGrounding({bridge:toolBridge,permissions,payload:groundingPayload,appName:saved.app.name,appPurpose:saved.app.description,llm});
       if(grounded) {
         if(!grounded.calls.length)throw runtimeError('No real business API call completed','dsh_tool_execution_empty',502);
-        evidence=dshToolEvidence(appId,grounded);
-        groundedContext={summary:grounded.summary,entities:grounded.entities,stats:grounded.stats,evaluation:grounded.evaluation,instruction:'Render these actual executed results. Do not repeat API mutations or claim unobserved outcomes.'};
+        // Real execution and independent review are complete. Persist the host
+        // result directly; launching another coding agent risks redoing writes.
+        return hostActions.save(userOf(req),appId,grounded,selected.model);
       }
     }
     const job = await dsh(req,'apps/'+id+'/action','POST',{
       prompt:actionPrompt,
-      context:{...body?.context,eventPayload:body?.eventPayload,personalContext:personal.recall(userOf(req),appId),...(groundedContext?{executedTools:groundedContext}:{})},
+      context:{...body?.context,eventPayload:body?.eventPayload,personalContext:personal.recall(userOf(req),appId)},
       ...selected,
     });
-    if(evidence){if(jobEvidence.size>=1000)jobEvidence.delete(jobEvidence.keys().next().value!);jobEvidence.set(evidenceKey(req,job.id),evidence);}
-    return {...job,...(evidence?{evidence}:{}),execution:{harness:'dsh',model:job.model || selected.model}};
+    return {...job,execution:{harness:'dsh',model:job.model || selected.model}};
   }
   function checkAppHarness(req: express.Request, appId: string) { options.harnessFor?.(req,appId); }
   function install(app: express.Express) {

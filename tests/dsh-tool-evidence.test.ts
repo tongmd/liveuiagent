@@ -32,3 +32,17 @@ test('trusted evidence retains native workflow attempts, executed calls, and rej
  assert.doesNotMatch(payload.applicationContext!,/success|toolResults/);
  assert.throws(()=>dshGroundingPayload('x',{text:'a'.repeat(50001)},{}),/50 KB/);
  });
+
+test('host completed actions survive store recreation, keep actual results, and remain owner scoped',async()=>{
+ const {default:Database}=await import('better-sqlite3');
+ const {createHostActionStore}=await import('../server/complete-apps.js');
+ const db=new Database(':memory:');
+ try{
+  const grounded:any={calls:[],goal:{objective:'Read records'},attempts:[],evaluation:{pass:true,deficiencies:[]},summary:'Observed note',entities:[{name:'Book'}],stats:[]};
+  const job=createHostActionStore(db).save('alice','dsh_app',grounded,'chosen-model');
+  assert.equal(job.status,'done');assert.equal(job.execution.actionRuntime,'host-appworld');
+  assert.equal(job.result.text,'Observed note');
+  assert.deepEqual(createHostActionStore(db).load('alice',job.id),job);
+  assert.equal(createHostActionStore(db).load('bob',job.id),undefined);
+ }finally{db.close();}
+});
