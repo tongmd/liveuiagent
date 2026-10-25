@@ -17,6 +17,6 @@ const options={slots:[{name:'name'},{name:'value'}],actionIds:['actions.create',
 test('actual component contract requires every declared action reachable without inventing unsafe targetless entry points',()=>{
  assert.ok(validateDesignedOverview(components,options));
  const missing=structuredClone(components).filter(x=>!['update','updateLabel'].includes(x.id));missing[0].children=missing[0].children.filter((x:string)=>x!=='update');assert.equal(validateDesignedOverview(missing,options),null);
- const rowOnly=structuredClone(components);rowOnly[0].children=rowOnly[0].children.filter((x:string)=>x!=='update');rowOnly.find(x=>x.id==='itemBody').children.push('update');assert.ok(validateDesignedOverview(rowOnly,{...options,requireItemButtonFor:'actions.update'}),'legitimate existing-item-only action keeps host-issued row identity');
+ const rowOnly=structuredClone(components);rowOnly[0].children=rowOnly[0].children.filter((x:string)=>x!=='update');rowOnly.find(x=>x.id==='itemBody').children.push('update');assert.ok(validateDesignedOverview(rowOnly,{...options,rowActionSlots:{update:[]}}),'legitimate existing-item-only action keeps host-issued row identity');
  assert.ok(validateDesignedOverview(missing,{...options,requireWidgets:false}),'old stored trees remain readable; strict new-design gate only');
 });

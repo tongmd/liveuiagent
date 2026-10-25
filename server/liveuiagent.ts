@@ -1,4 +1,5 @@
 import {writeGuiPlanningDiagnostics} from './gui-planning-diagnostics.js';
+import { consumedSlotsFromIndices, requireConsumedSlots, rowActionSlotMap, assertExactRowBindings, assertRowActionPayload } from './native-action-slots.js';
 import { writeGroundingDiagnostics, type GroundingDiagnosticsReceipt } from './grounding-diagnostics.js';
 import { stateDisplayPaths, stateDisplayFields, stateDisplayValues } from './native-state-display.js';
 import {resolveControlPreparation} from './gui-interaction-planner.js';
@@ -188,6 +189,7 @@ type AgentFunction = {
   // 该动作作用于"列表里的单个对象"(标记完成/移除一项/记某人回款):
   // UI Designer 必须为它放实体行内按钮,validator 条件强制。
   perItem?: boolean;
+  consumedSlots?: string[];
 };
 
 type OrchestratorAgentRequest = {
@@ -269,7 +271,7 @@ type InteractionModel = {
   sortOptions: Array<{ label: string; field: string; direction?: 'asc' | 'desc' }>;
   quickViews: Array<{ id: string; label: string; filter: Record<string, unknown> }>;
   resultSectionLabels: string[];
-  actionDrafts: Array<{ verb: string; target: string; label: string; description: string; perItem?: boolean }>;
+  actionDrafts: Array<{ verb: string; target: string; label: string; description: string; perItem?: boolean; consumedSlots?: string[] }>;
 };
 
 type AgentResult = {
@@ -988,7 +990,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
   appName: string;
   tagline: string;
   accent: string;
-  actions: Array<{ label: string; description: string; perItem?: boolean }>;
+  actions: Array<{ label: string; description: string; perItem?: boolean; consumedSlots?: string[] }>;
   services: string[];
   itemLabel: string;
   presentation: AppPresentation;
@@ -1011,11 +1013,12 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
       'appName: a short, plain functional name identifying the actual purpose and object in the user request, in the same language as that request. Prefer familiar task vocabulary over invented brands, wordplay, vague aspirational words or marketing names. Do not switch to English for a non-English request. If the user explicitly supplies an app name, use that name verbatim. When naming.currentName is supplied, preserve it unless naming.changeRequest explicitly asks to rename this app; unrelated feature or styling changes never authorize renaming.',
       'tagline: ONE short plain sentence telling the user what this app does for them, in the prompt language. Never echo the prompt or the appName verbatim; never use technical words (输入/结果/状态/流程/工作流/agent/后端).',
       'accent: the app\'s brand color as a 6-digit hex (#rrggbb) that FITS the domain — warm appetizing tones for food, violet/indigo for music, greens for cleaning or health, gold/teal for money. Medium saturation and medium-dark brightness so white text stays readable on it; never pale pastels or near-black.',
-      'actions: between 1 and 4 buttons a real consumer app for this need would offer, ordered by importance. Each is {label, description, perItem?}. label: 2-8 characters/words, starts with a verb, prompt language — the first one is the main thing the user came to do (like 给我推荐 or 换一批), never generic verb+field combos like 保存口味 or 刷新食材. description: one sentence describing what happens when tapped. Together the declared actions must cover the FULL lifecycle the need implies — if the need involves playing something, include a stop/pause action; if it involves building a list, include a revise/remove action. Money coming back to the user is RECORDING a repayment (标记已还 / Mark repaid) — never word it as "request" unless the need is explicitly about sending payment requests. Set "perItem": true on the ONE action that operates on a single listed object (mark ONE task done, remove ONE entry, record ONE person\'s repayment) when the lifecycle involves acting on individual items — that action gets a button on each list row.',
+      'actions: between 1 and 4 buttons a real consumer app for this need would offer, ordered by importance. Each is {label, description, perItem?, consumedSlotIndices?}. label: 2-8 characters/words, starts with a verb, prompt language — the first one is the main thing the user came to do (like 给我推荐 or 换一批), never generic verb+field combos like 保存口味 or 刷新食材. description: one sentence describing what happens when tapped. Together the declared actions must cover the FULL lifecycle the need implies — if the need involves playing something, include a stop/pause action; if it involves building a list, include a revise/remove action. Money coming back to the user is RECORDING a repayment (标记已还 / Mark repaid) — never word it as "request" unless the need is explicitly about sending payment requests. Set "perItem": true on at most TWO distinct actions that operates on a single listed object (mark ONE task done, remove ONE entry, record ONE person\'s repayment) when the lifecycle involves acting on individual items — that action gets a button on each list row.',
       'ACTION AFFORDANCES: derive only operations required by the original need. When that need requires both new objects and changing existing values, make the existing-object update explicit in an action label and description, or clearly label a shared create/update action and describe its target-selection semantics. Never assume Add silently updates an existing object. Monitoring/checking values does not save a new target. A conditional later operation needs its own clear existing action and target identity; do not invent extra functionality or broaden service permissions. The actual inputs and selected row must express new values, not only display old ones.',
       'Each slot must be a user-visible instruction slot for a persistent app workflow.',
       'TASK INPUT COVERAGE: derive slots from the user operations before preferences. For each requested create/add/edit operation, include how the user identifies the object and supplies each explicitly user-controlled business value (including values set separately for each object). Existing listed-row identity may supply the target of an item action, but never a new value the user must enter. A global default or rule cannot replace a per-object value. Do not infer that saved/existing items make their editable values unnecessary.',
       'Allocate the 1-6 slots to core task inputs first; remove optional settings to make room. Monitoring, discovery and editing are different operations: settings for when/how to check do not provide a way to add or change an object. Cover the requested lifecycle with reachable inputs and actions, including an empty-list entry path where the user must create or add items. Do not turn every app into a generic Request field.',
+      'Every perItem action MUST declare consumedSlotIndices: an explicit array of zero-based positions in the slots array. Include ALL editable values that action may use or change, including optional labels, destinations, times, zero or false values. Slot required means a value is necessary, not whether the action can consume it. [] means identity-only (for example mark done); never attach unrelated settings or stale amounts. Do not infer a contract from required flags. Omit the property on non-perItem actions. At most two distinct perItem actions; do not invent row actions merely to meet a quota.',
       'Mark required only the inputs needed to perform a requested business operation; optional preferences and settings must remain optional. Order object identity and core editable values before optional preferences. If a row action already carries the existing object identity, do not add a redundant required identity slot just to repeat that selection.',
       'If the prompt is terse (e.g. "每天吃什么"), expand the use case yourself like a product designer: design only the 1-6 inputs actually needed a daily-use consumer app for that need would ask for (preferences, constraints, context, adjustments). hintLabels are optional hints, not requirements.',
       'Do not return generic labels such as prompt, context, state, nextStep, result, input, output, feedback, or notes.',
@@ -1048,7 +1051,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
         slots: [
           { label: 'string', type: 'string|text|select|boolean|date|number', required: 'boolean', placeholder: 'optional string', helpText: 'optional string', options: 'required non-empty [{label, value}] when type is select, omit otherwise' },
         ],
-        actions: [{ label: 'string', description: 'string', perItem: 'optional boolean — true for the one action that operates on a single listed item' }],
+        actions: [{ label: 'string', description: 'string', perItem: 'optional boolean — true for at most two distinct actions operating on one listed item', consumedSlotIndices:'required explicit zero-based slot-index array for every perItem action, [] for identity-only; include optional editable values the action can change' }],
         services: ['exact name from availableServices'],
         itemLabel: 'string — singular noun for one listed item, or "" if none',
         glyph: 'string — exactly one domain-appropriate emoji',
@@ -1071,7 +1074,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
   const rawSlots = Array.isArray(response.slots) ? response.slots : [];
   if(rawSlots.length<1||rawSlots.length>6)throw new Error('Business Slot Agent must return 1-6 slots');
   if(!Array.isArray(response.actions)||response.actions.length<1||response.actions.length>4)throw new Error('Business Slot Agent must return 1-4 actions');
-  const normalized = rawSlots.map((slot: Record<string, unknown>, index: number) => {
+  const normalized: BusinessSlotSpec[] = rawSlots.map((slot: Record<string, unknown>, index: number) => {
     const label = compactLabel(requiredText(slot?.label ?? hintLabels[index], `business slot ${index + 1} missing label`, 24), 16);
     if (isGenericVisibleFieldLabel(label)) throw new Error(`Business Slot Agent returned generic label: ${label}`);
     const type = slot?.type === 'string' || slot?.type === 'text' || slot?.type === 'select' || slot?.type === 'boolean' || slot?.type === 'date' || slot?.type === 'number'
@@ -1088,14 +1091,18 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
       helpText: typeof slot?.helpText === 'string' ? compactText(slot.helpText, 90) : `Save as an editable field for ${subject}.`,
       ...(options ? { options } : {}),
     } satisfies BusinessSlotSpec;
-  }).filter((slot: BusinessSlotSpec, index: number, list: BusinessSlotSpec[]) => list.findIndex((candidate: BusinessSlotSpec) => candidate.name === slot.name) === index);
+  });
+  if(new Set(normalized.map(slot=>slot.name)).size!==normalized.length)throw new Error('Business slot normalized names collide');
   if (normalized.length < 1) throw new Error(`Business Slot Agent must return at least 1 slot for ${subject}`);
-  const actions = response.actions.map((item: Record<string, unknown>, index: number) => ({
+  const actions: Array<{label:string;description:string;perItem:boolean;consumedSlots?:string[]}> = response.actions.map((item: Record<string, unknown>, index: number) => ({
     label: compactLabel(requiredText(item?.label, `Business Slot Agent action ${index + 1} missing label`, 24), 14),
     description: compactText(requiredText(item?.description, `Business Slot Agent action ${index + 1} missing description`, 220), 90),
     perItem: item?.perItem === true,
+    ...(item?.perItem===true?{consumedSlots:consumedSlotsFromIndices(item.consumedSlotIndices,normalized.map(slot=>slot.name))}:{}),
   }));
 
+  const rowActions=actions.filter(action=>action.perItem);
+  if(rowActions.length>2||new Set(rowActions.map(action=>action.label)).size!==rowActions.length)throw new Error('At most two distinct perItem actions are supported');
   const accent = String(response.accent ?? '').trim().toLowerCase();
   if (!/^#[0-9a-f]{6}$/.test(accent)) throw new Error(`Business Slot Agent returned invalid accent: ${accent || '(empty)'}`);
   // 域选择是 agent 决策(按需求语义),严格校验:未知服务名直接失败,无关键词兜底。
@@ -2124,9 +2131,10 @@ function makeProposal(input: {
   };
 }
 
-export function makeFunctions(drafts: Array<{ verb: string; target: string; label: string; description: string; perItem?: boolean }>, signature: string): AgentFunction[] {
+export function makeFunctions(drafts: Array<{ verb: string; target: string; label: string; description: string; perItem?: boolean; consumedSlots?: string[] }>, signature: string): AgentFunction[] {
+  if(drafts.filter(draft=>draft.perItem===true).length>2)throw new Error('At most two distinct perItem actions are supported');
  if(drafts.length<1||drafts.length>4)throw new Error('Native functions require 1-4 declared actions');
- return drafts.map((draft,index)=>({id:`agent_turn_${index+1}`,label:draft.label,verb:draft.verb,target:draft.target,capability:`agent.app.turn.${signature}.${index+1}`,description:draft.description,entryAgent:'agents.orchestrator',agentChain:[],handoffs:[],schedulerClass:index===0?'reasoning':'balanced',...(draft.perItem?{perItem:true}:{})}));
+ return drafts.map((draft,index)=>({id:`agent_turn_${index+1}`,label:draft.label,verb:draft.verb,target:draft.target,capability:`agent.app.turn.${signature}.${index+1}`,description:draft.description,entryAgent:'agents.orchestrator',agentChain:[],handoffs:[],schedulerClass:index===0?'reasoning':'balanced',...(draft.perItem?{perItem:true,consumedSlots:requireConsumedSlots(draft.consumedSlots)}:{})}));
 }
 
 function wireFunctionsWithOrchestration(functions: AgentFunction[], orchestration: AgentOrchestrationPlan): AgentFunction[] {
@@ -2262,7 +2270,7 @@ export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWo
     target: legacyDrafts[index]?.target || businessFields[0].label,
     label: slotDesign.actions[index].label,
     description: slotDesign.actions[index].description,
-    ...(slotDesign.actions[index].perItem ? { perItem: true } : {}),
+    ...(slotDesign.actions[index].perItem ? { perItem: true, consumedSlots:slotDesign.actions[index].consumedSlots } : {}),
   }));
   const fields = deriveFieldsFromPrompt(prompt, subject, tokens, { primaryFieldName, secondaryFieldName, focus, resultFocus }, businessFields);
   const promptToolCapabilities = deriveToolCapabilities(prompt, tokens);
@@ -2640,7 +2648,7 @@ function makeActions(plan: AgentPlan) {
     {
       type: 'agent_action',
       label: fn.label,
-      ...(fn.perItem ? { perItem: true } : {}),
+      ...(fn.perItem ? { perItem: true, consumedSlots:requireConsumedSlots(fn.consumedSlots,plan.interaction.businessFields.map(field=>field.name)) } : {}),
       agent: fn.entryAgent,
       input: 'event.payload',
       orchestrationRouteId: `route_${fn.id}`,
@@ -2727,7 +2735,7 @@ function makeWorkflow(plan: AgentPlan) {
   const routes = plan.functions.flatMap((fn, index) => {
     const route = requireFunctionRoute(plan, fn.id);
     return [
-      ...(index === 0 ? [{
+      ...(index === 0 && !fn.perItem ? [{
         componentId: inputSection,
         event: 'onSubmit',
         actionId: `actions.${fn.id}.run`,
@@ -2738,7 +2746,7 @@ function makeWorkflow(plan: AgentPlan) {
         handoffs: route.handoffs,
         schedulerClass: route.schedulerClass,
         payloadSource: 'event.formData' as const,
-        payloadFields: plan.interaction.businessFields.map((field) => field.name),
+        payloadFields: fn.perItem ? ['entityName','entityId','sourceComponentId',...requireConsumedSlots(fn.consumedSlots,plan.interaction.businessFields.map(field=>field.name))] : plan.interaction.businessFields.map((field) => field.name),
         expectedFeedbackComponentId: resultSection,
         stateWrites: route.stateWrites,
       }] : []),
@@ -2753,7 +2761,7 @@ function makeWorkflow(plan: AgentPlan) {
         handoffs: route.handoffs,
         schedulerClass: route.schedulerClass,
         payloadSource: 'event.payload' as const,
-        payloadFields: plan.interaction.businessFields.map((field) => field.name),
+        payloadFields: fn.perItem ? ['entityName','entityId','sourceComponentId',...requireConsumedSlots(fn.consumedSlots,plan.interaction.businessFields.map(field=>field.name))] : plan.interaction.businessFields.map((field) => field.name),
         expectedFeedbackComponentId: resultSection,
         stateWrites: route.stateWrites,
       },
@@ -2810,7 +2818,7 @@ function makeWorkflow(plan: AgentPlan) {
 }
 
 type A2uiPlan = Pick<AgentPlan, 'name' | 'description' | 'subject' | 'sourcePrompt' | 'signature' | 'collection' | 'result' | 'orchestration'> & {
-  functions: Array<Pick<AgentFunction, 'id' | 'label' | 'perItem'>>;
+  functions: Array<Pick<AgentFunction, 'id' | 'label' | 'perItem' | 'consumedSlots'>>;
   interaction: Pick<InteractionModel, 'historyTitle' | 'inputTitle' | 'inputDescription' | 'businessFields' | 'primaryFieldName' | 'secondaryFieldName'>;
   designedOverview?: Array<Record<string, unknown>>;
 };
@@ -2822,7 +2830,7 @@ function deriveA2uiPlan(stored: StoredApp): A2uiPlan {
   const functions = Object.entries(actions).map(([id, action]: [string, any]) => ({
     id: id.replace(/\.run$/, ''),
     label: requiredText(action.label, `action ${id} missing label for A2UI`, 80),
-    ...(action.perItem === true ? { perItem: true } : {}),
+    ...(action.perItem === true ? { perItem: true,consumedSlots:requireConsumedSlots(action.consumedSlots) } : {}),
   }));
   const { collection } = firstModel(stored.appPackage);
   const runtimeResult = stored.runtimeState.intentResult as AgentResult | undefined;
@@ -2974,7 +2982,7 @@ function workflowStepView(route: { id: string; entryActionId: string }, index: n
 // 拒因写进 lastDesignRejectReason(同步校验,无竞态):泛化反馈 3 轮收敛不了,
 // 设计器重试环要拿到"哪个组件哪条规则"级别的精确反馈。
 let lastDesignRejectReason = '';
-export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: string; type?: FieldType; required?: boolean; options?: Array<{ label: string; value: string }> }>; actionIds: string[]; requireItemButtonFor?: string; requireWidgets?: boolean }): Array<Record<string, unknown>> | null {
+export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: string; type?: FieldType; required?: boolean; options?: Array<{ label: string; value: string }> }>; actionIds: string[]; rowActionSlots?: Record<string,string[]>; requireWidgets?: boolean }): Array<Record<string, unknown>> | null {
   lastDesignRejectReason = '';
   const reject = (why: string) => { if (!lastDesignRejectReason) lastDesignRejectReason = why; return null; };
   if (!Array.isArray(raw) || raw.length < 3 || raw.length > 70) return reject('components must be an array of 3-70 objects');
@@ -2992,6 +3000,9 @@ export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ na
   const variantForType: Record<string, string> = { date: 'date', select: 'choice', boolean: 'toggle', number: 'stepper' };
   const typedVariants = new Set(['date', 'choice', 'toggle', 'stepper']);
   const actionSet = new Set(opts.actionIds.map((id) => id.replace(/^actions\./, '')));
+  const rowActions=opts.rowActionSlots ?? {};
+  if(Object.keys(rowActions).length>2)return reject('at most TWO perItem actions');
+  try{for(const [id,slots]of Object.entries(rowActions)){if(!actionSet.has(id))return reject('row action is not declared');requireConsumedSlots(slots,slotSet);}}catch(error){return reject((error as Error).message);}
   const byId = new Map<string, Record<string, unknown>>();
   for (const item of raw) {
     if (!item || typeof item !== 'object') return reject('every component must be an object');
@@ -3281,7 +3292,7 @@ export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ na
         // (entityName/id 是行对象字段,不需要渲染期新鲜度),渲染注入只补无 context 的按钮。
         // 变体强制 default(主按钮属于 composer),每个条目模板至多一个行内按钮。
         let slotContext: Record<string, { path: string }>;
-        try { slotContext = nativeRowSlotContext((node.action as Record<string, any>)?.event?.context, slotSet); }
+        try { if(!Object.hasOwn(rowActions,actionName))throw new Error('row Button must reference a declared perItem action'); slotContext = nativeRowSlotContext((node.action as Record<string, any>)?.event?.context, slotSet);assertExactRowBindings(slotContext,rowActions[actionName]); }
         catch (error) { return bad(String((error as Error).message)); }
         Object.keys(slotContext).forEach((slot) => rowContextSlots.add(slot));
         itemButtonCount += 1;
@@ -3291,6 +3302,7 @@ export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ na
         out.push({ id: `d_${id}`, component: 'Button', child: ref(node.child), variant: 'default', action: { event: { name: `actions.${actionName}`, context: { ...slotContext, entityName: { path: '/entityName' }, entityId: { path: '/id' } } } }, checks: [] });
         return done(true);
       }
+      if(Object.hasOwn(rowActions,actionName))return bad('perItem action requires an entity-bound row Button, not a targetless composer duplicate');
       topLevelButtonCount += 1;
       composerButtonActions.add(actionName);
       // Context is injected at render time so slot bindings always match the live fields.
@@ -3324,10 +3336,8 @@ export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ na
   if (!resultLineCount) return reject('missing a Text bound to /draft/result');
   if (!itemNameBinds || !itemDetailBinds) return reject('the /entities item subtree must contain Texts bound to BOTH name and detail');
   // perItem 动作强制行按钮:该动作作用于单个列表对象,没有行按钮用户就点不到具体那一行。
-  if (opts.requireItemButtonFor) {
-    const required = opts.requireItemButtonFor.replace(/^actions\./, '');
-    if (!itemButtonActions.has(required)) return reject(`the action "${required}" is perItem — the /entities item Card MUST contain a Button bound to it (found: ${[...itemButtonActions].join(', ') || 'none'})`);
-  }
+  for(const required of Object.keys(rowActions))if(!itemButtonActions.has(required))return reject(`the action "${required}" is perItem — the /entities item Card MUST contain its Button`);
+
   // 富 UI 门:只在设计期开(requireWidgets),读路径不开 —— makeA2uiSurface 每次渲染都会
   // 重新校验旧 stored app 的树,那些树是纯 Text 的,在读路径加门会让所有老应用打不开。
   if (opts.requireWidgets) {
@@ -3783,8 +3793,8 @@ function makeA2uiSurface(plan: A2uiPlan, actionIds: string[], currentState: Retu
   const designed = validateDesignedOverview(plan.designedOverview, {
     slots: plan.interaction.businessFields.map((field) => ({ name: field.name, type: field.type, options: field.options })),
     actionIds: actionButtons.map((button) => button.actionId),
-    // 旧 stored app 的 functions 无 perItem → undefined → 不加门,渲染兼容。
-    requireItemButtonFor: (() => { const fn = plan.functions.find((candidate) => candidate.perItem); return fn ? `actions.${fn.id}.run` : undefined; })(),
+    // 每个行操作复用 package 中同一份明确输入契约。
+    rowActionSlots:rowActionSlotMap(plan.functions.map(fn=>({actionId:`${fn.id}.run`,perItem:fn.perItem,consumedSlots:fn.consumedSlots})),plan.interaction.businessFields.map(field=>field.name)),
   });
   if (!designed) throw new Error(`app ${plan.name} missing a valid agent-designed surface (no template fallback)`);
   const componentsMessage = messages.find((message) => (message as Record<string, any>).updateComponents) as Record<string, any>;
@@ -6342,7 +6352,7 @@ export async function designAppSurface(input: {
   description: string;
   sourcePrompt: string;
   businessFields: Array<{ name: string; label: string; type?: FieldType; required?: boolean; options?: Array<{ label: string; value: string }> }>;
-  actions: Array<{ actionId: string; label: string; perItem?: boolean }>;
+  actions: Array<{ actionId: string; label: string; perItem?: boolean; consumedSlots?: string[] }>;
   llm?: LlmRuntimeConfig;
 }): Promise<Array<Record<string, unknown>>> {
   const contract = [
@@ -6365,15 +6375,16 @@ export async function designAppSurface(input: {
     'Bindable paths: /entitiesTitle (content-list header), /entitiesEmptyHint (empty-state hint), /draft/result (latest outcome sentence), /draft/state (short workflow status — Badge only, NEVER the StatBlock hero), /draft/statLabel + /draft/statValue (the app\'s first REAL computed aggregate: the StatBlock hero pair), /draft/stats (the aggregate-summary line: cumulative totals / remaining counts / countdowns), /stats (StatGrid only: the REMAINING aggregates after the first — the hero one is not repeated here), /draft/slots/<slot>. Inside the /entities item subtree, Texts and widgets may bind {"path":"name"} (group-prefixed display name), {"path":"title"} (the bare name, use this one when the row also carries a Badge on {"path":"tag"}), {"path":"detail"} and {"path":"tag"} — the item must be a small Card showing BOTH a name/title and detail.',
     'Inside the /entities item subtree, Text, Badge and widget bindings may also use appState/<declaredField> from the supplied persistedStateFields whitelist. These are owner/app-local SQLite preferences or targets attached to that exact real entity by appRecordId; they are NOT external service results. Use a short literal label next to the bound value. Missing/unassociated/null values display Not set, never invent zero, a date or success. Do not bind record IDs, owner, revision, credentials, arbitrary nested paths or /appRecords indices, and never create a shadow entity list.',
     'Layout rules: group shortText, date and stepper inputs two per Row so the composer stays compact; longText, choice and toggle inputs each take a full row (pills and switches need the width). Put composer action Buttons together in one Row at the end of the composer.',
-    'Per-entity row button: when an action below is marked perItem: true, the /entities item Card MUST additionally contain a Button (variant default, never primary) bound to THAT action, with its own short child Text label (1-18 chars, e.g. 标记完成) — it acts on the row it sits in. At most TWO row Buttons per item, each bound to a DIFFERENT action; row-only entry points are allowed for per-item actions and always carry selected entity identity; do not add a targetless composer duplicate unless it has an explicit valid target selector. When no action is perItem, OMIT row buttons entirely.',
-    'Create, update and conditional follow-up affordances must match the supplied action labels and descriptions. Show an editable declared composer field for each new value; a read-only current value beside a row is not an editor. A row action that changes an existing value must pass its required new-value slots from the composer, together with the host-selected row identity. Do not relabel a create-only action as an update or imply that a price/check/read action saves user edits. Keep every supplied action reachable through its legitimate composer or entity-bound row entry; a per-item-only operation must not gain an unsafe targetless composer button. Creation needs a composer entry when the list is empty. Do not invent an action or a service permission to make a missing capability appear supported.',
-    'A row Button that needs a NEW input value (for example a destination or amount) MUST explicitly declare ONLY those required known business slots in action.event.context: {slot_name:{path:"/draft/slots/slot_name"}}. Read that value from the existing composer TextField; do not duplicate inputs inside rows or attach business actions to onchange. Do not pass unrelated or stale fields to actions that only need entity identity (for example mark done). Identity is injected by the host: never declare entityName, entityId, sourceComponentId or arbitrary context keys. Each declared key must equal its exact known slot name and path; no literals, nested objects or other paths.',
+    'Per-entity row button: when an action below is marked perItem: true, the /entities item Card MUST additionally contain a Button (variant default, never primary) bound to THAT action, with its own short child Text label (1-18 chars, e.g. 标记完成) — it acts on the row it sits in. At most TWO row Buttons per item, each bound to a DIFFERENT action; row-only entry points are allowed for per-item actions and always carry selected entity identity; do not add a targetless composer duplicate; only entity-bound row entry points are supported for perItem actions. When no action is perItem, OMIT row buttons entirely.',
+    'Create, update and conditional follow-up affordances must match the supplied action labels and descriptions. Show an editable declared composer field for each new value; a read-only current value beside a row is not an editor. A row action that changes an existing value must pass exactly its declared consumedSlots, including optional editable values, from the composer together with the host-selected row identity. Do not relabel a create-only action as an update or imply that a price/check/read action saves user edits. Keep every supplied action reachable through its legitimate composer or entity-bound row entry; a per-item-only operation must not gain an unsafe targetless composer button. Creation needs a composer entry when the list is empty. Do not invent an action or a service permission to make a missing capability appear supported.',
+    'A row Button that needs a NEW input value (for example a destination or amount) MUST explicitly declare exactly the consumedSlots declared for THAT action, including optional editable values; every binding must use known business slots in action.event.context: {slot_name:{path:"/draft/slots/slot_name"}}. Read that value from the existing composer TextField; do not duplicate inputs inside rows or attach business actions to onchange. Do not pass unrelated or stale fields to actions that only need entity identity (for example mark done). Identity is injected by the host: never declare entityName, entityId, sourceComponentId or arbitrary context keys. Each declared key must equal its exact known slot name and path; no literals, nested objects or other paths.',
     'Design rules: the root component MUST have id "overview" (a Column). Make it feel like a real consumer app for THIS intention, and it renders in a PHONE-WIDTH column (~390px) — single column, no wide side-by-side layouts. Shape it top to bottom: a StatBlock hero showing the app\'s live state; a StatGrid when the app has real aggregates; a SectionHeading over the content list; the List bound to /entities (each item a small Card with the record title and detail, plus a Badge on {"path":"tag"} when rows carry categories); the /draft/result line; then ONE compact composer section (its own SectionHeading + the TextFields) ending in a Row of composer Buttons for non-item-only actions (first one primary); item-only actions belong to their entity-bound rows. Prefer a widget over a sentence: aggregates belong in StatGrid, status in a Badge, section labels in SectionHeading — plain Texts are for the row title/detail and the /draft/result line. No internal jargon (never: agent, workflow, 记录, 流程, orchestration). Never repeat the app name or its description as captions or section labels — every visible string must add new information. All copy in the same language as the intention. At most 30 components, ids short.',
     'Every TextField label must be a SPECIFIC human label of 2-18 characters — count them: English labels run long, so prefer compact forms ("Unpaid balance", not "Carry unpaid balance"). Button child Texts are literal 1-18 chars.',
     'Respond ONLY with JSON: {"components": [ ... ]}',
   ].join('\n');
   const slots = input.businessFields.map((field) => ({ name: field.name, type: field.type, required: field.required, options: field.options }));
   const actionIds = input.actions.map((action) => action.actionId);
+  const rowActionSlots=rowActionSlotMap(input.actions,input.businessFields.map(field=>field.name));
   let feedback = '';
   for (let round = 1, maxRounds = designAttempts(); round <= maxRounds; round++) {
     const startedAt = Date.now();
@@ -6411,7 +6422,7 @@ export async function designAppSurface(input: {
       feedback = `The model call itself failed (${compactText(String((error as Error).message), 100)}); produce the components JSON again.`;
       continue;
     }
-    const valid = validateDesignedOverview(decision?.components, { slots, actionIds, requireItemButtonFor: input.actions.find((action) => action.perItem)?.actionId, requireWidgets: true });
+    const valid = validateDesignedOverview(decision?.components, { slots, actionIds, rowActionSlots, requireWidgets: true });
     console.warn(`[ui-designer] attempt ${round}: ${Array.isArray(decision?.components) ? decision.components.length : 'no'} components, valid=${Boolean(valid)}${valid ? '' : `, reject: ${compactText(lastDesignRejectReason, 200)}`}, ${Date.now() - startedAt}ms`);
     if (!valid && decision?.components) console.warn(`[ui-designer] raw: ${JSON.stringify(decision.components).slice(0, 2000)}`);
     if (valid) {
@@ -6685,7 +6696,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         description: String(plan.description || plan.subject),
         sourcePrompt: nextPrompt,
         businessFields: plan.interaction.businessFields,
-        actions: Object.entries((nextPackage.actions as Record<string, any>).actions).map(([id, action]: [string, any]) => ({ actionId: `actions.${id}`, label: String(action?.label || id), perItem: action?.perItem === true })),
+        actions: Object.entries((nextPackage.actions as Record<string, any>).actions).map(([id, action]: [string, any]) => ({ actionId: `actions.${id}`, label: String(action?.label || id), perItem: action?.perItem === true, ...(action?.perItem===true?{consumedSlots:action.consumedSlots}:{}) })),
         llm: input.llm,
       }),
       () => designAppPreview({
@@ -6919,7 +6930,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
           description: String(appPackage.manifest.description || plan.subject),
           sourcePrompt: prompt,
           businessFields: plan.interaction.businessFields,
-          actions: Object.entries((appPackage.actions as Record<string, any>).actions).map(([id, action]: [string, any]) => ({ actionId: `actions.${id}`, label: String(action?.label || id), perItem: action?.perItem === true })),
+          actions: Object.entries((appPackage.actions as Record<string, any>).actions).map(([id, action]: [string, any]) => ({ actionId: `actions.${id}`, label: String(action?.label || id), perItem: action?.perItem === true, ...(action?.perItem===true?{consumedSlots:action.consumedSlots}:{}) })),
           llm: input.llm,
         }),
         () => designAppPreview({
@@ -7053,6 +7064,17 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const actionId = normalizeActionId(input.actionId);
       const action = requiredObject<Record<string, any>>((stored.appPackage.actions as any).actions, `app ${input.appId} missing actions`)[actionId];
       if (!action) throw httpError(`action not found: ${actionId}`, 404);
+      const rawPayload = extractPayload(input.eventPayload);
+      if (action.perItem === true) {
+        try {
+          assertRowActionPayload(action, rawPayload, requiredArray<BusinessSlotSpec>((stored.runtimeState.interaction as InteractionModel)?.businessFields, 'perItem action needs declared business fields').map(field => field.name),
+            (Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : []).map((row: any) => ({ entityName: compactText(String(row.name || ''), 64), entityId: row.id === undefined || row.id === null ? '' : compactText(String(row.id), 24) })),
+            (stored.appPackage.ui.meta as any)?.a2ui, actionId);
+        } catch (error) {
+          // This is a pre-dispatch contract rejection, not an unknown write outcome.
+          throw httpError((error as Error).message, 400);
+        }
+      }
       assertToolGatewayReady(action, actionId, appWorldBridge);
       const traceLog: AgentTrace[] = [];
       const permissions: string[] = requiredArray<unknown>(action.permissions, `action ${actionId} missing permissions`).map(String);
@@ -7066,7 +7088,6 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         throw httpError('this app requires an AppWorld bridge; local execution cannot substitute for connected business data', 501);
       }
 
-      const rawPayload = extractPayload(input.eventPayload);
       // 行内实体按钮携带的精确目标(名字+id):流向 grounding 契约与执行器,
       // 后端必须按 id 恰好操作这一个对象。
       const targetEntity = typeof rawPayload.entityName === 'string' && (rawPayload.entityName as string).trim()
