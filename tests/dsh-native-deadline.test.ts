@@ -69,3 +69,45 @@ test('host action budget starts before saved-app lookup and cannot be extended b
  const response=await fetch(`http://127.0.0.1:${(service.address() as any).port}/agent/complete/apps/dsh_12345678-1234-1234-1234-123456789abc/action`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({prompt:'Update the actual record',deadlineAt:Date.now()+600000,context:{deadlineAt:Date.now()+600000}})});const result:any=await response.json();
  assert.equal(response.status,504);assert.equal(result.code,'action_deadline_exceeded');assert.match(result.error,/not verified|may already/);assert.equal(actions,0);assert.equal(db.prepare('SELECT count(*) AS n FROM complete_host_actions').get().n,1);
 });
+
+function earlyRetryTimer(t:any,start:number,wake:(delay:number,index:number)=>number){
+ let now=start;const delays:number[]=[];
+ t.mock.method(Date,'now',()=>now);
+ t.mock.method(globalThis,'setTimeout',(callback:()=>void,delay:number)=>{
+  delays.push(delay);const index=delays.length-1;
+  queueMicrotask(()=>{now=wake(delay,index);callback();});
+  return {} as ReturnType<typeof setTimeout>;
+ });
+ return{delays,now:()=>now};
+}
+
+test('a capped retry delay rejects even when its timer wakes one millisecond early',async t=>{
+ for(const requested of [60,1000]){
+  const clock=earlyRetryTimer(t,1000,()=>1059);
+  await assert.rejects(withActionDeadline(1060,()=>actionRetryDelay(requested)),(error:any)=>error.code==='action_deadline_exceeded');
+  assert.deepEqual(clock.delays,[60]);assert.equal(clock.now(),1059,'the rejection does not rely on the clock reaching the deadline');
+  t.mock.restoreAll();
+ }
+});
+
+test('a shorter retry delay succeeds without extending its inherited absolute deadline',async t=>{
+ const clock=earlyRetryTimer(t,1000,(_delay,index)=>index===0?1040:1059);
+ await withActionDeadline(1060,()=>withActionDeadline(9000,async()=>{
+  await actionRetryDelay(40);assert.equal(remainingActionMs(),20);
+  await assert.rejects(actionRetryDelay(40),(error:any)=>error.code==='action_deadline_exceeded');
+  assert.equal(remainingActionMs(),1,'an early timer wake cannot authorize the unfinished second backoff');
+ }));
+ assert.deepEqual(clock.delays,[40,20]);
+});
+
+test('an already expired retry budget schedules no timer',async t=>{
+ const clock=earlyRetryTimer(t,1060,()=>1060);
+ await assert.rejects(withActionDeadline(1060,()=>actionRetryDelay(1)),(error:any)=>error.code==='action_deadline_exceeded');
+ assert.deepEqual(clock.delays,[]);
+});
+
+test('a short retry still rejects if scheduling resumes after the absolute deadline',async t=>{
+ const clock=earlyRetryTimer(t,1000,()=>1060);
+ await assert.rejects(withActionDeadline(1060,()=>actionRetryDelay(10)),(error:any)=>error.code==='action_deadline_exceeded');
+ assert.deepEqual(clock.delays,[10]);
+});

@@ -21,6 +21,12 @@ export function withActionDeadline<T>(deadline: number, work: () => T): T {
 // Audit snapshots are read-only observations of business state, not new actions.
 export function withoutActionDeadline<T>(work: () => T): T { return budgets.run(undefined, work); }
 export async function actionRetryDelay(ms: number) {
-  await new Promise(resolve => setTimeout(resolve, remainingActionMs(ms)));
+  const remaining = remainingActionMs();
+  const consumesBudget = actionDeadlineAt() !== undefined && ms >= remaining;
+  await new Promise(resolve => setTimeout(resolve, Math.min(ms, remaining)));
+  // Node timers may wake just before the requested millisecond boundary. A
+  // backoff that cannot fit was not completed: never start another attempt
+  // merely because that early wake left a positive fraction of the budget.
+  if (consumesBudget) throw actionDeadlineError();
   remainingActionMs();
 }
