@@ -18,7 +18,7 @@ async function setup(t:any,overrides:any={}){
 }
 test('real HTTP pure step endpoint uses actual selected DSH adapter and keeps provider/personal data off the planner input and response',async t=>{
  const {post,modelInputs,counts}=await setup(t);const {status,body}=await post(input());assert.equal(status,200);assert.deepEqual(body.step,{kind:'fill',target:'e1',value:'Piranesi'});assert.deepEqual(body.execution,{harness:'dsh',model:'fixture-selected'});assert.equal(body.plannerModelCalls,1);assert.equal(body.providerRequests,null);assert.deepEqual(counts(),{plans:1,dispatches:1});
- assert.equal(modelInputs[0].tools,undefined);const request=JSON.stringify(modelInputs);assert.ok(!request.includes('private-provider-key'));assert.ok(!request.includes('private personal context'));assert.ok(!JSON.stringify(body).includes('private-'));assert.equal(JSON.parse(modelInputs[0].messages[1].content).userMessage,input().userMessage);
+ assert.equal(modelInputs[0].max_tokens,8192,'the bounded completion allowance must include reasoning before the step JSON');assert.equal(modelInputs[0].max_completion_tokens,undefined);assert.equal(modelInputs[0].tools,undefined);const request=JSON.stringify(modelInputs);assert.ok(!request.includes('private-provider-key'));assert.ok(!request.includes('private personal context'));assert.ok(!JSON.stringify(body).includes('private-'));assert.equal(JSON.parse(modelInputs[0].messages[1].content).userMessage,input().userMessage);
 });
 test('endpoint rejects gold/future/provider fields and unauthorized app before any inference',async t=>{
  const {post,counts}=await setup(t);
@@ -50,4 +50,11 @@ test('planner parent deadline only shortens inference budget and late decisions 
  assert.equal((await post({...input(),remainingBudgetMs:20000,stepsRemaining:20,clicksRemaining:8})).status,200);assert.ok(budgets[0]>0&&budgets[0]<=1000);
  assert.equal((await post({...input(),remainingBudgetMs:500,stepsRemaining:1,clicksRemaining:0})).status,200);assert.ok(budgets[1]>0&&budgets[1]<=500);
  assert.equal((await post({...input(),remainingBudgetMs:0})).status,400);assert.equal((await post({...input(),clicksRemaining:41})).status,400);
+});
+
+
+test('bounded GUI planner still rejects truncated DSH completion once without retry or any action',async t=>{
+ let adapterCalls=0;
+ const {post,counts}=await setup(t,{resolve:()=>({harness:'dsh',llm:{model:'fixture-selected',chatCompletion:async(request:any)=>{adapterCalls++;assert.equal(request.max_tokens,8192);throw Object.assign(Error('Native model output reached its token limit'),{code:'dsh_native_output_truncated'});}}})});
+ const result=await post(input());assert.equal(result.status,500);assert.equal(result.body.code,'dsh_native_output_truncated');assert.equal(result.body.plannerModelCalls,1);assert.equal(adapterCalls,1);assert.equal(counts().plans,1);assert.equal(result.body.step,undefined);
 });

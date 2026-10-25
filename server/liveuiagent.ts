@@ -960,7 +960,9 @@ function deriveBusinessSlotLabels(prompt: string, subject: string, tokens: strin
 // Read-only GUI planning uses the same configured Native/DSH inference adapter.
 export async function planNativeGuiInteractionStep(system: string, input: unknown, llm: LlmRuntimeConfig) {
   return openAIChatJson({label: 'Native GUI Step Planner', llm: {...llm, personalContext: undefined}, system,
-    user: JSON.stringify(input), temperature: 0, maxTokens: 1500});
+    // Completion caps include model reasoning, not only the small final step JSON.
+    // Match the existing Native role budget while keeping the planner/action deadlines.
+    user: JSON.stringify(input), temperature: 0, maxTokens: 8192});
 }
 
 export async function makeBusinessFields(prompt: string, subject: string, tokens: string[], context: {
