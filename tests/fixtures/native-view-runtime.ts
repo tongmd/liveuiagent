@@ -19,4 +19,3 @@ export async function viewRuntimeFixture(t:any,serviceRows:any[]=[],legacyRows?:
  const data={records:[{id:'turn1',prompt:'Read parcels',context:'Current parcels',state:'open',nextStep:'Refresh',result:'Previous parcels',subject:'Current parcels',scope:'All',filter:'All'}]};
  const reset=()=>db.prepare('INSERT OR REPLACE INTO agent_apps(app_id,name,description,package_json,data_json,runtime_state_json,version,owner) VALUES(?,?,?,?,?,?,?,?)').run('parcels','Parcels','Read parcels',JSON.stringify(pkg),JSON.stringify(data),JSON.stringify(state),'1','fixture-owner');reset();return{runtime,reset,reopen:()=>{const handle=new Database(path.join(dir,'runtime.db'));reopened.push(handle);return createLiveUIRuntime(handle,{registryRoot:path.join(dir,'apps'),projectRoot:dir});},stored:()=>db.prepare('SELECT runtime_state_json FROM agent_apps WHERE app_id=?').get('parcels')as any};
 }
-
