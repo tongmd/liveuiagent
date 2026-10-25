@@ -1,3 +1,4 @@
+import { writeGroundingDiagnostics, type GroundingDiagnosticsReceipt } from './grounding-diagnostics.js';
 import { stateDisplayPaths, stateDisplayFields, stateDisplayValues } from './native-state-display.js';
 import {resolveControlPreparation} from './gui-interaction-planner.js';
 import { createAppStateAdapter, appRecordFields, hydrateAppState, type AppStateAdapter } from './native-app-state.js';
@@ -5823,7 +5824,7 @@ export async function runAppWorldGrounding(input: {
   // 语义的回合知道上一批产出了什么。
   recentTurns?: Array<Record<string, unknown>>;
   llm?: LlmRuntimeConfig;
-}): Promise<{ calls: AppWorldCallResult[]; appStateCalls: Array<Record<string, unknown>>; appStateExecutionEvidence: {attemptedCalls:number;successfulCalls:number;unknownDispatchOutcomes:number;unknownWriteOutcomes:number}; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; deadlineExceeded?: boolean; executionEvidence?: { attemptedApiCalls: number; successfulApiCalls: number; unknownDispatchOutcomes: number; unknownWriteOutcomes: number; notStartedApiCalls: number; totalApiAttemptLimit: number; zeroSuccessfulCallCause?: string } } | null> {
+}): Promise<{ calls: AppWorldCallResult[]; appStateCalls: Array<Record<string, unknown>>; appStateExecutionEvidence: {attemptedCalls:number;successfulCalls:number;unknownDispatchOutcomes:number;unknownWriteOutcomes:number}; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; diagnostics?: GroundingDiagnosticsReceipt; deadlineExceeded?: boolean; executionEvidence?: { attemptedApiCalls: number; successfulApiCalls: number; unknownDispatchOutcomes: number; unknownWriteOutcomes: number; notStartedApiCalls: number; totalApiAttemptLimit: number; zeroSuccessfulCallCause?: string } } | null> {
   // The ablation keeps planning/catalog access but supplies no external facts.
   // Guard the shared executor as well as its current callers.
   if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') return null;
@@ -5921,6 +5922,9 @@ export async function runAppWorldGrounding(input: {
   let evaluation: { pass: boolean; deficiencies: string[] } | null = null;
   let feedback: string[] = [];
   let projectionReadOnlyRepair = false;
+  const diagnosticsEnabled=Boolean(process.env.LIVEUIAGENT_GROUNDING_DIAGNOSTICS_ROOT);
+  const diagnosticProposals: Array<Record<string, unknown>> = [];
+  const diagnosticReviews: Array<Record<string, unknown>> = [];
   // ② propose(真实执行)→ ③ 独立 evaluator 评审 → ④ 按缺口驱动的多轮修复:
   // goal 数得出缺几件,轮数跟缺口走(上限 4);一轮零新增成功调用即停(防旋转)。
   let callsAtRoundStart = 0;
@@ -5941,6 +5945,21 @@ export async function runAppWorldGrounding(input: {
   // 不能因 calls(只计 bridge 调用)为空而被丢弃成 null → 502。
   let webCallCount = 0;
   let lastReadAt = -1;
+  const persistDiagnostics = (terminal: string, error?: unknown) => diagnosticsEnabled ? writeGroundingDiagnostics({
+    terminal,
+    request: {appName:input.appName,appPurpose:input.appPurpose,actionLabel:input.actionLabel,actionDescription:input.actionDescription,payload:input.payload,fields:input.fields,targetEntity:input.targetEntity},
+    goal, goalProposal:{objective:goalRaw?.objective,targetCount:goalRaw?.targetCount,deliverables:goalRaw?.deliverables,expectedNumbers:goalRaw?.expectedNumbers,projectionPolicy:goalRaw?.projectionPolicy},
+    priorProjection:input.priorProjection ?? null,
+    proposals:diagnosticProposals, finalProposedEntities:diagnosticProposals.at(-1)?.entities ?? null,
+    finalProposedStats:diagnosticProposals.at(-1)?.stats ?? null,
+    normalizedProjection:{summary,entities,stats,entitiesProvided},
+    apiHistory:historyLog, appStateCalls,
+    orderedHostCalls:[...historyLog,...appStateCalls].filter(entry=>typeof entry.order==='number').sort((a,b)=>Number(a.order)-Number(b.order)),
+    reviews:diagnosticReviews, evaluation, projectionReadOnlyRepair,
+    executionEvidence:executionEvidence(),appStateExecutionEvidence:appStateExecutionEvidence(),
+    ...(error?{exception:{name:(error as Error).name,code:(error as any).code || 'grounding_exception'}}:{}),
+    limitations:['Prior projection and proposed entities/stats are unverified proposals, not truth.', 'Failure responses unavailable from the bridge are not reconstructed; only actual recorded host evidence is retained.', 'No LLM configuration, messages, reasoning, provider credentials, CLI home or replay instructions are collected.'],
+  }) : undefined;
   try {
   for (let round = 1; round <= 4; round++) {
     // Prior rows remain context only; each repair round must provide its own final list.
@@ -6013,6 +6032,7 @@ export async function runAppWorldGrounding(input: {
         continue;
       }
       if (decision?.done || (mustFinish && !decision?.call && !Array.isArray(decision?.calls))) {
+        if(diagnosticsEnabled)diagnosticProposals.push({round,step,done:decision?.done,summary:decision?.summary,entities:decision?.entities ?? null,stats:decision?.stats ?? null,acceptedForEvaluation:false});
         // Read-back 硬门:有写操作而其后没有任何读调用,实体列表就是 agent 的自述
         // (删除后回显旧列表的根因)。预算尾部也不能豁免读后验证。
         const mailGaps = mailEvidence.deficiencies();
@@ -6024,6 +6044,7 @@ export async function runAppWorldGrounding(input: {
           historyLog.push({ ok: false, api: '(read-back-gate)', error: 'entities must come from a READ call made AFTER your last write — fetch the current full list with a read API first; app-local writes also need a subsequent app_state read/list. Reads of one store never verify writes to another. Then finish with entities copied from that evidence' });
           continue;
         }
+        if(diagnosticProposals.length)diagnosticProposals[diagnosticProposals.length-1].acceptedForEvaluation=true;
         summary = compactText(String(decision?.summary || ''), 500);
         entitiesProvided = Array.isArray(decision?.entities) && decision.entities.every((item: unknown) =>
           item !== null && typeof item === 'object' && !Array.isArray(item)
@@ -6245,6 +6266,7 @@ export async function runAppWorldGrounding(input: {
     if(entities.some((entity:any)=>entity.appRecordId && !boundIds.has(entity.appRecordId))){evaluation.pass=false;evaluation.deficiencies.unshift('not_verified: entity appRecordId has no actual current owner/app record read-back');}
     const mailGaps = mailEvidence.deficiencies();
     if (mailGaps.length) { evaluation.pass = false; evaluation.deficiencies.unshift(...mailGaps); }
+    const readOnlyRepairBefore=projectionReadOnlyRepair;
     const coverageGaps = projectionCoverageGaps(goal.projectionPolicy, input.priorProjection?.entities ?? [], entities);
     if (coverageGaps.length) {
       // Lock only when coverage is the sole remaining failure, not unfinished business.
@@ -6252,6 +6274,7 @@ export async function runAppWorldGrounding(input: {
       evaluation.pass = false;
       evaluation.deficiencies.unshift(...coverageGaps);
     }
+    if(diagnosticsEnabled)diagnosticReviews.push({round,verdict:{pass:verdictRaw?.pass,deficiencies:verdictRaw?.deficiencies},coverageGaps,evaluation:{...evaluation,deficiencies:[...evaluation.deficiencies]},readOnlyRepairBefore,readOnlyRepairAfter:projectionReadOnlyRepair});
     if (evaluation.pass || !evaluation.deficiencies.length) break;
     if (totalAttempts() >= totalApiAttemptLimit) break;
     if (round > 1 && totalSuccesses() === callsAtRoundStart) break; // 上一轮零进展,再来一轮只会重复
@@ -6262,12 +6285,16 @@ export async function runAppWorldGrounding(input: {
     }
   }
   } catch (error) {
-    if ((error as {code?:string}).code !== 'action_deadline_exceeded') throw error;
+    if ((error as {code?:string}).code !== 'action_deadline_exceeded') {
+      const diagnostics=persistDiagnostics('exception',error);
+      if(diagnostics&&error&&typeof error==='object')try{Object.assign(error,{groundingDiagnostics:diagnostics});}catch{}
+      throw error;
+    }
     historyLog.push({ok:false,api:'(action-deadline)',error:(error as Error).message});
     evaluation={pass:false,deficiencies:[(error as Error).message,...(lastWriteAt>lastReadAt?['not_verified: no successful read-back after the last write']:[])]};
-    return {calls,appStateCalls,appStateExecutionEvidence:appStateExecutionEvidence(),summary,entities,stats,goal,evaluation,attempts:historyLog,deadlineExceeded:true,executionEvidence:executionEvidence()};
+    return {calls,appStateCalls,appStateExecutionEvidence:appStateExecutionEvidence(),summary,entities,stats,goal,evaluation,attempts:historyLog,deadlineExceeded:true,executionEvidence:executionEvidence(),diagnostics:persistDiagnostics('deadline_exceeded')};
   }
-  return { calls, appStateCalls, appStateExecutionEvidence:appStateExecutionEvidence(), summary, entities, stats, goal, evaluation, attempts: historyLog, executionEvidence: executionEvidence() };
+  return { calls, appStateCalls, appStateExecutionEvidence:appStateExecutionEvidence(), summary, entities, stats, goal, evaluation, attempts: historyLog, executionEvidence: executionEvidence(), diagnostics:persistDiagnostics(evaluation?.pass===true?'returned_verified':'returned_not_verified') };
 }
 
 // 没有命中 AppWorld API 的领域(比如"每天吃什么"),后端 agent 直接完成这轮工作
@@ -7167,7 +7194,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             trace(traceLog, 'AppWorld Grounding Agent', 'Ground this GUI turn in real service and app-state host calls', { actionId, goal: grounding.goal, apis: grounding.calls.map((call) => call.tool.apiName) }, { summary: grounding.summary, entities: grounding.entities, attempts: grounding.attempts, appStateCalls:grounding.appStateCalls, appStateExecutionEvidence:grounding.appStateExecutionEvidence, executionEvidence: grounding.executionEvidence, dbChanges: grounding.calls.map((call) => call.dbChanges?.changedApps ?? []) });
             trace(traceLog, 'Grounding Evaluator Agent', 'Independently judge whether the grounded result fulfills the goal contract', { actionId, goal: grounding.goal }, grounding.evaluation ?? { pass: false, deficiencies: ['evaluator did not run'] }, grounding.evaluation?.pass === false ? 'rejected' : 'ok');
             if (grounding.evaluation?.pass !== true) {
-              throw httpError(`grounded action did not pass verification: ${(grounding.evaluation?.deficiencies || ['evaluator did not run']).join('; ')}. External effects may already have occurred; do not automatically repeat this action.`, grounding.deadlineExceeded ? 504 : 502);
+              const failure=httpError(`grounded action did not pass verification: ${(grounding.evaluation?.deficiencies || ['evaluator did not run']).join('; ')}. External effects may already have occurred; do not automatically repeat this action.`, grounding.deadlineExceeded ? 504 : 502);
+              if(grounding.diagnostics)Object.assign(failure,{groundingDiagnostics:grounding.diagnostics});
+              throw failure;
             }
             authoritativeEntities = true;
             rawPayload.entities = grounding.entities;
