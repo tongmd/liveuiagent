@@ -11,7 +11,7 @@ test('coverage is conservative, ID-first, strictly opt-in and does not authorize
  for(const invalid of [null,{},['retain_existing'],'RETAIN_EXISTING',' retain_existing ',true,42])assert.throws(()=>parseProjectionPolicy(invalid),/Model contract error/);
  assert.equal(projectionCoverageGaps('retain_existing',prior.entities,[newRow]).length,4);
  assert.equal(projectionCoverageGaps('retain_existing',prior.entities,[{name:'Renamed',id:'1'},{name:'Second',group:'Queue'},prior.entities[2],prior.entities[3]]).length,0);
- assert.equal(projectionCoverageGaps('retain_existing',[{name:'Second',group:'Queue'}],[{name:'Second',group:'Other'}]).length,1);
+ assert.equal(projectionCoverageGaps('retain_existing',[{name:'Second',group:'Queue'}],[{name:'Second',group:'Other'}]).length,0);
  for(const policy of ['replace_or_filter','unspecified'] as const)assert.deepEqual(projectionCoverageGaps(policy,prior.entities,[]),[]);
  assert.deepEqual(projectionCoverageGaps('retain_existing',[],[]),[]);
 });
@@ -47,4 +47,21 @@ for(const invalid of ['retain-all', null, 1, {}, ['retain_existing']])test(`inva
  const tools=[{id:'read_units',apiName:'read_units',permission:'read_units',appName:'units',method:'GET',purpose:'Read units'}];
  await assert.rejects(runAppWorldGrounding({bridge:{getCapabilities:async()=>tools,callTool:async()=>{dispatched++;throw Error('Must not dispatch');}} as any,permissions:['read_units'],appName:'Units',payload:{request:'Add New'},priorProjection:prior,llm:{model:'fixture-only',chatCompletion:async()=>reply({objective:'Add New',projectionPolicy:invalid})}}),/Model contract error: projectionPolicy/);
  assert.equal(dispatched,0);
+});
+
+test('ID-less reading books can move shelves while duplicates consume evidence one to one',()=>{
+ const books=[{name:'The Overstory',group:'To read'},{name:'Piranesi',group:'To read'},{name:'Klara and the Sun',group:'Currently reading'},{name:'Project Hail Mary',group:'Finished'}];
+ const after=[books[0],books[1],{name:'Klara and the Sun',group:'Finished',detail:'quietly devastating'},books[3],{name:'Tomorrow, and Tomorrow, and Tomorrow',group:'To read'}];
+ assert.deepEqual(projectionCoverageGaps('retain_existing',books,after),[]);
+ assert.equal(projectionCoverageGaps('retain_existing',books,after.filter(b=>b.name!=='Piranesi')).length,1);
+ assert.equal(projectionCoverageGaps('retain_existing',books,[after[4]]).length,4);
+ const duplicateIds=[{id:'same',name:'First'},{id:'same',name:'Second'}];
+ assert.equal(projectionCoverageGaps('retain_existing',duplicateIds,[{id:'same',name:'First'}]).length,1);
+ assert.equal(projectionCoverageGaps('retain_existing',duplicateIds,duplicateIds).length,0);
+ const duplicateNames=[{name:'Same',group:'A'},{name:'Same',group:'B'},{name:'Same',group:'B'}];
+ assert.equal(projectionCoverageGaps('retain_existing',duplicateNames,[{name:'Same',group:'A'},{name:'Same',group:'B'}]).length,1);
+ assert.equal(projectionCoverageGaps('retain_existing',duplicateNames,[{name:'Same',group:'B'},{name:'Same',group:'B'},{name:'Same',group:'B'}]).length,1);
+ assert.equal(projectionCoverageGaps('retain_existing',[{id:'stable',name:'Same'},{name:'Same'}],[{id:'stable',name:'Same'}]).length,1);
+ assert.equal(projectionCoverageGaps('retain_existing',[{id:'stable',name:'Same'}],[{id:'other',name:'Same'}]).length,1);
+ assert.equal(projectionCoverageGaps('retain_existing',[{name:'Old'}],[{name:'Renamed'}]).length,1,'ID-less rename remains unknown');
 });

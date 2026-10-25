@@ -31,14 +31,21 @@ export function parseProjectionPolicy(value: unknown): ProjectionPolicy {
 export function projectionCoverageGaps(policy: ProjectionPolicy, prior: unknown[], current: unknown[]): string[] {
   if (policy !== 'retain_existing') return [];
   const row = (value: any) => value && typeof value === 'object' && !Array.isArray(value) && typeof value.name === 'string' && value.name.trim() ? value : null;
-  return prior.flatMap(value => {
-    const old = row(value); if (!old) return [];
-    const retained = current.some(value => {
-      const next = row(value); if (!next) return false;
-      return typeof old.id === 'string' && old.id.trim()
-        ? next.id === old.id
-        : next.name === old.name && String(next.group ?? '') === String(old.group ?? '');
-    });
-    return retained ? [] : [`projection_coverage: retain_existing omitted prior unit ${JSON.stringify({name: old.name, ...(old.id ? {id: old.id} : {}), ...(old.group ? {group: old.group} : {})})}; read-only repair must verify the full tracked list, preserve confirmed write receipts, and never repeat writes`];
-  });
+  const oldRows = prior.map(row).filter(Boolean);
+  const newRows = current.map(row).filter(Boolean);
+  const consumed = new Set<number>();
+  const nameCount = (rows: any[], name: string) => rows.filter(item => item.name === name).length;
+  // Match ID-bearing rows first so a fallback name cannot consume their evidence.
+  const ordered = oldRows.map((value, index) => ({value, index})).sort((a, b) => Number(Boolean(b.value.id)) - Number(Boolean(a.value.id)));
+  const missing: Array<{index: number; value: any}> = [];
+  for (const {value: old, index} of ordered) {
+    const hasId = typeof old.id === 'string' && Boolean(old.id.trim());
+    const uniqueName = nameCount(oldRows, old.name) === 1 && nameCount(newRows, old.name) === 1;
+    const found = newRows.findIndex((next, nextIndex) => !consumed.has(nextIndex) && (hasId
+      ? next.id === old.id
+      : next.name === old.name && (uniqueName || String(next.group ?? '') === String(old.group ?? ''))));
+    if (found >= 0) consumed.add(found); else missing.push({index, value: old});
+  }
+  return missing.sort((a, b) => a.index - b.index).map(({value: old}) =>
+    `projection_coverage: retain_existing omitted prior unit ${JSON.stringify({name: old.name, ...(old.id ? {id: old.id} : {}), ...(old.group ? {group: old.group} : {})})}; read-only repair must verify the full tracked list, preserve confirmed write receipts, and never repeat writes`);
 }
