@@ -974,7 +974,7 @@ export async function planNativeGuiInteractionStep(system: string, input: unknow
     // Completion caps include model reasoning, not only the small final step JSON.
     // Match the existing Native role budget while keeping the planner/action deadlines.
     user: JSON.stringify(input), temperature: 0, maxTokens: 8192});
- return resolveControlPreparation(preparation,input);
+ try{return resolveControlPreparation(preparation,input);}catch(error){if((error as any)?.code==='invalid_gui_interaction')Object.assign(error as object,{planningContractInvalid:true});throw error;}
 }
 
 export async function makeBusinessFields(prompt: string, subject: string, tokens: string[], context: {

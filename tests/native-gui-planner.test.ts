@@ -11,7 +11,7 @@ async function setup(t:any,overrides:any={}){
  let plans=0,dispatches=0;const modelInputs:any[]=[];
  const llm={model:'fixture-selected',apiKey:'private-provider-key',apiBase:'https://provider.invalid',personalContext:'private personal context',chatCompletion:async(request:any)=>{dispatches++;modelInputs.push(request);return{choices:[{message:{content:JSON.stringify({fields:[{target:'e1',decision:'set',value:'Piranesi',source:'user',quote:'Piranesi'},{target:'e2',decision:'keep'},{target:'e3',decision:'keep'}],action:{kind:'click',target:'e4'}})}}]};}};
  const handler=createGuiInteractionPlanner({owner:()=> 'alice',authorize:(id,owner)=>{if(id!=='owned'||owner!=='alice')throw Object.assign(Error('not found'),{status:404});},resolve:()=>({harness:'dsh',llm}),plan:async(...args:any[])=>{plans++;return planNativeGuiInteractionStep(args[0],args[1],args[2]);},...overrides});
- const app=express();app.use(express.json());app.post('/evaluator/interaction-step',handler);app.use((e:any,_q:any,r:any,_n:any)=>r.status(e.status||500).json({error:e.message,code:e.code,plannerModelCalls:e.plannerModelCalls}));
+ const app=express();app.use(express.json());app.post('/evaluator/interaction-step',handler);app.use((e:any,_q:any,r:any,_n:any)=>r.status(e.status||500).json({error:e.message,code:e.code,planningContractInvalid:e.planningContractInvalid,plannerModelCalls:e.plannerModelCalls}));
  const server=http.createServer(app);await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();return new Promise<void>(r=>server.close(()=>r()));});
  const post=async(body:any,headers={})=>{const r=await fetch(`http://127.0.0.1:${(server.address() as any).port}/evaluator/interaction-step`,{method:'POST',headers:{'content-type':'application/json',...headers},body:JSON.stringify(body)});return{status:r.status,body:await r.json() as any};};
  return{post,modelInputs,counts:()=>({plans,dispatches})};
@@ -96,4 +96,12 @@ test('sequential ordinary form policy preserves precise unsupported and no inven
  context.snapshot.fields[0].value='Alpha';assert.deepEqual(resolveControlPreparation(p,context),{kind:'click',target:'e3'});
  assert.equal(context.snapshot.fields[1].value,'0');
  assert.equal(resolveControlPreparation({...p,action:{kind:'unsupported',reason:'An atomic transaction is explicitly required but no atomic control exists'}},context).kind,'unsupported');
+});
+
+test('real HTTP marks only model preparation contract errors and accepts separate bounded feedback',async t=>{
+ let modelCalls=0;const captured:any[]=[];
+ const llm={model:'fixture-selected',chatCompletion:async(body:any)=>{modelCalls++;captured.push(JSON.parse(body.messages[1].content));return{choices:[{message:{content:JSON.stringify(modelCalls===1?{fields:[],action:{kind:'done',reason:'Done'},unexpected:'private-value-must-not-echo'}:{fields:view.fields.map(f=>({target:f.target,decision:'keep'})),action:{kind:'done',reason:'No further UI operation'}})}}]};}};
+ const {post}=await setup(t,{resolve:()=>({harness:'dsh',llm})});const first=await post(input());assert.equal(first.status,400);assert.equal(first.body.code,'invalid_gui_interaction');assert.equal(first.body.planningContractInvalid,true);assert.equal(first.body.plannerModelCalls,1);assert.match(first.body.error,/unexpected/);assert.ok(!first.body.error.includes('private-value'));
+ const next=await post({...input(),planningFeedback:{kind:'invalid_planning_contract',message:first.body.error}});assert.equal(next.status,200);assert.equal(next.body.plannerModelCalls,1);assert.equal(modelCalls,2);assert.deepEqual(captured[1].observations,[]);assert.equal(captured[1].planningFeedback.kind,'invalid_planning_contract');
+ const invalid=await post({...input(),planningFeedback:{kind:'performed_click',message:'wrong'}});assert.equal(invalid.status,400);assert.equal(invalid.body.planningContractInvalid,undefined);assert.equal(invalid.body.plannerModelCalls,0);
 });

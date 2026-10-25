@@ -153,6 +153,7 @@ function errorPayload(err: any) {
     ...(err?.artifactsDir ? { artifactsDir:err.artifactsDir } : {}),
     ...(err?.workflowExecution ? { workflowExecution:err.workflowExecution } : {}),
     ...(err?.nativeInference ? { nativeInference:err.nativeInference } : {}),
+    ...(err?.planningContractInvalid===true?{planningContractInvalid:true}:{}),
     ...(Number.isInteger(err?.plannerModelCalls) ? {plannerModelCalls:err.plannerModelCalls} : {}),
   };
 }
