@@ -1,4 +1,5 @@
 import { nativeRowSlotContext } from './native-row-context.js';
+import { groundingViewContext, groundingViewPolicy, type GroundingViewContext } from './grounding-view.js';
 import { appWorldCatalogLine } from './appworld-schema.js';
 import { actualGroundingEvidence, attemptedGroundingEvidence, groundingEvidenceHistory } from './grounding-evidence.js';
 import { AppWorldRequestNotStartedError } from './appworld-request-error.js';
@@ -5469,7 +5470,7 @@ function requireActionRoute(action: Record<string, any>, actionId: string): {
   };
 }
 
-function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Record<string, unknown>) {
+function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Record<string, unknown>, authoritativeEntities = false) {
   const manifest = stored.appPackage.manifest;
   const sourcePrompt = requiredText(stored.runtimeState.sourcePrompt, `stored app ${stored.appId} missing source prompt`, 1200);
   const subject = requiredText(stored.runtimeState.subject, `stored app ${stored.appId} missing subject`, 80);
@@ -5519,13 +5520,13 @@ function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Reco
   };
   rows.unshift(nextRecord);
   // 实体列表 = 用户现在应该看到的内容:本轮 agent 返回的就是当前全量(执行前有 read-verify),
-  // 直接替换 —— 逐轮追加会把列表变成重复堆积的日志。本轮没有实体时保留原有内容。
+  // 直接替换;已验证的空列表也必须清空旧行,缺省或未验证的空输出保留旧内容。
   const turnEntities = (Array.isArray(payload.entities) ? payload.entities as Array<Record<string, unknown>> : [])
     .filter((item) => item && typeof item === 'object' && String(item.name || '').trim());
   const priorEntities = Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities as Array<Record<string, unknown>> : [];
   const entityKey = (item: Record<string, unknown>) => `${String(item.name).trim()}|${String(item.id ?? '').trim()}`;
   const dedupedTurnEntities = turnEntities.filter((item, index) => turnEntities.findIndex((candidate) => entityKey(candidate) === entityKey(item)) === index);
-  const mergedEntities = (dedupedTurnEntities.length ? dedupedTurnEntities : priorEntities).slice(0, 30);
+  const mergedEntities = (authoritativeEntities || dedupedTurnEntities.length ? dedupedTurnEntities : priorEntities).slice(0, 30);
   const latestSummary = businessPayloadSummary(interaction, businessValues, 6);
   const memoryText = rows.slice(0, 4)
     .flatMap((row) => [
@@ -5560,8 +5561,8 @@ function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Reco
     intentResult: result,
     intentActionCount: nextCount,
     entities: mergedEntities,
-    // 聚合统计行(累计/剩余/倒计时):本轮有则整体替换,无则保留上一轮。
-    entityStats: (Array.isArray((payload as Record<string, unknown>).entityStats) && ((payload as Record<string, unknown>).entityStats as unknown[]).length)
+    // 聚合统计与已验证的主列表一起替换;未验证/缺省输出仍保留上一轮。
+    entityStats: (Array.isArray((payload as Record<string, unknown>).entityStats) && (authoritativeEntities || ((payload as Record<string, unknown>).entityStats as unknown[]).length))
       ? (payload as Record<string, unknown>).entityStats
       : (stored.runtimeState.entityStats ?? []),
     interaction,
@@ -5784,6 +5785,7 @@ export async function runAppWorldGrounding(input: {
   fields?: Array<{ label: string; value: string }>;
   appName: string;
   appPurpose?: string;
+  viewContext?: GroundingViewContext;
   actionLabel?: string;
   actionDescription?: string;
   targetEntity?: { name: string; id: string } | null;
@@ -5847,6 +5849,7 @@ export async function runAppWorldGrounding(input: {
     system: [
         turnTime,
       `You analyze a GUI form submission for the generated app "${input.appName}" BEFORE execution.`,
+        groundingViewPolicy,
       ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
       `Wired services this turn can write to: ${wiredServices}.`,
       'Turn the submission into an executable goal contract. Respond ONLY with JSON:',
@@ -5855,7 +5858,7 @@ export async function runAppWorldGrounding(input: {
       'expectedNumbers: compute every number the request implies but does not state — a bill split share = total ÷ ALL participants INCLUDING the payer (e.g. "186.45 / 3 = 62.15 per person"). Label each derived number with its scope (this event share, repayment amount, or final cumulative balance) and show its arithmetic in the value. A new event share is an INCREMENT, not the final cumulative balance; derive a final balance only from a fresh existing balance plus the signed change. Never assume the existing balance is zero. Use [] when nothing is derived.',
       'When a targetEntity is given, the contract is about exactly that one object: the objective and deliverables must reference it by its name/id, never a broader batch.',
     ].join('\n'),
-    user: JSON.stringify({ userRequest, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}) }),
+    user: JSON.stringify({ userRequest, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}) }),
   }) as Record<string, any>;
   const goal = {
     objective: compactText(String(goalRaw?.objective || userRequest.join('；')), 200),
@@ -5871,6 +5874,7 @@ export async function runAppWorldGrounding(input: {
   const historyLog: Array<Record<string, unknown>> = [];
   let summary = '';
   let entities: Array<{ name: string; id?: string; detail?: string; group?: string }> = [];
+  let entitiesProvided = false;
   let stats: Array<{ label: string; value: string }> = [];
   let evaluation: { pass: boolean; deficiencies: string[] } | null = null;
   let feedback: string[] = [];
@@ -5914,11 +5918,12 @@ export async function runAppWorldGrounding(input: {
         system: [
         turnTime,
           `You are the backend workflow agent for the generated app "${input.appName}".`,
+        groundingViewPolicy,
           ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
           'A user submitted a GUI form. Ground their request in REAL API calls against the available APIs below, then summarize.',
           'Respond ONLY with JSON: {"calls": [{"api": "<apiName>", "args": {...}}, ...]} to make the next API call(s) — BATCH every independent call you can already determine into ONE array (e.g. the create plus one add per song); one call per turn wastes the user\'s time.',
           'or {"done": true, "summary": "<one user-facing sentence naming the exact concrete entities now created or fetched>", "entities": [{"name": "<entity name>", "id": "<id if any>", "detail": "<one short user-facing fact>", "group": "<optional section this item belongs to, e.g. Produce / coast morning / a person name>"}], "stats": [{"label": "<aggregate the user should see>", "value": "<computed value>"}]} to finish. stats are the COMPUTED aggregates the request implies — cumulative per-person totals across ALL existing records (read them back first), remaining/unchecked counts per group, days-until dates computed from the world date — each verified against the numbers you actually read. Return AT LEAST ONE stat whenever the turn touched any quantity (durations, prices, counts, amounts, dates): it becomes the app\'s headline figure. An empty stats array is only acceptable when the turn genuinely produced nothing quantifiable.',
-          'The entities array is the CURRENT content the user should now see (e.g. every track now in the playlist) — the app renders exactly this list, replacing what was shown before. Model entities as the units the user TRACKS: one row per person with their current balance for debt/split apps (settled people stay listed, marked settled), one row per task for checklists, one row per item for collections — not raw transaction records. Fetch that FULL list with a read call before finishing: an entry you just completed or deleted must not appear as still present, and older entries must not silently vanish just because this turn did not touch them. Every entity must be an object that exists in an API response (a song, playlist, order…); NEVER restate the user\'s own form inputs as entities, and never process notes: each detail must be a user-facing fact (artist, duration, date), not words like 已检索到/已确认展示/已标注.',
+          'The entities array is the CURRENT content the user should now see (e.g. every track now in the playlist) — the app renders exactly this list, replacing what was shown before. Model entities as the units the user TRACKS: one row per person with their current balance for debt/split apps (settled people stay listed, marked settled), one row per task for checklists, one row per item for collections — not raw transaction records. Fetch that FULL list with a read call before finishing: an entry you just completed or deleted must not appear as still present, and older entries must not silently vanish just because this turn did not touch them. Each primary row identity and fact must trace to actual API response evidence and fit the declared row unit; supporting objects do not become rows merely because they exist; NEVER restate the user\'s own form inputs as entities, and never process notes: each detail must be a user-facing fact (artist, duration, date), not words like 已检索到/已确认展示/已标注.',
           'Rules: authentication is handled automatically — never call account, auth, or verification APIs.',
           'If the user asks to build, create, save, add, or update something, you MUST call the corresponding write API (POST/PATCH create/add/record) — finishing with only read-only lookups is a failure. Before writing, resolve required identifiers, existing targets, current values and API prerequisites with the necessary reads. Naming an object does not waive discovery or schema requirements. Once prerequisites are known, write promptly; do not repeat unproductive searches.',
           'If the goal contract names a targetCount, you MUST make that many successful write calls (e.g. one add per song). After ONE search, immediately write with the results you already have — never search twice in a row, and never run more than two searches per turn. Any reasonable match satisfies a style/mood adjective; search by artist name or plain keywords, not by style adjectives.',
@@ -5948,6 +5953,7 @@ export async function runAppWorldGrounding(input: {
         user: JSON.stringify({
           userRequest,
           goal,
+          ...(input.viewContext ? { viewContext: input.viewContext } : {}),
           ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}),
           previousCalls: groundingEvidenceHistory(historyLog),
           ...(input.recentTurns?.length ? { previousTurns: input.recentTurns } : {}),
@@ -5973,6 +5979,7 @@ export async function runAppWorldGrounding(input: {
           continue;
         }
         summary = compactText(String(decision?.summary || ''), 500);
+        entitiesProvided = Array.isArray(decision?.entities);
         entities = (Array.isArray(decision?.entities) ? decision.entities : [])
           .filter((item: unknown) => item && typeof item === 'object' && String((item as Record<string, unknown>).name || '').trim())
           .slice(0, 20)
@@ -6027,11 +6034,12 @@ export async function runAppWorldGrounding(input: {
               system: [
         turnTime,
                 'You are the Write Verifier for real API calls a backend agent is about to make on behalf of a GUI submission.',
+        groundingViewPolicy,
                 'Check the API operation family AND its arguments against the explicit current user request; the goal may be mistaken: (1) every amount must trace to a submitted value, a value read earlier this turn, or goal.expectedNumbers (respect the scope of expectedNumbers: an event share is not a cumulative balance; a bill split share = total ÷ ALL participants including the payer; the payer is owed, never owing; NEVER a placeholder like 0.01); (2) names/titles the user provided must be used VERBATIM (no renaming, translating, date prefixes, or concatenated form fields); (3) an update must REPLACE the field content, not append, unless the user asked to add; (4) a change aimed at one named object must not touch its siblings; (5) no UI component ids (d_b1, slot_2) inside names or contents.',
                 'DUPLICATE & TURN-SCOPE gate: reject the batch with {"approved": false, "reject": true, "reason": "<why>"} when (a) previousCalls already show a successful create of the same object (same bill/record, matching amounts or title) and the batch re-creates it WITHOUT first deleting the stale copy, or (b) the batch DELETES or re-records an object whose id does NOT trace to a create in previousCalls (i.e. it predates this turn) and the user request does not explicitly ask to remove or correct that record, or (c) the batch COMPLETES/closes/checks-off an item whose name is NOT mentioned in the user request or targetEntity — completing unmentioned siblings corrupts per-item state. Also reject when the API family contradicts explicit intent (for example recording an actual payment for a new bill, debt or future payment request), or when fixing the call would require changing the API family or inventing missing business values. Return approved:false, reject:true with the concrete reason so the executor can re-plan; do not disguise an intent error as an argument correction.',
                 'Otherwise respond ONLY with JSON: {"approved": true} only when the API intent and all args are right, or {"approved": false, "correctedCalls": [{"api": "<same api>", "args": {...fixed args...}}, ...], "reason": "<what you fixed>"}. Use correctedCalls only for evidenced argument corrections within an already-correct API family; keep the SAME apis in the SAME order. For a wrong API family return reject:true instead of correctedCalls.',
               ].join('\n'),
-              user: JSON.stringify({ userRequest, goal, previousCalls: groundingEvidenceHistory(historyLog), mailRecipientEvidence: mailEvidence.facts(), proposedCalls: rawCalls }),
+              user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), previousCalls: groundingEvidenceHistory(historyLog), mailRecipientEvidence: mailEvidence.facts(), proposedCalls: rawCalls }),
             }) as Record<string, any>;
           } catch (error) {
             if (attempt >= 2) historyLog.push({ ok: false, api: '(write-verifier)', error: compactText((error as Error).message, 160) });
@@ -6127,20 +6135,22 @@ export async function runAppWorldGrounding(input: {
       system: [
         turnTime,
         'You are an INDEPENDENT evaluator for a generated app backend turn. You did not execute it; judge only from the evidence.',
+        groundingViewPolicy,
         'Decide whether the executed real API calls and the user-visible result fulfill the user request and the goal contract.',
         'Respond ONLY with JSON: {"pass": true|false, "deficiencies": ["<concrete, actionable gap>", ...]}.',
-        'Fail when: a requested create/update has no successful write call; a named targetCount is not met by successful write calls; the visible summary or entities echo the request instead of naming real created entities; the entities list misses objects the calls actually created.',
+        'Fail when: a requested create/update has no successful write call; a named targetCount is not met by successful write calls; the visible summary or entities echo the request instead of naming real created entities; any requested deliverable lacks actual successful writes and current read-back evidence, whether it belongs in primary rows or in verified summary/stats. Also fail omitted required primary units or rows whose actual object type is incompatible with the declared row operation. Do not require every created supporting object to appear as an actionable row.',
         'Also fail when: a deliverable names a facility (todoist tasks, playlist songs, group expenses) but the writes landed elsewhere (e.g. a note that merely lists the items — the container exists but its item-level writes are missing); or scoped expectedNumbers contradict the corresponding observed quantity (an event share is not a cumulative balance: compare final balances against a freshly read baseline plus the signed change, preserving prior history); or a targetEntity is given and the successful writes did not address exactly that object id (a new object was created instead, or a different object was modified).',
         'Treat the goal contract as a fallible plan: fail a repayment/transfer write for a new bill, shared debt, or future payment request unless the user explicitly requested that transfer or reported a completed repayment. Do not approve only because execution matched a mistaken goal. A successful read alone never fulfills a requested mutation. Also fail if a write lacks a successful read AFTER the last write verifying the changed target and current state; step/time limits and mustFinish do not waive this evidence requirement. When evidence is incomplete, return pass:false with the missing evidence, not assumed success.',
         'Also fail when any visibleEntities entry names an object or id that does not appear in a successful API response inside apiCalls: entities are a read-back of the world, and a row whose name/id cannot be traced to response evidence is fabricated no matter how plausible it looks (e.g. inventing inbox subjects the API never returned).',
       ].join('\n'),
-      user: JSON.stringify({ userRequest, goal, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities }),
+      user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities, visibleStats: stats }),
     }) as Record<string, any>;
     evaluation = {
-      pass: verdictRaw?.pass === true && lastWriteAt <= lastReadAt && calls.length + webCallCount > 0,
+      pass: verdictRaw?.pass === true && entitiesProvided && lastWriteAt <= lastReadAt && calls.length + webCallCount > 0,
       deficiencies: (Array.isArray(verdictRaw?.deficiencies) ? verdictRaw.deficiencies : []).map((item: unknown) => compactText(String(item), 160)).filter(Boolean).slice(0, 5),
     };
     if (!calls.length && !webCallCount) evaluation.deficiencies.unshift(`No successful API evidence: ${apiAttemptCount} tool-call attempts, ${unknownDispatchOutcomes} unknown dispatch outcomes, ${notStartedApiCalls} trusted preflight rejections; cause=${zeroSuccessfulCallCause()}. No completion is verified; do not automatically repeat writes. Planning, gate rejection and no proposed calls are different causes; inspect attempts.`);
+    if (!entitiesProvided) evaluation.deficiencies.unshift('not_verified: explicit current primary entities array missing; omitted output is not verified empty');
     if(lastWriteAt > lastReadAt) evaluation.deficiencies.unshift('not_verified: no successful read-back after the last write');
     const mailGaps = mailEvidence.deficiencies();
     if (mailGaps.length) { evaluation.pass = false; evaluation.deficiencies.unshift(...mailGaps); }
@@ -6860,7 +6870,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
               permissions: readPermissions,
               payload: {},
               appName: String(appPackage.manifest.name),
-              appPurpose: plan.description,
+              appPurpose: plan.sourcePrompt,
+              viewContext: groundingViewContext(appPackage),
               actionLabel: "First open",
               actionDescription: 'Read-only initial load: fetch the existing data in the real services that this app is about, so the first open already shows it. Make NO write calls.',
               llm: input.llm,
@@ -7010,6 +7021,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       // real APIs and writes the returned entities into visible state.
       // LIVEUIAGENT_APPWORLD_GROUNDING=off preserves the ungrounded ablation.
       let grounded = false;
+      let authoritativeEntities = false;
       if (appWorldBridge && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off') {
         const appWorldPermissions = permissions.filter((permission) => permission.startsWith('tool.appworld.') && permission !== 'tool.appworld.db.snapshot');
         if (appWorldPermissions.length) {
@@ -7029,6 +7041,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             targetEntity,
             appName: String(stored.appPackage.manifest.name || input.appId),
             appPurpose: String(stored.appPackage.manifest.intent?.sourcePrompt || ''),
+            viewContext: groundingViewContext(stored.appPackage),
             actionLabel: String(action.label || ''),
             actionDescription: String(action.description || ''),
             webPermissions: permissions.filter((permission) => Boolean(findWebTool(permission))),
@@ -7039,14 +7052,15 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             grounded = true;
             grounding.calls.forEach((call, index) => { toolResults[`${call.tool.id}#${index + 1}`] = call; });
             (rawPayload as Record<string, unknown>).result = grounding.summary;
-            if (grounding.entities.length) (rawPayload as Record<string, unknown>).entities = grounding.entities;
-            if (grounding.stats.length) (rawPayload as Record<string, unknown>).entityStats = grounding.stats;
             trace(traceLog, 'Grounding Requirement Agent', 'Analyze this GUI turn into an executable goal contract', { actionId }, grounding.goal);
             trace(traceLog, 'AppWorld Grounding Agent', 'Ground this GUI turn in real AppWorld API calls', { actionId, goal: grounding.goal, apis: grounding.calls.map((call) => call.tool.apiName) }, { summary: grounding.summary, entities: grounding.entities, attempts: grounding.attempts, executionEvidence: grounding.executionEvidence, dbChanges: grounding.calls.map((call) => call.dbChanges?.changedApps ?? []) });
             trace(traceLog, 'Grounding Evaluator Agent', 'Independently judge whether the grounded result fulfills the goal contract', { actionId, goal: grounding.goal }, grounding.evaluation ?? { pass: false, deficiencies: ['evaluator did not run'] }, grounding.evaluation?.pass === false ? 'rejected' : 'ok');
             if (grounding.evaluation?.pass !== true) {
               throw httpError(`grounded action did not pass verification: ${(grounding.evaluation?.deficiencies || ['evaluator did not run']).join('; ')}. External effects may already have occurred; do not automatically repeat this action.`, grounding.deadlineExceeded ? 504 : 502);
             }
+            authoritativeEntities = true;
+            rawPayload.entities = grounding.entities;
+            rawPayload.entityStats = grounding.stats;
           }
         }
       }
@@ -7094,7 +7108,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         dbChanges: appWorldTraceSummary(toolResults), toolResults,
       });
       nativeWorkflow.record('commit', 'agents.data', 'running');
-      const agentResult = trace(traceLog, 'State Agent', 'Commit orchestration turn and mutate visible state', { actionId, payload, appWorldDbChanges: appWorldTraceSummary(toolResults) }, updateStoredAgentApp(stored, actionId, payload));
+      const agentResult = trace(traceLog, 'State Agent', 'Commit orchestration turn and mutate visible state', { actionId, payload, appWorldDbChanges: appWorldTraceSummary(toolResults) }, updateStoredAgentApp(stored, actionId, payload, authoritativeEntities));
       await nativeWorkflow.review({ originalRequest: input.eventPayload, result: rawPayload.result,
         entities: rawPayload.entities, stats: rawPayload.entityStats, toolResults,
         proposedRuntimeState: stored.runtimeState, proposedRecords: agentResult.records,
