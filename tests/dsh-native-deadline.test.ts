@@ -19,14 +19,14 @@ async function setup(t:any,decision:(step:number,system:string)=>any){
  return{input,calls,requests};
 }
 test('trusted absolute budget aborts a slow native decision without invoking its proposed write',async t=>{
- const {input,calls,requests}=await setup(t,async()=>{await wait(500);return{calls:[{api:'update_note',args:{id:'real'}}]}});
- const result=await withActionDeadline(Date.now()+180,()=>runAppWorldGrounding(input));
+ const {input,calls,requests}=await setup(t,async()=>{await wait(2500);return{calls:[{api:'update_note',args:{id:'real'}}]}});
+ const result=await withActionDeadline(Date.now()+2000,()=>runAppWorldGrounding(input));
  assert.equal(result?.evaluation?.pass,false);assert.equal(result?.deadlineExceeded,true);assert.deepEqual(calls,[]);assert.equal(requests.length,2);assert.match(JSON.stringify(result?.attempts),/deadline|not verified/);
 });
 test('completed real write is retained after expiry, with no later read or automatic retry',async t=>{
  const {input,calls}=await setup(t,()=>({calls:[{api:'update_note',args:{id:'real'}},{api:'read_notes',args:{}}]}));
- const original=input.bridge.callTool;input.bridge.callTool=async(...args:any[])=>{const result=await original(...args);await wait(250);return result};
- const result=await withActionDeadline(Date.now()+180,()=>runAppWorldGrounding(input));
+ const original=input.bridge.callTool;input.bridge.callTool=async(...args:any[])=>{const result=await original(...args);await wait(2500);return result};
+ const result=await withActionDeadline(Date.now()+2000,()=>runAppWorldGrounding(input));
  assert.deepEqual(calls,['write']);assert.equal(result?.calls.length,1);assert.equal(result?.evaluation?.pass,false);assert.equal(result?.deadlineExceeded,true);assert.match(JSON.stringify(result?.evaluation),/read-back|not verified/);
 });
 test('budget-tail done and a permissive reviewer cannot waive post-write read-back',async t=>{
