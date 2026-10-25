@@ -7,7 +7,7 @@ const valid=()=>({proceed:true,instructions:'Read verified current state.',const
 test('former per-string sizes are intact under one shared aggregate transport budget without repair',async()=>{
  let calls=0;const output={...valid(),unrelatedPreviouslyAcceptedKey:'not newly rejected'};const f=fixture(async(_node:any,input:any)=>{calls++;assert(!input.contractRepair);return output;});const handoffs=await f.workflow.plan({originalRequest:{amount:0,enabled:false},permissions:['actual.scope']});assert.equal(calls,2);
  for(const h of handoffs){assert.deepEqual(h.constraints,output.constraints);assert.equal(h.expectedOutcome,output.expectedOutcome);assert.equal(h.instructions,output.instructions);}assert.equal(f.records.filter(r=>r.stage==='plan_repair').length,0);
- assert.deepEqual(NATIVE_ROLE_TRANSPORT_LIMITS,{instructionsUnicodeCharacters:2048,constraintsCount:4,totalHandoffUnicodeCharacters:4096});assert.match(nativeRoleTransportPolicy,/together at most 4096 Unicode characters/);assert.doesNotMatch(nativeRoleTransportPolicy,/each at most 100|at most 200/);
+ assert.deepEqual(NATIVE_ROLE_TRANSPORT_LIMITS,{constraintsCount:4,totalHandoffUnicodeCharacters:4096});assert.match(nativeRoleTransportPolicy,/together at most 4096 Unicode characters/);assert.doesNotMatch(nativeRoleTransportPolicy,/each at most 100|at most 200/);
 });
 
 test('aggregate4096 includes Unicode code points and preserves full strings;4097 fails without truncation',async()=>{
@@ -19,8 +19,8 @@ test('aggregate4096 includes Unicode code points and preserves full strings;4097
  }
 });
 
-test('instruction2048 and four-constraint caps remain, with exactly one pure repair under the same original contract',async()=>{
- for(const invalid of [{...valid(),instructions:'😀'.repeat(2049)},{...valid(),constraints:['one','two','three','four','five']}]){
+test('shared aggregate budget and four-constraint cap remain, with exactly one pure repair under the same original contract',async()=>{
+ for(const invalid of [{...valid(),instructions:'😀'.repeat(4097)},{...valid(),constraints:['one','two','three','four','five']}]){
   const original={originalRequest:{opaque:'Full source',amount:0,enabled:false},permissions:['unchanged.scope'],currentState:{entries:['Retain me']}};let count=0;const f=fixture(async(_node:any,input:any)=>{
    count++;if(count===1)return invalid;
    if(input.contractRepair){assert.equal(input.contractRepair.attempt,1);assert.equal(input.contractRepair.maxAttempts,1);assert.deepEqual(input.contractRepair.constraints,NATIVE_ROLE_TRANSPORT_LIMITS);assert(input.contractRepair.instruction.startsWith(nativeRoleTransportPolicy));assert.deepEqual(input.contractRepair.previousInvalidOutput,invalid);assert.deepEqual(input.context.originalRequest,original.originalRequest);assert.deepEqual(input.context.permissions,original.permissions);return valid();}
@@ -32,11 +32,18 @@ test('instruction2048 and four-constraint caps remain, with exactly one pure rep
 test('refusal and transport error never trigger repair; invalid repair never starts a third invocation',async()=>{
  for(const response of [{proceed:false,reason:'Actual policy refusal'},null,{proceed:'true'}]){let calls=0;const f=fixture(async()=>{calls++;return response;});await assert.rejects(f.workflow.plan({originalRequest:'Current operation'}),/rejected/);assert.equal(calls,1);assert.equal(f.records.filter(r=>r.stage==='plan_repair').length,0);}
  let calls=0;const transport=fixture(async()=>{calls++;throw Error('transport failed');});await assert.rejects(transport.workflow.plan({}),/transport failed/);assert.equal(calls,1);
- for(const repair of [{...valid(),expectedOutcome:'x'.repeat(4097)},{proceed:false,reason:'Refuse rather than approve'}]){calls=0;const f=fixture(async()=>{calls++;return calls===1?{...valid(),instructions:'x'.repeat(2049)}:repair;});await assert.rejects(f.workflow.plan({originalRequest:'No business replay'}));assert.equal(calls,2);assert.equal(f.workflow.handoffs.length,0);}
+ for(const repair of [{...valid(),expectedOutcome:'x'.repeat(4097)},{proceed:false,reason:'Refuse rather than approve'}]){calls=0;const f=fixture(async()=>{calls++;return calls===1?{...valid(),instructions:'x'.repeat(4097)}:repair;});await assert.rejects(f.workflow.plan({originalRequest:'No business replay'}));assert.equal(calls,2);assert.equal(f.workflow.handoffs.length,0);}
 });
 
 test('malformed original field types are never coerced into an approved handoff',async()=>{
  for(const invalid of [{instructions:17},{constraints:[0]},{constraints:'one constraint'},{expectedOutcome:['not a string']}]){
   let calls=0;const f=fixture(async()=>{calls++;return{...valid(),...invalid};});await assert.rejects(f.workflow.plan({originalRequest:'No type coercion'}),/invalid handoff/);assert.equal(calls,2);assert.equal(f.workflow.handoffs.length,0);
  }
+});
+
+test('instructions2057 and the full4096 shared envelope pass intact without a separate per-field cap',async()=>{
+ for(const output of [{...valid(),instructions:'I'.repeat(2057)},{proceed:true,instructions:'😀'.repeat(4095),constraints:[],expectedOutcome:'V'}]){
+  let calls=0;const f=fixture(async()=>{calls++;return output;});const handoffs=await f.workflow.plan({originalRequest:'Current unchanged request',permissions:['exact.scope']});assert.equal(calls,2);assert.equal(handoffs[0].instructions,output.instructions);assert.deepEqual(handoffs[1].constraints,output.constraints);assert.equal(f.records.filter(r=>r.stage==='plan_repair').length,0);
+ }
+ assert.doesNotMatch(nativeRoleTransportPolicy,/instructions at most/);
 });

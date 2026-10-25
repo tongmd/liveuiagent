@@ -113,7 +113,7 @@ test('compact role contracts are validated in Unicode characters and never silen
     await assert.rejects(workflow.plan({ originalRequest: 'untouched' }), /exceeded handoff limits; contract was not truncated/);
     assert.equal(workflow.handoffs.length, 0); assert.equal(calls, 2, 'one bounded schema repair then fail without truncation');
   }
-  const exact = { proceed: true, instructions: '💧'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT), constraints: Array(4).fill('字'.repeat(500)), expectedOutcome: '字'.repeat(48) };
+  const exact = { proceed: true, instructions: '💧'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters / 2), constraints: Array(4).fill('字'.repeat(500)), expectedOutcome: '字'.repeat(48) };
   const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {}, call: async () => exact });
   const result = await workflow.plan({ originalRequest: 'untouched' });
   assert.equal(result[0].instructions, exact.instructions); assert.deepEqual(result[0].constraints, exact.constraints); assert.equal(result[0].expectedOutcome, exact.expectedOutcome);
@@ -176,7 +176,7 @@ test('one real HTTP contract repair preserves the full original context and orig
     assert.deepEqual(requests[1].input.contractRepair.previousInvalidOutput, invalidOutput);
     assert.notEqual(requests[1].input.modelInvocationId, requests[0].input.modelInvocationId);
     assert.deepEqual(requests[1].input.contractRepair.constraints, { ...NATIVE_ROLE_TRANSPORT_LIMITS });
-    assert.ok(requests[1].input.contractRepair.validationErrors.join(';').includes(`received ${NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1}`));
+    assert.ok(requests[1].input.contractRepair.validationErrors.join(';').includes(`received ${[invalidOutput.instructions,...invalidOutput.constraints,invalidOutput.expectedOutcome].reduce((n,v)=>n+Array.from(v).length,0)}`));
     const invalidAudit = records.find(r => r.stage === 'contract_validation' && r.status === 'failed')!;
     assert.deepEqual((invalidAudit.output as any).invalidOutput, invalidOutput);
     assert.match((invalidAudit.output as any).error, /contract was not truncated/);
@@ -258,7 +258,7 @@ test('audit snapshots remain unchanged after business state, output and handoffs
 
 
 test('657 Unicode instructions remain complete through real HTTP worker handoffs with original request and context unchanged',async t=>{
- assert.equal(NATIVE_INSTRUCTIONS_UNICODE_LIMIT,2048);
+ assert.equal(NATIVE_INSTRUCTIONS_UNICODE_LIMIT,NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters);
  const instruction='Follow the exact requested record, preserve other records, and verify the read-back. '.repeat(8).slice(0,657);assert.equal(Array.from(instruction).length,657);
  const received:any[]=[];const originalRequest={text:'Original complete request '.repeat(200),target:'the same target',optional:false,value:0};
  const server=http.createServer(async(req,res)=>{let raw='';for await(const part of req)raw+=part;const value=JSON.parse(raw);received.push(value);res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({proceed:true,instructions:instruction,constraints:['Do not duplicate writes'],expectedOutcome:'Actual requested target independently read back'}));});

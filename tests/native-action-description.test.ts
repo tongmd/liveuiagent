@@ -14,7 +14,8 @@ test('real plan installation preserves descriptions through ordinary, per-item a
  const saveDescription='Save the explicitly entered entry value and independently read its current saved record.';
  const inspectDescription='Inspect only the selected existing saved entry without changing any of its stored values.';
  assert(saveDescription.length<=90&&inspectDescription.length<=90);
- const transportHandoff={proceed:true,instructions:'Read original scoped entries without repeating writes.',constraints:['A'.repeat(105),'B'.repeat(116)],expectedOutcome:'O'.repeat(207)};
+ const transportHandoff={proceed:true,instructions:'Read original scoped entries without repeating writes. '+ 'I'.repeat(2057-55),constraints:['A'.repeat(105),'B'.repeat(116)],expectedOutcome:'O'.repeat(207)};
+ assert.equal(Array.from(transportHandoff.instructions).length,2057);
  let phase='generation',step=0,expected='';const observed:Array<{phase:string;role:string;description:string}>=[];
  const llm={model:'offline-fixture',chatCompletion:async(req:any)=>{
   const sys=req.messages[0].content;const input=JSON.parse(req.messages[1].content.split('\n')[0]);

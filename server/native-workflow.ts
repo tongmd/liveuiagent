@@ -4,9 +4,10 @@ import { randomUUID } from 'node:crypto';
 export type WorkflowNode = { id: string; role?: string; name?: string; purpose?: string; model?: string; inputs?: unknown; outputs?: unknown; stateReads?: unknown; stateWrites?: unknown };
 export type WorkflowRecord = { executionId: string; appId: string; owner: string; actionId: string; stage: string; nodeId: string; status: 'running' | 'ok' | 'failed'; input?: unknown; output?: unknown; at: string; startedAt?: string; finishedAt?: string };
 /** Host implementation budget, not user intent or an authorization limit. */
-export const NATIVE_INSTRUCTIONS_UNICODE_LIMIT = 2048;
-export const NATIVE_ROLE_TRANSPORT_LIMITS = Object.freeze({instructionsUnicodeCharacters:NATIVE_INSTRUCTIONS_UNICODE_LIMIT,constraintsCount:4,totalHandoffUnicodeCharacters:4096});
-export const nativeRoleTransportPolicy = `Your handoff is a concise role-specific increment for the single host executor: instructions at most ${NATIVE_ROLE_TRANSPORT_LIMITS.instructionsUnicodeCharacters} Unicode characters, at most ${NATIVE_ROLE_TRANSPORT_LIMITS.constraintsCount} constraints, and instructions plus all constraints plus expectedOutcome together at most ${NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters} Unicode characters. These are transport limits, not business authorization. Do not copy the original request, upstream contracts, entity lists or entire state into your answer; refer to supplied fields and contribute only what your role adds. The host rejects oversized contracts without truncation.`;
+export const NATIVE_ROLE_TRANSPORT_LIMITS = Object.freeze({constraintsCount:4,totalHandoffUnicodeCharacters:4096});
+/** Compatibility alias for the shared total, not a separate instructions cap. */
+export const NATIVE_INSTRUCTIONS_UNICODE_LIMIT = NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters;
+export const nativeRoleTransportPolicy = `Your handoff is a concise role-specific increment for the single host executor: at most ${NATIVE_ROLE_TRANSPORT_LIMITS.constraintsCount} constraints, and instructions plus all constraints plus expectedOutcome together at most ${NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters} Unicode characters. These are transport limits, not business authorization. Do not copy the original request, upstream contracts, entity lists or entire state into your answer; refer to supplied fields and contribute only what your role adds. The host rejects oversized contracts without truncation.`;
 
 type ModelCall = (node: WorkflowNode, input: Record<string, unknown>, mode: 'plan' | 'review') => Promise<Record<string, unknown>>;
 
@@ -31,7 +32,6 @@ function validateRoleContract(output: Record<string, unknown>) {
   if (!output || typeof output !== 'object' || Array.isArray(output)) return ['Response must be one JSON object'];
   if (output.proceed !== true) errors.push('proceed must be boolean true for an approved plan; never replace an actual refusal with approval');
   if (typeof output.instructions !== 'string' || !output.instructions.trim()) errors.push('instructions must be a non-empty string');
-  else if (Array.from(output.instructions).length > NATIVE_INSTRUCTIONS_UNICODE_LIMIT) errors.push(`instructions exceeds ${NATIVE_INSTRUCTIONS_UNICODE_LIMIT} Unicode characters (received ${Array.from(output.instructions).length})`);
   if (typeof output.expectedOutcome !== 'string' || !output.expectedOutcome.trim()) errors.push('expectedOutcome must be a non-empty string');
   if (!Array.isArray(output.constraints)) errors.push('constraints must be an array');
   else {
