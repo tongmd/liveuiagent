@@ -19,6 +19,14 @@ function withOutputLanguage(prompt: unknown) {
   return OUTPUT_LANGUAGE_REQUEST + prompt;
 }
 
+// This trace describes the actual native requirement/execute/review workflow,
+// not a claim extracted from generated HTML or a DSH model response.
+export function dshToolEvidence(appId: string, grounded: NonNullable<Awaited<ReturnType<typeof runAppWorldGrounding>>>) {
+  return {schemaVersion:1,appId,trace:[
+    {agent:'AppWorld Workflow Orchestrator',step:'Plan, execute real APIs, and review GUI action',status:grounded.evaluation?.pass===false?'rejected':'done',output:{goal:grounded.goal,evaluation:grounded.evaluation,attempts:grounded.attempts}},
+  ],toolResults:Object.fromEntries(grounded.calls.map((call,i)=>[call.tool.id+'#'+(i+1),call])),toolDbChanges:grounded.calls.flatMap(call=>call.dbChanges?.changedApps||[])};
+}
+
 // The desktop retains its app/window protocol. Complete app code and data remain
 // in the existing DSH service, with the same authenticated account identity.
 export function createCompleteApps(db: Database.Database, personal: any, userOf: (req: express.Request) => string, llmOf: (req: express.Request) => any, options: {
@@ -201,9 +209,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       const grounded=await runAppWorldGrounding({bridge:toolBridge,permissions,payload:{request:String(body?.prompt||body?.actionId||''),...(body?.eventPayload||{})},appName:saved.app.name,appPurpose:saved.app.description,llm});
       if(grounded) {
         if(!grounded.calls.length)throw runtimeError('No real business API call completed','dsh_tool_execution_empty',502);
-        const toolResults=Object.fromEntries(grounded.calls.map((call,i)=>[call.tool.id+'#'+(i+1),call]));
-        const toolDbChanges=grounded.calls.flatMap(call=>call.dbChanges?.changedApps||[]);
-        evidence={schemaVersion:1,appId,trace:[{agent:'AppWorld Grounding Agent',step:'Execute GUI action',status:grounded.evaluation?.pass===false?'rejected':'done',output:{goal:grounded.goal,evaluation:grounded.evaluation}}],toolResults,toolDbChanges};
+        evidence=dshToolEvidence(appId,grounded);
         groundedContext={summary:grounded.summary,entities:grounded.entities,stats:grounded.stats,evaluation:grounded.evaluation,instruction:'Render these actual executed results. Do not repeat API mutations or claim unobserved outcomes.'};
       }
     }
