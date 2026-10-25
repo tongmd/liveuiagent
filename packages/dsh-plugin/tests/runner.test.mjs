@@ -98,3 +98,10 @@ test('provider launcher overlay precedes headless JSON flag',async t=>{
   const argv=JSON.parse((await runner.run({...dirs,task:'',model:'fixture',provider:{apiKey:'private-fixture',apiBase:'http://provider.example/v1'},signal:new AbortController().signal,onEvent(){}})).answer);
   assert.ok(argv.indexOf('--patch')>=0);assert.ok(argv.indexOf('--patch')<argv.indexOf('--json'));
 });
+
+test('native reasoning runner can isolate HOME from the host account',async t=>{
+ const dirs=await paths();const code=`console.log(JSON.stringify({type:'final',text:JSON.stringify({home:process.env.HOME,dshHome:process.env.DSH_HOME})}));`;
+ const runner=createCommandRunner({command:process.execPath,args:['-e',code],passEnv:[],isolatedHome:true});t.after(()=>runner.dispose());
+ const value=JSON.parse((await runner.run({...dirs,task:'',signal:new AbortController().signal,onEvent(){}})).answer);
+ assert.deepEqual(value,{home:dirs.home,dshHome:dirs.home});
+});

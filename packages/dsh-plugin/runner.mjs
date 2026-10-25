@@ -37,7 +37,7 @@ export function createCommandRunner(config) {
       }
       const child = spawn(config.command, args, {
         cwd: work,
-        env: { ...env, DSH_HOME: home, TERM: 'dumb' },
+        env: { ...env, ...(config.isolatedHome ? { HOME: home } : {}), DSH_HOME: home, TERM: 'dumb' },
         detached: process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,

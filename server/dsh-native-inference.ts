@@ -13,11 +13,19 @@ export const NATIVE_DSH_DISABLED_PLUGINS = [
   'tool-workflow', 'tool-todo', 'tool-goal', 'tool-ralph', 'tool-web',
   'mcp-resources', 'workflow-ptc', 'skill-filesystem',
   'session-title-llm', 'session-telemetry-otel', 'plugin-manager',
-  'config-editor', 'settings', 'command-feedback', 'command-goal',
+  'config-editor', 'settings', 'command-feedback', 'command-goal', 'plan-mode',
+  'compaction-basic', 'command-compact', 'tool-result-pruner', 'image-offload', 'agent-instructions',
 ];
-export function nativeDshProfilePatch() {
+export const NATIVE_DSH_TOOL_GUARD = `export const inject = ['tools'];
+export function apply(ctx) {
+  ctx.tools.guard(() => 'Native reasoning workers cannot execute tools. The host owns business operations.');
+  ctx.on('agent/created', ({agent}) => agent.ctx.tools.restrict({allow: []}));
+  ctx.provide('nativeReasoningBoundary', {tools: 'denied'});
+}
+`;
+export function nativeDshProfilePatch(guardPath?:string) {
   return NATIVE_DSH_DISABLED_PLUGINS.map(id => `- id: ${id}\n  disabled: true\n`).join('') +
-    '- id: system-prompt\n  config:\n    personaPrefix: >-\n      You are a Native application agent reasoning worker. Return the exact JSON requested by the host. You have no tools. The host owns all external APIs, databases, UI rendering and agent orchestration. Never claim that you executed an external operation.\n    personaSuffix: ""\n';
+    '- id: system-prompt\n  config:\n    personaPrefix: >-\n      You are a Native application agent reasoning worker. Return the exact JSON requested by the host. You have no tools. The host owns all external APIs, databases, UI rendering and agent orchestration. Never claim that you executed an external operation.\n    personaSuffix: ""\n' + (guardPath ? '- insert:\n    - id: native-reasoning-boundary\n      name: '+JSON.stringify(guardPath)+'\n- id: headless-runner\n  inject: [headlessStartup, nativeReasoningBoundary]\n' : '');
 }
 
 type Runner = {
@@ -33,7 +41,7 @@ type Config = {
   maxConcurrent?: number;
   maxRequestBytes?: number;
   timeoutMs?: number;
-  runnerFactory?: (config:{command:string;args:string[];passEnv:string[]}) => Runner | Promise<Runner>;
+  runnerFactory?: (config:{command:string;args:string[];passEnv:string[];isolatedHome?:boolean}) => Runner | Promise<Runner>;
 };
 const transportError = (message:string,code:string) => Object.assign(new Error(message),{code});
 
@@ -97,7 +105,9 @@ export function createDshNativeInference(config:Config) {
         const work=path.join(dir,'work'),home=path.join(dir,'dsh-home');
         await Promise.all([fs.mkdir(work,{mode:0o700}),fs.mkdir(home,{mode:0o700})]);
         const patch=path.join(dir,'native-reasoning.patch.yml');
-        await fs.writeFile(patch,nativeDshProfilePatch(),{mode:0o600});
+        const guard=path.join(dir,'native-reasoning-boundary.mjs');
+        await fs.writeFile(guard,NATIVE_DSH_TOOL_GUARD,{mode:0o600});
+        await fs.writeFile(patch,nativeDshProfilePatch(guard),{mode:0o600});
         const args=[...(config.args??['--profile','headless','--json'])];
         const appFlags=args.findIndex(arg=>arg==='--json');
         args.splice(appFlags<0?args.length:appFlags,0,'--patch',patch);
@@ -107,7 +117,7 @@ export function createDshNativeInference(config:Config) {
         });
         // The command runner's environment allowlist excludes all application,
         // AppWorld, Telegram, database and host authentication credentials.
-        runner=await factory({command:config.command,args,passEnv:[]});
+        runner=await factory({command:config.command,args,passEnv:[],isolatedHome:true});
         controller.signal.throwIfAborted();
         const result=await runner!.run({work,home,task,model:String(request.model),provider:options?.provider??config.provider,signal:controller.signal,onEvent(event){
           if(event?.type==='tool_call'||event?.type==='tool'||event?.type==='tool_start'){
