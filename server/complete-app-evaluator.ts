@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { randomBytes } from 'node:crypto';
-import puppeteer, { type Browser, type Page, type Frame } from 'puppeteer-core';
+import puppeteer, { type Browser, type Page, type Frame, type ElementHandle } from 'puppeteer-core';
 import type { LlmRuntimeConfig } from './liveuiagent.js';
 
 export type CompleteBrowserTransport = { request(route: string, body?: any, method?: string): Promise<any> };
@@ -207,6 +207,7 @@ export class CompleteAppBrowser {
     const frameHandle = await page.$('#app'); this.frame = (await frameHandle?.contentFrame()) || undefined;
     if (!this.frame) throw Error('Could not open application frame');
     await this.frame.waitForFunction(() => document.readyState === 'complete' && !!document.body, { timeout: 15000 });
+    await this.identityRealm().evaluate('globalThis.__name = value => value');
     await this.settle(); return data;
   }
   async settle() {
@@ -231,12 +232,22 @@ export class CompleteAppBrowser {
     this.actionDeadlineAt=undefined;
     await this.page?.evaluate(channel=>document.querySelector<HTMLIFrameElement>('#app')?.contentWindow?.postMessage({channel,type:'action-deadline',deadlineAt:undefined},'*'),this.channel);
   }
+  private identityRealm(): Pick<Frame, 'evaluate' | 'evaluateHandle'> {
+    // CDP Frame implements this realm in the pinned Puppeteer version; its
+    // public declaration omits the internal accessor. Match its evaluation
+    // interface without using application-visible globals for identity.
+    return (this.frame! as Frame & { isolatedRealm(): Pick<Frame, 'evaluate' | 'evaluateHandle'> }).isolatedRealm();
+  }
   async snapshot(name?: string) {
     if (!this.frame || !this.page) throw Error('Browser is not open');
-    const metrics = await this.frame.evaluate(() => {
+    const metrics = await this.identityRealm().evaluate(() => {
       const visible = (node: Element) => { const box = node.getBoundingClientRect(); const css = getComputedStyle(node); return box.width > 0 && box.height > 0 && css.visibility !== 'hidden' && css.display !== 'none'; };
-      let counter = 0;
-      const identity = (node: Element) => { const id = `e${++counter}`; node.setAttribute('data-liveui-eval-id', id); return id; };
+      // The isolated realm is inaccessible to application scripts. Never trust
+      // attributes supplied by HTML or copied by cloneNode; keep identity on
+      // the actual Element for this document across every observation.
+      const realm = globalThis as typeof globalThis & { __liveuiEvalIdentity?: { document: Document; ids: WeakMap<Element, string>; counter: number } };
+      const state = realm.__liveuiEvalIdentity?.document === document ? realm.__liveuiEvalIdentity : (realm.__liveuiEvalIdentity = { document, ids: new WeakMap<Element, string>(), counter: 0 });
+      const identity = (node: Element) => { let id = state.ids.get(node); if (!id) { id = `e${++state.counter}`; state.ids.set(node, id); } return id; };
       const label = (node: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement) => node.getAttribute('aria-label') || Array.from(node.labels || []).map(item => item.textContent).join(' ').trim() || node.getAttribute('placeholder') || node.name || node.id;
       const fields = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>('input:not([type=hidden]):not([type=submit]):not([type=button]),textarea,select')).filter(visible).map(node => ({ target: identity(node), label: label(node), tag: node.tagName.toLowerCase(), type: node.getAttribute('type') || '', value: node.getAttribute('type') === 'password' ? '[redacted]' : node.value, disabled: node.disabled, checked: 'checked' in node ? node.checked : undefined }));
       const buttons = Array.from(document.querySelectorAll<HTMLElement>('button,[role=button],input[type=submit],input[type=button],a[href]')).filter(visible).map(node => ({ target: identity(node), label: node.getAttribute('aria-label') || node.innerText || (node as HTMLInputElement).value || node.getAttribute('title') || '', disabled: Boolean((node as HTMLButtonElement).disabled) }));
@@ -264,15 +275,19 @@ export class CompleteAppBrowser {
     if (!['fill','click','select','check'].includes(step.kind)) throw Error('Unsupported evaluator action');
     if (typeof step.target !== 'string' || !step.target.trim()) throw Error('Evaluator action needs a target');
     await this.snapshot();
-    const id = await this.frame.evaluate(({ target, kind }) => {
+    const targetHandle = await this.identityRealm().evaluateHandle(({ target, kind }) => {
       const candidates = Array.from(document.querySelectorAll<HTMLElement>(kind === 'click' ? 'button,[role=button],input[type=submit],input[type=button],a[href],input[type=checkbox],input[type=radio]' : 'input,textarea,select')).filter(node => { const box = node.getBoundingClientRect(); return box.width > 0 && box.height > 0 && getComputedStyle(node).visibility !== 'hidden' && !(node as HTMLInputElement).disabled; });
       const label = (node: HTMLElement) => node.getAttribute('aria-label') || Array.from((node as HTMLInputElement).labels || []).map(item => item.textContent).join(' ').trim() || node.innerText || node.getAttribute('placeholder') || (node as HTMLInputElement).name || node.id || '';
-      let found = candidates.filter(node => node.getAttribute('data-liveui-eval-id') === target || node.id === target || label(node).trim() === target);
-      if (!found.length) { try { const selected = document.querySelector(target); found = candidates.filter(node => node === selected); } catch { /* Labels need not be CSS selectors. */ } }
+      const state = (globalThis as typeof globalThis & { __liveuiEvalIdentity?: { document: Document; ids: WeakMap<Element, string>; counter: number } }).__liveuiEvalIdentity;
+      const byIdentity = state?.document === document ? candidates.filter(node => state.ids.get(node) === target) : [];
+      const ordinal = /^e([1-9]\d*)$/.exec(target);
+      const isIssuedIdentity = state?.document === document && !!ordinal && Number(ordinal[1]) <= state.counter;
+      let found = isIssuedIdentity ? byIdentity : candidates.filter(node => node.id === target || label(node).trim() === target);
+      if (!found.length && !isIssuedIdentity) { try { const selected = document.querySelector(target); found = candidates.filter(node => node === selected); } catch { /* Labels need not be CSS selectors. */ } }
       if (found.length !== 1) throw Error(`Expected one visible target "${target}", found ${found.length}`);
-      return found[0].getAttribute('data-liveui-eval-id');
+      return found[0];
     }, { target: step.target, kind: step.kind });
-    const handle = await this.frame.$(`[data-liveui-eval-id="${id}"]`); if (!handle) throw Error('Evaluator target disappeared');
+    const handle = targetHandle.asElement() as ElementHandle<HTMLElement> | null; if (!handle) throw Error('Evaluator target disappeared');
     await this.settle();await this.beginAction();
     if (step.kind === 'click') await handle.click();
     else if (step.kind === 'select') await handle.select(String(step.value ?? ''));
