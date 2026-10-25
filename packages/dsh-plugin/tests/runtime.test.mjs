@@ -127,7 +127,7 @@ test('cancellation and unload stop running work and reject new tasks', async t =
   } });
   const queued = await f.api('generate', 'POST', { prompt: '一个应用' });
   await entered;
-  assert.equal((await f.api('generate', 'POST', { prompt: '第二个' })).status, 409);
+  assert.equal((await f.api('generate', 'POST', { prompt: '第二个' })).status, 202);
   await f.runtime.dispose();
   assert.equal(aborted, true);
   assert.equal((await f.api('jobs/' + queued.data.id)).data.status, 'cancelled');
@@ -170,4 +170,41 @@ test('cancelling during final output staging cannot publish a completed applicat
   await f.runtime.dispose();
   assert.equal((await f.api('jobs/' + queued.data.id)).data.status, 'cancelled');
   assert.deepEqual((await f.api('state')).data.apps, []);
+});
+
+
+test('different apps overlap within the limit and same-app actions remain FIFO', async t => {
+  const waiting = [];
+  let active = 0, peak = 0, calls = 0;
+  const dataDir = await mkdtemp(path.join(tmpdir(),'liveuiagent-parallel-'));
+  const {createHash,randomUUID}=await import('node:crypto');
+  const dir=path.join(dataDir,'accounts',createHash('sha256').update('operator').digest('hex'));
+  const ids=[randomUUID(),randomUUID(),randomUUID()];
+  await mkdir(dir,{recursive:true});
+  await writeFile(path.join(dir,'state.json'),JSON.stringify({apps:ids.map(id=>({id,name:'Fixture',revision:1,history:[]})),jobs:[],memory:{manual:'',entries:[]},memoryFormatVersion:1}));
+  for(const id of ids){await mkdir(path.join(dir,'apps',id),{recursive:true});await writeFile(path.join(dir,'apps',id,'index.html'),html);}
+  const f = await fixture(t, { async run(input) {
+    calls++; active++; peak = Math.max(peak, active);
+    await new Promise(resolve => { waiting.push(resolve); input.signal.addEventListener('abort',resolve,{once:true}); });
+    active--; await writeFile(path.join(input.work, 'response.json'), JSON.stringify({text:'done'})); return writer().run(input);
+  } }, { maxConcurrent: 2, dataDir });
+  const first = await f.api('apps/'+ids[0]+'/action', 'POST', { prompt: 'first' });
+  const second = await f.api('apps/'+ids[1]+'/action', 'POST', { prompt: 'second' });
+  const third = await f.api('apps/'+ids[2]+'/action', 'POST', { prompt: 'third' });
+  const until = async fn => { for (let i=0;i<6000&&!fn();i++) await new Promise(r=>setTimeout(r,10)); assert.ok(fn()); };
+  await until(()=>calls===2);
+  assert.equal(active,2); assert.equal((await f.api('jobs/'+third.data.id)).data.status,'queued');
+  waiting.shift()(); waiting.shift()();
+  await until(()=>calls===3); waiting.shift()();
+  for (const request of [first,second,third]) assert.equal((await f.finished(request.data.id)).status,'done');
+  const before = calls;
+  const a = await f.api('apps/'+first.data.appId+'/action','POST',{prompt:'action one'});
+  const b = await f.api('apps/'+first.data.appId+'/action','POST',{prompt:'action two'});
+  const other = await f.api('apps/'+second.data.appId+'/action','POST',{prompt:'other app'});
+  await until(()=>calls===before+2);
+  assert.equal((await f.api('jobs/'+b.data.id)).data.status,'queued');
+  waiting.shift()(); waiting.shift()();
+  await until(()=>calls===before+3); waiting.shift()();
+  for (const request of [a,b,other]) assert.equal((await f.finished(request.data.id)).status,'done');
+  assert.equal(peak,2);
 });

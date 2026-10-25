@@ -11,6 +11,7 @@ import { resolveJobModel } from './model-config.mjs';
 export async function createLiveUIAgentRuntime(config) {
 const { basePath: PREFIX, dataDir: ROOT, frontendDir, owner, model: MODEL, runner } = config;
 const MAX_PENDING = config.maxPending;
+const MAX_CONCURRENT = Math.max(1, Math.min(8, Number(config.maxConcurrent) || 4));
 const JOB_TIMEOUT = config.timeoutMs;
 if (!path.isAbsolute(ROOT) || !path.isAbsolute(frontendDir)) throw new Error('LiveUIAgent requires absolute data and frontend directories');
 if (typeof owner !== 'string' || !owner.trim()) throw new Error('LiveUIAgent requires a fixed operator identity');
@@ -20,6 +21,7 @@ const accounts = new Map();
 const queue = [];
 const running = new Map();
 let pumping = false;
+let wakePump;
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const validId = value => typeof value === 'string' && /^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/.test(value);
@@ -100,7 +102,6 @@ async function submit(a, input, mode = 'generate') {
   if (closed) fail(503, 'The service is shutting down');
   if (!input || typeof input !== 'object' || Array.isArray(input)) fail(400, 'Invalid request body');
   if (typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > 16000) fail(400, 'Describe your app or changes using up to 16,000 characters');
-  if (a.state.jobs.some(j => ['running', 'queued'].includes(j.status))) fail(409, 'Wait for the current task to finish before submitting another');
   if (queue.length >= MAX_PENDING) fail(429, 'The task queue is full. Please try again later.');
   const selected=resolveJobModel(input,MODEL,{modelSelection:runner.modelSelection===true,providerOverride:runner.providerOverride===true,modelOnly:runner.modelOnly===true});
   let app;
@@ -110,22 +111,38 @@ async function submit(a, input, mode = 'generate') {
   const job = { id: randomUUID(), appId: app?.id || recover?.appId || randomUUID(), recoverFrom: recover?.id, status: 'queued', stage: 'Queued', mode, model:selected.model,
     prompt: clean(input.prompt.trim()), createdAt: new Date().toISOString(), toolCalls: 0, tools: [] };
   a.state.jobs.unshift(job);
-  a.state.jobs = a.state.jobs.slice(0, 80);
+  a.state.jobs = a.state.jobs.filter((j, index) => index < 80 || ['queued', 'running'].includes(j.status));
   await save(a);
   queue.push({ a, job, context: input.context, provider:selected.provider });
+  wakePump?.();
   if (!pumping) pumpTask = pump();
   return publicJob(job);
 }
 async function pump() {
   if (pumping) return;
   pumping = true;
+  const active = new Map();
   try {
-    while (queue.length && !closed) {
-      const item = queue.shift();
-      if (item.job.status === 'cancelled') continue;
-      await execute(item);
+    while ((queue.length || active.size) && !closed) {
+      // Separate apps can run together; revisions/actions of one app retain FIFO.
+      while (active.size < MAX_CONCURRENT) {
+        const index = queue.findIndex(item => item.job.status === 'cancelled' || !active.has(item.a.key + ':' + item.job.appId));
+        if (index < 0) break;
+        const item = queue.splice(index, 1)[0];
+        if (item.job.status === 'cancelled') continue;
+        const key = item.a.key + ':' + item.job.appId;
+        const task = execute(item).finally(() => active.delete(key));
+        active.set(key, task);
+      }
+      if (active.size) {
+        await Promise.race([...active.values(), new Promise(resolve => { wakePump = resolve; })]);
+        wakePump = undefined;
+      }
     }
-  } finally { pumping = false; }
+  } finally {
+    await Promise.allSettled(active.values());
+    pumping = false;
+  }
 }
 async function invokeDsh(a, job, work, home, task, provider, budget = JOB_TIMEOUT) {
   if (closed || job.status === 'cancelled') throw new Error('Task cancelled');
