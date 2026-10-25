@@ -15,7 +15,7 @@ export const NATIVE_DSH_DISABLED_PLUGINS = [
   'mcp-resources', 'workflow-ptc', 'skill-filesystem',
   'session-title-llm', 'session-telemetry-otel', 'plugin-manager',
   'config-editor', 'settings', 'command-feedback', 'command-goal', 'plan-mode',
-  'compaction-basic', 'command-compact', 'tool-result-pruner', 'image-offload', 'agent-instructions',
+  'llm-retry', 'compaction-basic', 'command-compact', 'tool-result-pruner', 'image-offload', 'agent-instructions',
 ];
 export const NATIVE_DSH_TOOL_GUARD = `export const inject = ['tools'];
 export function apply(ctx) {

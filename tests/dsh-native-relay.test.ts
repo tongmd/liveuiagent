@@ -31,3 +31,20 @@ test('token length termination is rejected even when emitted text happens to be 
  const relay=await createNativeDshRelay({provider:{apiBase:upstream.base,apiKey:'secret'},request:{model:'same',messages:[],max_tokens:1024},signal:new AbortController().signal});
  try{await assert.rejects(async()=>{const result=await fetch(relay.provider.apiBase+'/chat/completions',{method:'POST',headers:{authorization:'Bearer '+relay.provider.apiKey},body:JSON.stringify({model:'same',messages:[],stream:true})});await result.text();});}finally{await relay.close();await upstream.close();}
 });
+
+test('one inference capability cannot retry or duplicate an upstream model request',async()=>{
+ let calls=0;const upstream=await fixture((_req,res)=>{calls++;res.end('{}');});const relay=await createNativeDshRelay({provider:{apiBase:upstream.base,apiKey:'secret'},request:{model:'same',messages:[]},signal:new AbortController().signal});
+ const send=()=>fetch(relay.provider.apiBase+'/chat/completions',{method:'POST',headers:{authorization:'Bearer '+relay.provider.apiKey},body:JSON.stringify({model:'same',messages:[],stream:false})});
+ try{const first=await send();assert.equal(first.status,200);await first.text();const retry=await send();assert.equal(retry.status,409);assert.equal(calls,1);}finally{await relay.close();await upstream.close();}
+});
+
+test('an explicit host token cap removes the competing DSH adapter token default',async()=>{
+ const wires:any[]=[];const upstream=await fixture(async(req,res)=>{let text='';for await(const c of req)text+=c;wires.push(JSON.parse(text));res.end('{}');});
+ try{for(const field of ['max_tokens','max_completion_tokens']){const relay=await createNativeDshRelay({provider:{apiBase:upstream.base,apiKey:'secret'},request:{model:'same',messages:[],[field]:1024},signal:new AbortController().signal});try{const reply=await fetch(relay.provider.apiBase+'/chat/completions',{method:'POST',headers:{authorization:'Bearer '+relay.provider.apiKey},body:JSON.stringify({model:'same',messages:[],max_tokens:32768,max_completion_tokens:32768})});await reply.text();const last=wires.at(-1);assert.equal(last[field],1024);assert.equal(last[field==='max_tokens'?'max_completion_tokens':'max_tokens'],undefined);}finally{await relay.close();}}}finally{await upstream.close();}
+});
+
+test('non-streaming JSON token length termination is rejected before a successful response is sent',async()=>{
+ const upstream=await fixture((_req,res)=>{res.setHeader('content-type','application/json');res.end(JSON.stringify({choices:[{message:{content:'{"ok":true}'},finish_reason:'length'}]}));});
+ const relay=await createNativeDshRelay({provider:{apiBase:upstream.base,apiKey:'secret'},request:{model:'same',messages:[],max_tokens:1024},signal:new AbortController().signal});
+ try{const response=await fetch(relay.provider.apiBase+'/chat/completions',{method:'POST',headers:{authorization:'Bearer '+relay.provider.apiKey},body:JSON.stringify({model:'same',messages:[],stream:false})});assert.equal(response.status,502);assert.equal((await response.json()).error.code,'native_relay_upstream_error');}finally{await relay.close();await upstream.close();}
+});

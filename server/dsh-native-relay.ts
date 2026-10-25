@@ -11,7 +11,7 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
  const limit=input.maxRequestBytes??4*1024*1024;
  const sockets=new Set<import('node:net').Socket>();
  const requests=new Set<AbortController>();
- let closed=false;
+ let closed=false;let providerRequests=0;
  const protectedFields=new Set(['model','messages','tools','tool_choice','parallel_tool_calls','stream','stream_options']);
  const parameters=Object.fromEntries(Object.entries(input.request).filter(([name])=>!protectedFields.has(name)));
  function fail(res:http.ServerResponse,status:number,code:string){if(!res.headersSent){res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:code,code}}));}else res.destroy();}
@@ -37,13 +37,26 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
    if(body.tool_choice!==undefined&&body.tool_choice!=='none')return fail(res,400,'native_relay_tools_forbidden');
    const forwarded:Record<string,any>={...body,...parameters,model:body.model,messages:body.messages,stream:body.stream};
    delete forwarded.tools;delete forwarded.tool_choice;delete forwarded.parallel_tool_calls;
+   // Adapters may choose the other OpenAI token spelling by default. Do not
+   // leave a 32768-token adapter default beside a host's explicit 1024 cap.
+   if(Object.hasOwn(input.request,'max_tokens')&&!Object.hasOwn(input.request,'max_completion_tokens'))delete forwarded.max_completion_tokens;
+   if(Object.hasOwn(input.request,'max_completion_tokens')&&!Object.hasOwn(input.request,'max_tokens'))delete forwarded.max_tokens;
    const serialized=JSON.stringify(forwarded);
    if(Buffer.byteLength(serialized)>limit)return fail(res,413,'native_relay_request_too_large');
+   if(providerRequests!==0)return fail(res,409,'native_relay_retry_forbidden');
+   providerRequests++;
    const upstreamResponse=await (input.fetchImpl??fetch)(upstream,{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+input.provider.apiKey},body:serialized,signal:controller.signal,redirect:'error'});
-   res.writeHead(upstreamResponse.status,{'content-type':upstreamResponse.headers.get('content-type')||'application/json','cache-control':'no-store'});
    let responseBytes=0;const decoder=new TextDecoder();let sseBuffer='';
    const isSse=Boolean(upstreamResponse.headers.get('content-type')?.includes('text/event-stream'));
    const rejectLength=(value:any)=>{if(value?.choices?.some((choice:any)=>choice.finish_reason==='length'))throw new Error('Native model output reached its token limit');};
+   const responseHeaders={'content-type':upstreamResponse.headers.get('content-type')||'application/json','cache-control':'no-store'};
+   if(!isSse){
+    const buffered:Buffer[]=[];
+    if(upstreamResponse.body)for await(const chunk of upstreamResponse.body as any){controller.signal.throwIfAborted();responseBytes+=chunk.length;if(responseBytes>16*1024*1024)throw new Error('Native relay response too large');buffered.push(Buffer.from(chunk));}
+    const bytes=Buffer.concat(buffered);let parsed;try{parsed=JSON.parse(bytes.toString('utf8'));}catch{if(upstreamResponse.ok)throw new Error('Native provider returned invalid JSON');}
+    if(parsed)rejectLength(parsed);res.writeHead(upstreamResponse.status,responseHeaders);res.end(bytes);return;
+   }
+   res.writeHead(upstreamResponse.status,responseHeaders);
    if(upstreamResponse.body){for await(const chunk of upstreamResponse.body as any){if(controller.signal.aborted)throw controller.signal.reason;responseBytes+=chunk.length;if(responseBytes>16*1024*1024)throw new Error('Native relay response too large');
     if(isSse){sseBuffer=(sseBuffer+decoder.decode(chunk,{stream:true})).replace(/\r\n/g,'\n');let end;while((end=sseBuffer.indexOf('\n\n'))>=0){const event=sseBuffer.slice(0,end);sseBuffer=sseBuffer.slice(end+2);const data=event.split('\n').filter(line=>line.startsWith('data:')).map(line=>line.slice(5).trimStart()).join('\n');if(data&&data!=='[DONE]'){let parsed;try{parsed=JSON.parse(data);}catch{}if(parsed)rejectLength(parsed);}}if(sseBuffer.length>limit)throw new Error('Native relay event too large');}
     if(!res.write(chunk))await new Promise<void>((resolve,reject)=>{res.once('drain',resolve);res.once('close',()=>reject(new Error('Relay client closed')));});}}
