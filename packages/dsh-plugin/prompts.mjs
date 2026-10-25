@@ -3,6 +3,12 @@ export const APP_INSTRUCTIONS = `Build or improve a real personal web applicatio
 Write the finished application to index.html in the current task directory and its metadata to app.json in the current task directory.
 Use your actual filesystem and command tools. Read existing files first when modifying an app.
 
+DELIVERY ORDER
+1. Read relevant existing files. Write app.json immediately with the intended short name and description; checks must be empty until actually run.
+2. Write a small, complete index.html implementing the core requested workflow. Deliver this before optional styling or polishing.
+3. Run one syntax check and one focused logic check, update metadata to describe implemented features, then finish.
+The first delivery has a four-minute limit. Do not spend the whole budget planning, browsing or polishing. For live information, use the provided in-app AI action with loading/error states rather than inventing fresh data.
+
 OUTPUT REQUIREMENTS
 index.html is a complete standalone UTF-8 HTML document with inline CSS and JavaScript.
 No framework, installation, external script, CDN or build step is required. Inline SVG is welcome.
@@ -30,7 +36,7 @@ app.json: {"name":"short app name","description":"one useful sentence","accent":
 "features":["implemented function",...],"checks":["checks you actually ran",...]}.
 Before finishing, extract inline scripts and run node --check; repair syntax errors. Run one focused
 business-logic check. Inspect event handlers. Do not create DOM mocks or exhaustive test suites.
-After these checks pass, write metadata and finish promptly; the host separately runs browser checks.
+After these checks pass, update the metadata already written and finish promptly; the host separately runs browser checks.
 Never claim a browser test unless you actually ran a browser.
 
 MEMORY

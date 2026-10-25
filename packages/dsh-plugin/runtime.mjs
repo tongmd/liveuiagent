@@ -3,6 +3,7 @@ import { renameSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { buildTask } from './prompts.mjs';
+import { validateDelivery } from './delivery.mjs';
 import { resolveJobModel } from './model-config.mjs';
 
 /** Create one operator's LiveUIAgent application service; the Cordis entry owns HTTP authentication. */
@@ -125,11 +126,12 @@ async function pump() {
     }
   } finally { pumping = false; }
 }
-async function invokeDsh(a, job, work, home, task, provider) {
+async function invokeDsh(a, job, work, home, task, provider, budget = JOB_TIMEOUT) {
+  job.timedOut = false;
   const controller = new AbortController();
   running.set(job.id, controller);
   const started = Date.now();
-  const timer = setTimeout(() => { job.timedOut = true; controller.abort(new Error('DSH task timed out')); }, JOB_TIMEOUT);
+  const timer = setTimeout(() => { job.timedOut = true; controller.abort(new Error('DSH task timed out')); }, budget);
   try {
     const result = await runner.run({ work, home, task, model:job.model,provider,signal: controller.signal, onEvent(event) {
       if (event.type === 'tool_call') {
@@ -149,7 +151,7 @@ async function invokeDsh(a, job, work, home, task, provider) {
   } finally {
     clearTimeout(timer);
     running.delete(job.id);
-    job.elapsedMs = Date.now() - started;
+    job.elapsedMs = (job.elapsedMs || 0) + Date.now() - started;
   }
 }
 async function outputFile(work, name, maxBytes) {
@@ -180,7 +182,31 @@ async function execute({ a, job, context, provider }) {
     if (job.status === 'cancelled') return;
     let task = buildTask({ prompt: job.prompt, mode: job.mode, memory: context?.personalContext ?? a.state.memory, history: previous?.history, context });
     if (job.recoverFrom) task += '\n\nFINALIZE EXISTING WORK: a prior run stopped while polishing. Read the files already present. Preserve the existing design and features. Run a syntax check and one focused logic check, repair only actual errors, ensure app.json is present, and finish. Do not redesign or add features.';
-    await invokeDsh(a, job, work, home, task, provider);
+    if (job.mode === 'action') {
+      await invokeDsh(a, job, work, home, task, provider);
+    } else {
+      job.phase = 'generate'; job.stage = '生成可运行版本'; await save(a);
+      let generationError;
+      try { await invokeDsh(a, job, work, home, task, provider, Math.min(JOB_TIMEOUT, 240000)); }
+      catch (error) { if (!job.timedOut || job.status === 'cancelled') throw error; generationError = error; }
+      if (job.status === 'cancelled') return;
+      job.phase = 'validate'; job.stage = '校验应用文件与脚本'; await save(a);
+      let delivery = await validateDelivery(work);
+      if (!delivery.ok) {
+        job.phase = 'repair'; job.stage = '修复交付文件'; job.repairAttempts = 1; await save(a);
+        const repairTask = task + '\n\nDELIVERY REPAIR ONLY (one attempt, 120 seconds). Existing files are the current draft. Do not redesign or research. Fix these host validation errors: ' + JSON.stringify(delivery.errors) + '. Write app.json first if missing, accurately describing only implemented features. Fix inline JavaScript syntax and preserve the user request and stored data. Finish immediately after writing the corrected files.';
+        try { await invokeDsh(a, job, work, home, repairTask, provider, Math.min(JOB_TIMEOUT, 120000)); }
+        catch (error) { if (!job.timedOut || job.status === 'cancelled') throw error; }
+        if (job.status === 'cancelled') return;
+        job.phase = 'validate'; job.stage = '复查修复结果'; await save(a);
+        delivery = await validateDelivery(work);
+      }
+      job.deliveryValidation = { ok: delivery.ok, errors: delivery.errors };
+      if (!delivery.ok) throw new Error('应用交付校验未通过：' + delivery.errors.map(e => e.message).join('; '));
+      if (generationError) job.generationDeadlineReached = true;
+      job.timedOut = false;
+      job.phase = 'publish'; job.stage = '保存可运行应用'; await save(a);
+    }
     if (job.status === 'cancelled') return;
     if (job.mode === 'action') {
       const result = JSON.parse(await outputFile(work, 'response.json', 1100000));
