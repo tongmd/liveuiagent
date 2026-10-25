@@ -1,5 +1,5 @@
 import {writeGuiPlanningDiagnostics} from './gui-planning-diagnostics.js';
-import { consumedSlotsFromIndices, requireConsumedSlots, rowActionSlotMap, assertExactRowBindings, assertRowActionPayload } from './native-action-slots.js';
+import { consumedGroundingFields, consumedSlotsFromIndices, requireConsumedSlots, rowActionSlotMap, assertExactRowBindings, assertRowActionPayload } from './native-action-slots.js';
 import { writeGroundingDiagnostics, type GroundingDiagnosticsReceipt } from './grounding-diagnostics.js';
 import { stateDisplayPaths, stateDisplayFields, stateDisplayValues } from './native-state-display.js';
 import {resolveControlPreparation} from './gui-interaction-planner.js';
@@ -5785,7 +5785,7 @@ export async function runAppWorldGrounding(input: {
   appState?: AppStateAdapter;
   permissions: string[];
   payload: Record<string, unknown>;
-  fields?: Array<{ label: string; value: string }>;
+  fields?: Array<{ label: string; value: string; valueState?: 'empty_string' | 'null' }>;
   appName: string;
   appPurpose?: string;
   viewContext?: GroundingViewContext;
@@ -5834,7 +5834,7 @@ export async function runAppWorldGrounding(input: {
   const userRequest = uniqueStrings([
     ...(input.actionLabel ? [compactText(`Tapped action: ${input.actionLabel}${input.actionDescription ? ` — ${input.actionDescription}` : ''}`, 200)] : []),
     ...(input.fields?.length
-      ? input.fields.map((field) => `${field.label}: ${field.value}`)
+      ? input.fields.map((field) => `${field.label}: ${field.valueState==='empty_string'?'"" (submitted empty string)':field.valueState==='null'?'null (submitted null)':field.value}`)
       : Object.entries(input.payload)
           .filter(([key, value]) => typeof value === 'string' && !['entityName', 'entityId', 'sourceComponentId'].includes(key))
           .map(([, value]) => String(value).trim())
@@ -7158,9 +7158,11 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             // 目标实体置于首位:行内按钮回合的唯一业务输入就是"对这一个对象做该动作"。
             fields: [
               ...(targetEntity ? [{ label: "Target item", value: `${targetEntity.name}${targetEntity.id ? ` (id ${targetEntity.id})` : ''}` }] : []),
-              ...(interactionModel?.businessFields ?? [])
-                .map((field) => ({ label: String(field.label), value: String((rawPayload as Record<string, unknown>)[field.name] ?? '').trim() }))
-                .filter((field) => field.value),
+              ...(action.perItem===true
+                ? consumedGroundingFields(action.consumedSlots,rawPayload,interactionModel?.businessFields ?? [])
+                : (interactionModel?.businessFields ?? [])
+                  .map((field) => ({ label: String(field.label), value: String((rawPayload as Record<string, unknown>)[field.name] ?? '').trim() }))
+                  .filter((field) => field.value)),
             ],
             targetEntity,
             appName: String(stored.appPackage.manifest.name || input.appId),

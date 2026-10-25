@@ -104,3 +104,18 @@ export function assertRowActionPayload(
     throw Error('Row action source bindings disagree with consumedSlots');
   }
 }
+
+export type ConsumedGroundingField={label:string;value:string;valueState?:'empty_string'|'null'};
+/** Present empty/null is a submitted value, not an absent slot or an inferred
+ * instruction. Identity-only row actions never inherit unrelated composer data. */
+export function consumedGroundingFields(raw:unknown,payload:Record<string,unknown>,fields:Array<{name:string;label:string}>):ConsumedGroundingField[]{
+ const consumed=requireConsumedSlots(raw,fields.map(field=>field.name));
+ return consumed.map(name=>{
+  if(!Object.hasOwn(payload,name))throw Error('Consumed grounding slot is absent');
+  const value=payload[name];const field=fields.find(field=>field.name===name)!;
+  if(value===null)return{label:field.label,value:'',valueState:'null'};
+  if(typeof value==='string')return{label:field.label,value,...(value===''?{valueState:'empty_string' as const}:{})};
+  if(typeof value==='boolean'||(typeof value==='number'&&Number.isFinite(value)))return{label:field.label,value:String(value)};
+  throw Error('Consumed grounding slot must be a present scalar or null');
+ });
+}
