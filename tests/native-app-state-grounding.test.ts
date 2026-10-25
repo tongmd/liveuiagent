@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import http from 'node:http';import Database from 'better-sqlite3';
 import {runAppWorldGrounding,createLiveUIRuntime} from '../server/liveuiagent.js';
 import {createAppStateAdapter,hydrateAppState} from '../server/native-app-state.js';
+import {AppWorldRequestNotStartedError} from '../server/appworld-request-error.js';
 import {withActionDeadline} from '../server/action-deadline.js';
 const reply=(value:any)=>({choices:[{message:{content:JSON.stringify(value)}}]});
 async function runtimeFixture(t:any){
@@ -80,5 +81,36 @@ for(const mode of ['complete','external_read_missing','local_read_missing','wron
  if(mode==='deadline_after_commit')assert.equal(result?.deadlineExceeded,true);
  if(mode==='complete'){assert.deepEqual(result!.attempts.filter(c=>c.ok===true&&c.api!=='(write-verifier)').map(c=>c.order),[1,4]);assert.deepEqual(result!.appStateCalls.map(c=>c.order),[2,3]);assert.equal(result?.executionEvidence?.successfulApiCalls,2);assert.equal(result?.appStateExecutionEvidence.successfulCalls,2);assert.equal(result?.appStateCalls.every(c=>c.source==='app-state'),true);}
  if(mode==='local_only'){assert.equal(result?.calls.length,0);assert.equal(result?.executionEvidence?.successfulApiCalls,0);assert.equal(result?.appStateExecutionEvidence.successfulCalls,2);}
+ db.close();
+});
+
+for(const scenario of ['local_unknown','external_unknown','local_get_failure','external_get_failure','trusted_preflight'] as const)test(`per-dispatch mixed batch write lock: ${scenario}`,async()=>{
+ const db=new Database(':memory:');db.exec('CREATE TABLE agent_apps(app_id TEXT,owner TEXT)');db.prepare('INSERT INTO agent_apps VALUES(?,?)').run('one','alice');
+ const real=createAppStateAdapter(db,'alice','one',[{name:'target',type:'number'}],['storage.app','app_state.write'])!;
+ const localOps:string[]=[],externalOps:string[]=[];let injected=false,externalEffects=0,localEffects=0,step=0;
+ const adapter={...real,call(api:string,args:any){localOps.push(api);if(scenario==='local_get_failure'&&api==='app_state.read_record'&&!injected){injected=true;throw Error('Injected read failure');}const result=real.call(api,args);if(api==='app_state.upsert_record'){localEffects++;if(scenario==='local_unknown'&&!injected){injected=true;throw Error('Reply lost after local commit');}}return result;}};
+ const tools=['create_external','read_external'].map(api=>({id:api,apiName:api,permission:api,source:'appworld',appName:'service',method:api==='create_external'?'POST':'GET',purpose:api}));
+ const bridge:any={getCapabilities:async()=>tools,callTool:async(api:string,args:any)=>{externalOps.push(api);if(api==='read_external'&&scenario==='external_get_failure'&&!injected){injected=true;throw Error('Read reply lost');}if(api==='create_external'){if(scenario==='trusted_preflight'&&!injected){injected=true;throw new AppWorldRequestNotStartedError(Error('Trusted validation stopped before dispatch'));}externalEffects++;if(scenario==='external_unknown'&&!injected){injected=true;throw Error('Reply lost after external mutation');}}return{tool:tools.find(t=>t.id===api),request:args,response:{id:'x',name:'External X'},dbChanges:null};}};
+ const localWrite={api:'app_state.upsert_record',args:{recordId:'x',values:{target:25}}};const externalWrite={api:'create_external',args:{name:'External X'}};const localRead={api:'app_state.read_record',args:{recordId:'x'}};const externalRead={api:'read_external',args:{}};
+ const first=scenario==='local_unknown'?[localWrite,externalWrite,localWrite,externalRead,localRead]:scenario==='external_unknown'?[externalWrite,localWrite,externalWrite,externalRead,localRead]:scenario==='local_get_failure'?[localRead,externalWrite,localWrite,externalRead,localRead]:scenario==='external_get_failure'?[externalRead,externalWrite,localWrite,externalRead,localRead]:[externalWrite,localWrite,externalWrite,externalRead,localRead];
+ const result=await runAppWorldGrounding({bridge,permissions:tools.map(t=>t.permission),appState:adapter,appName:'Mixed calls',payload:{request:'Perform original service operation and persist local target'},llm:{model:'fixture-only',chatCompletion:async(request:any)=>{const sys=request.messages[0].content;
+  if(sys.includes('You analyze a GUI'))return reply({objective:'Original service operation plus actual local preference'});
+  if(sys.includes('You are the Write Verifier'))return reply({approved:true});
+  if(sys.includes('You are an INDEPENDENT evaluator'))return reply({pass:true,deficiencies:[]});
+  step++;return reply(step===1?{calls:first}:step===2&&scenario.endsWith('_unknown')?{calls:[externalWrite,localWrite,externalRead,localRead]}:{done:true,summary:'Actual evidence only',entities:[{name:'External X',id:'x'}],stats:[]});
+ }}});
+ if(scenario==='local_unknown'||scenario==='external_unknown'){
+  assert.equal(localEffects,scenario==='local_unknown'?1:0);assert.equal(externalEffects,scenario==='external_unknown'?1:0);
+  assert.equal(result?.evaluation?.pass,false);assert.match(result!.evaluation!.deficiencies.join('\n'),/mutation outcome unknown/);
+  assert.ok(result!.appStateCalls.some(c=>c.dispatchBlocked===true));assert.ok(result!.attempts.some(c=>c.dispatchBlocked===true));
+  assert.ok(localOps.includes('app_state.read_record'));assert.ok(externalOps.includes('read_external'),'reads after unknown write remain allowed within the SAME batch and later steps');
+  assert.equal(result!.appStateExecutionEvidence.unknownWriteOutcomes,scenario==='local_unknown'?1:0);assert.equal(result!.executionEvidence!.unknownWriteOutcomes,scenario==='external_unknown'?1:0);
+  assert.equal((real.call('app_state.read_record',{recordId:'x'}) as any).record?.revision,scenario==='local_unknown'?1:undefined);
+  assert.equal(result!.calls.filter(c=>c.tool.apiName==='create_external').length,0,'unknown response must never be reported as successful, even when actual effect exists');
+ }else{
+  assert.equal(localEffects,1);assert.equal(externalEffects,1);assert.equal(result!.appStateExecutionEvidence.unknownWriteOutcomes,0);assert.equal(result!.executionEvidence!.unknownWriteOutcomes,0);
+  assert.equal(result!.attempts.some(c=>c.dispatchBlocked===true),false,'GET errors and trusted not-started errors are not mutation-unknown authorization blocks');
+  if(scenario==='trusted_preflight'){assert.equal(result!.executionEvidence!.notStartedApiCalls,1);assert.equal(result!.executionEvidence!.unknownDispatchOutcomes,0);}
+ }
  db.close();
 });

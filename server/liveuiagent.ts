@@ -5815,7 +5815,7 @@ export async function runAppWorldGrounding(input: {
   // 语义的回合知道上一批产出了什么。
   recentTurns?: Array<Record<string, unknown>>;
   llm?: LlmRuntimeConfig;
-}): Promise<{ calls: AppWorldCallResult[]; appStateCalls: Array<Record<string, unknown>>; appStateExecutionEvidence: {attemptedCalls:number;successfulCalls:number;unknownDispatchOutcomes:number}; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; deadlineExceeded?: boolean; executionEvidence?: { attemptedApiCalls: number; successfulApiCalls: number; unknownDispatchOutcomes: number; notStartedApiCalls: number; totalApiAttemptLimit: number; zeroSuccessfulCallCause?: string } } | null> {
+}): Promise<{ calls: AppWorldCallResult[]; appStateCalls: Array<Record<string, unknown>>; appStateExecutionEvidence: {attemptedCalls:number;successfulCalls:number;unknownDispatchOutcomes:number;unknownWriteOutcomes:number}; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; deadlineExceeded?: boolean; executionEvidence?: { attemptedApiCalls: number; successfulApiCalls: number; unknownDispatchOutcomes: number; unknownWriteOutcomes: number; notStartedApiCalls: number; totalApiAttemptLimit: number; zeroSuccessfulCallCause?: string } } | null> {
   // The ablation keeps planning/catalog access but supplies no external facts.
   // Guard the shared executor as well as its current callers.
   if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') return null;
@@ -5899,9 +5899,11 @@ export async function runAppWorldGrounding(input: {
   const historyLog: Array<Record<string, unknown>> = [];
   const appStateCalls: Array<Record<string, unknown>> = [];
   let appStateAttempts=0, appStateSuccesses=0, appStateUnknown=0;
+  let unknownWriteOutcomes=0, appStateUnknownWrites=0;
+  const isMutation=(capability:{method:string})=>!['GET','HEAD','OPTIONS'].includes(String(capability.method).toUpperCase());
   let localWriteAt=-1, localReadAt=-1;
   const localPendingReadback = new Set<string>();
-  const appStateExecutionEvidence=()=>({attemptedCalls:appStateAttempts,successfulCalls:appStateSuccesses,unknownDispatchOutcomes:appStateUnknown});
+  const appStateExecutionEvidence=()=>({attemptedCalls:appStateAttempts,successfulCalls:appStateSuccesses,unknownDispatchOutcomes:appStateUnknown,unknownWriteOutcomes:appStateUnknownWrites});
   const totalAttempts=()=>apiAttemptCount+appStateAttempts;
   const totalSuccesses=()=>calls.length+webCallCount+appStateSuccesses;
   let summary = '';
@@ -5923,7 +5925,7 @@ export async function runAppWorldGrounding(input: {
   const zeroSuccessfulCallCause = () => apiAttemptCount ? (unknownDispatchOutcomes ? 'dispatch_without_successful_response' : 'local_preflight_rejected')
     : historyLog.some(item => item.api === '(write-verifier)') ? 'write_verifier_rejected'
     : historyLog.some(item => item.api === '(decision)') ? 'decision_failed' : 'no_dispatch_proposed';
-  const executionEvidence = () => ({ ...(!calls.length && !webCallCount ? { zeroSuccessfulCallCause: zeroSuccessfulCallCause() } : {}), attemptedApiCalls: apiAttemptCount, successfulApiCalls: calls.length + webCallCount, unknownDispatchOutcomes, notStartedApiCalls, totalApiAttemptLimit });
+  const executionEvidence = () => ({ ...(!calls.length && !webCallCount ? { zeroSuccessfulCallCause: zeroSuccessfulCallCause() } : {}), attemptedApiCalls: apiAttemptCount, successfulApiCalls: calls.length + webCallCount, unknownDispatchOutcomes, unknownWriteOutcomes:unknownWriteOutcomes-appStateUnknownWrites, notStartedApiCalls, totalApiAttemptLimit });
   // Read-back 门的机械依据:实体列表必须来自"最后一次写之后"的读调用。
   // prompt 只劝不拦(联系人删除后 done 仍回旧列表,张三永远删不掉),这里硬拦。
   let lastWriteAt = -1;
@@ -6058,12 +6060,8 @@ export async function runAppWorldGrounding(input: {
         const apiName=String(call?.api || '').trim();
         const cap = allCapabilities.find((tool) => tool.apiName === apiName)
           || allCapabilities.find((tool) => tool.apiName.startsWith(apiName) || apiName.startsWith(tool.apiName));
-        return cap && String(cap.method || '').toUpperCase() !== 'GET';
+        return cap && isMutation(cap);
       });
-      if (hasWrite && (projectionReadOnlyRepair || appStateUnknown > 0)) {
-        historyLog.push({ok:false,api:'(projection-coverage)',error:'Read-only coverage repair or unknown app-state dispatch rejects further writes; reuse confirmed receipts and read the actual current records.'});
-        continue;
-      }
       if (hasWrite) {
         // 校验器抖动重试一次:空响应若恰好落在错参批次上,错误金额就裸奔执行了。
         // 两次都失败则拒绝该批写操作,绝不回退到未核准的原参数。
@@ -6120,9 +6118,20 @@ export async function runAppWorldGrounding(input: {
         remainingActionMs();
         const apiName = String(rawCall?.api || '').trim();
         const args = (rawCall?.args && typeof rawCall.args === 'object') ? rawCall.args as Record<string, unknown> : {};
+        const webTool = webTools.find((tool) => tool.apiName === apiName);
+        const dispatchCapability=appStateCapabilities.find(tool=>tool.apiName===apiName)
+          ?? capabilities.find(tool=>tool.apiName===apiName)
+          ?? capabilities.find(tool=>tool.apiName.startsWith(apiName)||apiName.startsWith(tool.apiName));
+        // Recheck immediately before EACH dispatch: a preceding call in this
+        // already-approved batch may have changed the world then lost its reply.
+        if(!webTool && dispatchCapability && isMutation(dispatchCapability) && (unknownWriteOutcomes>0 || projectionReadOnlyRepair)) {
+          const blocked={source:dispatchCapability.source,api:dispatchCapability.apiName,ok:false,executionState:'not_started',dispatchBlocked:true,automaticRetry:false,attemptedArguments:args,error:unknownWriteOutcomes>0?'Unknown mutation outcome: further writes are blocked for this turn, including this batch. Reads may inspect but never unlock replay.':'Read-only projection coverage repair blocks further writes.'};
+          (dispatchCapability.source==='app-state'?appStateCalls:historyLog).push(blocked);
+          if(projectionReadOnlyRepair && !unknownWriteOutcomes)historyLog.push({ok:false,api:'(projection-coverage)',error:blocked.error});
+          continue;
+        }
         // 公网工具调用:GET 语义,只进 history 供后续步骤引用,不进 read-back 门。
         // 只在本 action 授权的子集(webTools)里找 —— 全注册表查找会绕过每工具授权。
-        const webTool = webTools.find((tool) => tool.apiName === apiName);
         if (webTool) {
           try {
             input.llm?.onProgress?.(`Calling web tool: ${webTool.apiName}`);
@@ -6152,6 +6161,7 @@ export async function runAppWorldGrounding(input: {
             appStateCalls.push({source:'app-state',api:apiName,order:totalAttempts(),request:args,response,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments'});
           } catch(error) {
             appStateUnknown += 1;
+            if(isMutation(localCapability)){unknownWriteOutcomes+=1;appStateUnknownWrites+=1;}
             appStateCalls.push({source:'app-state',api:apiName,order:totalAttempts(),attemptedArguments:args,ok:false,executionState:'outcome_unknown',automaticRetry:false,error:compactText((error as Error).message,240)});
             if((error as {code?:string}).code==='action_deadline_exceeded')throw error;
           }
@@ -6180,7 +6190,7 @@ export async function runAppWorldGrounding(input: {
           if (bridgeAttempted && replyRecipients) mailEvidence.failedAttempt(capability, args, replyRecipients, error);
           const notStarted = bridgeAttempted && error instanceof AppWorldRequestNotStartedError;
           if (notStarted) notStartedApiCalls += 1;
-          else if (bridgeAttempted) unknownDispatchOutcomes += 1;
+          else if (bridgeAttempted) {unknownDispatchOutcomes += 1;if(isMutation(capability))unknownWriteOutcomes += 1;}
           historyLog.push(bridgeAttempted
             ? { ...attemptedGroundingEvidence({ api: capability.apiName, order: totalAttempts(), attemptedArguments: args, executionState: notStarted ? 'not_started' : 'outcome_unknown', error: compactText((error as Error).message, 240) }), dispatchOutcome: notStarted ? 'not_started' : 'unknown' }
             : { api: capability.apiName, ok: false, error: compactText((error as Error).message, 240) });
@@ -6213,7 +6223,7 @@ export async function runAppWorldGrounding(input: {
       user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities, visibleStats: stats }),
     }) as Record<string, any>;
     evaluation = {
-      pass: verdictRaw?.pass === true && entitiesProvided && lastWriteAt <= lastReadAt && localWriteAt <= localReadAt && localPendingReadback.size === 0 && appStateUnknown === 0 && totalSuccesses() > 0,
+      pass: verdictRaw?.pass === true && entitiesProvided && lastWriteAt <= lastReadAt && localWriteAt <= localReadAt && localPendingReadback.size === 0 && appStateUnknown === 0 && unknownWriteOutcomes === 0 && totalSuccesses() > 0,
       deficiencies: (Array.isArray(verdictRaw?.deficiencies) ? verdictRaw.deficiencies : []).map((item: unknown) => compactText(String(item), 160)).filter(Boolean).slice(0, 5),
     };
     if (!totalSuccesses()) evaluation.deficiencies.unshift(`No successful API evidence: ${apiAttemptCount} tool-call attempts, ${unknownDispatchOutcomes} unknown dispatch outcomes, ${notStartedApiCalls} trusted preflight rejections; cause=${zeroSuccessfulCallCause()}. No completion is verified; do not automatically repeat writes. Planning, gate rejection and no proposed calls are different causes; inspect attempts.`);
@@ -6222,6 +6232,7 @@ export async function runAppWorldGrounding(input: {
     if(localWriteAt > localReadAt) evaluation.deficiencies.unshift('not_verified: app-state write lacks a subsequent app-state read/list; external reads do not verify local persistence');
     if(localPendingReadback.size) evaluation.deficiencies.unshift('not_verified: app-state changed records lack exact subsequent read-back: '+[...localPendingReadback].join(', '));
     if(appStateUnknown) evaluation.deficiencies.unshift('not_verified: app-state dispatch outcome unknown; inspect actual persisted records before any new action, never repeat writes automatically');
+    if(unknownWriteOutcomes) evaluation.deficiencies.unshift('not_verified: mutation outcome unknown; this turn cannot publish success or dispatch further writes, even after reads');
     const boundIds=new Set(appStateCalls.filter(call=>call.ok===true).flatMap((call:any)=>[...(call.response?.record?[call.response.record]:[]),...(call.response?.records??[])].map((record:any)=>record.recordId)));
     if(entities.some((entity:any)=>entity.appRecordId && !boundIds.has(entity.appRecordId))){evaluation.pass=false;evaluation.deficiencies.unshift('not_verified: entity appRecordId has no actual current owner/app record read-back');}
     const mailGaps = mailEvidence.deficiencies();
