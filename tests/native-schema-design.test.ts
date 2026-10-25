@@ -47,3 +47,26 @@ test('design app-state schemas are the same pure descriptors used by the real sc
  const {appStateCapabilitySchemas,createAppStateAdapter}=await import('../server/native-app-state.js');const {default:Database}=await import('better-sqlite3');const db=new Database(':memory:');db.exec('CREATE TABLE agent_apps(app_id TEXT,owner TEXT)');db.prepare('INSERT INTO agent_apps VALUES(?,?)').run('fixture','alice');
  try{const fields=[{name:'target',type:'number' as const}];assert.deepEqual(appStateCapabilitySchemas(fields,[]),[]);assert.equal(appStateCapabilitySchemas(fields,['storage.app']).length,2);const permissions=['storage.app','app_state.write'];const adapter=createAppStateAdapter(db,'alice','fixture',fields,permissions)!;assert.deepEqual(appStateCapabilitySchemas(fields,permissions),adapter.capabilities);assert.equal(adapter.listAll().length,0,'describing capabilities does not create any record');}finally{db.close();}
 });
+
+test('captured currentDesign is legal unchanged refinement, including optional bindings and isolated app-state names',async()=>{
+ const design=await initial();const before=structuredClone(design);let packet:any;
+ const result=await refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async request=>{packet=JSON.parse(request.messages[1].content);for(const slot of packet.currentDesign.slots)assert.equal(Object.hasOwn(slot,'name'),false);for(const action of packet.currentDesign.actions)assert.equal(Object.hasOwn(action,'consumedSlots'),false);assert.deepEqual(packet.currentDesign.actions[1].consumedSlotIndices,[0,1,2]);return reply(packet.currentDesign);}}});
+ assert.deepEqual(result,design);assert.deepEqual(design,before);assert.equal(packet.currentDesign.slots[2].required,false);assert.equal(packet.hostOfferedAppState.declaredFields[2].name,'entry_label');assert.equal(packet.hostOfferedAppState.capabilities.length,3);
+ packet.currentDesign.slots[0].label='Changed fixture';assert.deepEqual(design,before);
+});
+test('current wire indices follow reordered slots and identity-only bindings stay explicitly empty',async()=>{
+ const design=await initial();design.slots=[design.slots[2],design.slots[0],design.slots[1]];design.actions[1].consumedSlots=['new_time','entry_label'];
+ const result=await refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async request=>{const current=JSON.parse(request.messages[1].content).currentDesign;assert.deepEqual(current.actions[1].consumedSlotIndices,[1,0]);return reply(current);}}});assert.deepEqual(result.actions[1].consumedSlots,['new_time','entry_label']);
+ design.actions[1].consumedSlots=[];
+ const identity=await refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async request=>{const current=JSON.parse(request.messages[1].content).currentDesign;assert.deepEqual(current.actions[1].consumedSlotIndices,[]);return reply(current);}}});assert.deepEqual(identity.actions[1].consumedSlots,[]);
+});
+test('invalid host current bindings fail before inference rather than silently projecting unknown or duplicate fields',async()=>{
+ for(const mutate of [(d:any)=>d.slots[1].name=d.slots[0].name,(d:any)=>d.actions[1].consumedSlots=['missing'],(d:any)=>d.actions[1].consumedSlots=['new_time','new_time'],(d:any)=>delete d.actions[1].consumedSlots,(d:any)=>d.actions[0].consumedSlots=[]]){
+  const design=await initial();mutate(design);let calls=0;await assert.rejects(refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async()=>{calls++;return reply({});}}}));assert.equal(calls,0);
+ }
+});
+test('normalized internal keys remain forbidden in model output after same-shape projection',async()=>{
+ for(const mutate of [(d:any)=>d.slots[0].name='new_time',(d:any)=>d.actions[1].consumedSlots=['new_time']]){
+  const design=await initial();await assert.rejects(refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async request=>{const current=JSON.parse(request.messages[1].content).currentDesign;mutate(current);return reply(current);}}}),/only declared output fields/);
+ }
+});

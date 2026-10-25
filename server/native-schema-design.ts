@@ -1,3 +1,4 @@
+import {requireConsumedSlots} from './native-action-slots.js';
 import type {AppWorldToolCapability} from './appworld-bridge.js';
 const credential = /(?:^|_)(?:authorization|authentication|verification_code|access_token|refresh_token|token|password|secret|api_key|cookie)(?:$|_)/i;
 const isCredential=(name:string)=>credential.test(name.replace(/([a-z])([A-Z])/g,'$1_$2').replace(/[^A-Za-z0-9_]/g,'_'));
@@ -59,4 +60,20 @@ export function validateSchemaDesignRefinement(raw:any){
   if(action.perItem!==undefined&&typeof action.perItem!=='boolean')throw Error('Schema design perItem must be boolean');
   if(action.perItem!==true&&action.consumedSlotIndices!==undefined)throw Error('Non-item schema design action cannot declare consumed indices');
  }
+}
+
+/** Present the current normalized design in the exact legal refinement shape.
+ * Internal names remain only a host lookup for bindings, never output keys. */
+export function refinementCurrentDesign(design:{slots:Array<{name:string}>;actions:Array<{perItem?:boolean;consumedSlots?:string[]}>}) {
+ const names=design.slots.map(slot=>slot.name);
+ if(names.some(name=>typeof name!=='string'||!name.trim())||new Set(names).size!==names.length)throw Error('Invalid or duplicate current design slot names');
+ const slots=design.slots.map(rawSlot=>{const slot=rawSlot as Record<string,unknown>;return Object.fromEntries(['label','type','required','placeholder','helpText','options'].filter(key=>slot[key]!==undefined).map(key=>[key,structuredClone(slot[key])]));});
+ const actions=design.actions.map(rawAction=>{
+  const action=rawAction as Record<string,unknown>;
+  if(action.perItem!==undefined&&typeof action.perItem!=='boolean')throw Error('Invalid current design perItem flag');
+  if(action.perItem!==true&&action.consumedSlots!==undefined)throw Error('Non-item current design action has consumed slots');
+  return {...Object.fromEntries(['label','description','perItem'].filter(key=>action[key]!==undefined).map(key=>[key,structuredClone(action[key])])),
+   ...(action.perItem===true?{consumedSlotIndices:requireConsumedSlots(action.consumedSlots,names).map(name=>names.indexOf(name))}:{})};
+ });
+ const current={slots,actions};validateSchemaDesignRefinement(current);return current;
 }
