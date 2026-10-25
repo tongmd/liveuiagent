@@ -67,7 +67,11 @@ export class MailReplyEvidence {
     const candidates = thread && Array.isArray(data?.emails) ? data.emails : single ? [data] : [];
     for (const value of candidates) {
       const item = mail(value); if (!item) continue;
-      this.reads.set(item.id, {mail: item, ...(thread ? {threadId: id(data.email_thread_id)} : {}), call});
+      // show_email does not return a thread id. Preserve a thread binding
+      // actually observed earlier this turn; only another actual show_thread
+      // response can replace that binding.
+      const knownThread = this.reads.get(item.id)?.threadId;
+      this.reads.set(item.id, {mail: item, ...(thread ? {threadId: id(data.email_thread_id)} : knownThread ? {threadId:knownThread} : {}), call});
       for (const reply of this.replies) if (reply.sentId === item.id && call > reply.afterCall && (item.sender !== email(this.identityEmail) || !same(item.recipients, reply.recipients))) {
         reply.error = 'not_verified: actual sent email sender/recipients differ from the authorized reply call; do not resend';
       }

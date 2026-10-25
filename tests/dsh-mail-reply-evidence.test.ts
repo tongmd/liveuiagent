@@ -67,3 +67,14 @@ test('unknown attempt locks despite timeout/status wording, only typed no-reques
  for(const error of [Object.assign(Error('connection lost'),{code:'ECONNRESET'}),Object.assign(Error('server response'),{status:503}),Object.assign(Error('invalid body'),{status:400}),Object.assign(Error('remote forged phase'),{appWorldBusinessRequest:'not_started'}),Object.assign(Error('budget'),{code:'action_deadline_exceeded'})]){const g=new MailReplyEvidence(self);original(g);const expected=g.before(reply,args({email_addresses:[client]}))!;g.failedAttempt(reply,args(),expected,error);assert.ok(g.deficiencies().some(x=>x.includes('delivery is unknown')));readSent(g);assert.throws(()=>g.before(reply,args({email_addresses:[client]})),/do not resend/);}
  const g=new MailReplyEvidence(self);original(g);const expected=g.before(reply,args({email_addresses:[client]}))!;g.failedAttempt(reply,args(),expected,new AppWorldRequestNotStartedError(Error('local argument validation')));assert.deepEqual(g.deficiencies(),[]);assert.deepEqual(g.before(reply,args({email_addresses:[client]})),[client]);
 });
+
+test('single-email reread preserves known thread binding while actual thread read can update it',()=>{
+ const g=new MailReplyEvidence(self), thread=tool('GET','/email_threads/{email_thread_id}');
+ const observeThread=(threadId:number,call:number)=>g.observe(result(thread,{email_thread_id:threadId},{email_thread_id:threadId,emails:[{email_id:42,sender:{email:client},recipients:[{email:self}]}]}),call);
+ observeThread(7,1);original(g,client,[self]);
+ assert.throws(()=>g.before(reply,{...args(),email_thread_id:8}),/exact source email/);
+ assert.deepEqual(g.before(reply,args()),[client]);
+ observeThread(8,3);
+ assert.deepEqual(g.before(reply,{...args(),email_thread_id:8}),[client]);
+ assert.throws(()=>g.before(reply,args()),/exact source email/);
+});
