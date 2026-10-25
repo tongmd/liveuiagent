@@ -118,7 +118,7 @@
     if (runtimeWarning()) panel.append(el('p', { class: 'liveui-notice', text: runtimeWarning() }));
     for (const item of choices()) panel.append(el('article', { class: 'liveui-runtime-option' }, [
       el('strong', { text: `${item.label} · ${item.available ? 'Available' : 'Unavailable'}` }),
-      el('p', { text: item.reason || (item.id === 'native' ? 'Build interactive apps with actions managed by LiveUIAgent.' : 'Build complete HTML apps with DSH.') })
+      el('p', { text: item.reason || (item.id === 'native' ? 'Build interactive apps with actions managed by LiveUIAgent.' : 'Native agent reasoning with DSH.') })
     ]));
     panel.append(el('p', { class: 'liveui-muted', text: 'Harness changes apply to new apps. Existing apps use their original harness for edits and actions.' }));
     panel.append(button('Model and API settings', () => {
