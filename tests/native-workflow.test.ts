@@ -206,3 +206,24 @@ test('explicit refusal, transport failure and independent review rejection are n
     assert.equal(calls, 1); assert.equal(records.filter(r => r.stage === 'plan_repair').length, 0);
   }
 });
+
+test('non-boolean, missing or null plan approvals cannot be repaired into permission', async () => {
+  for (const output of [null, {}, { proceed: false }, { proceed: 'false' }, { proceed: 'true' }, { proceed: 0 }, { proceed: null }]) {
+    let calls = 0; const records: WorkflowRecord[] = [];
+    const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: r => records.push(r), call: async () => { calls++; return output as any; } });
+    await assert.rejects(workflow.plan({ originalRequest: 'Write once', permissions: ['authorized.scope.only'] }), /rejected/);
+    assert.equal(calls, 1); assert.equal(records.filter(r => r.stage === 'plan_repair' || r.stage === 'contract_validation').length, 0);
+    assert.equal(workflow.handoffs.length, 0);
+  }
+});
+
+test('a repair response without strict approval is rejected without a third call', async () => {
+  for (const approval of [false, 'false', 'true', null, undefined]) {
+    let calls = 0;
+    const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {}, call: async () => {
+      calls++; return calls === 1 ? { proceed: true, instructions: 'x'.repeat(601), constraints: [], expectedOutcome: 'Verified target' } : { proceed: approval, instructions: 'Concise', constraints: [], expectedOutcome: 'Verified target' };
+    } });
+    await assert.rejects(workflow.plan({ originalRequest: 'Write once' }), /rejected/);
+    assert.equal(calls, 2); assert.equal(workflow.handoffs.length, 0);
+  }
+});

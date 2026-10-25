@@ -85,7 +85,7 @@ export class NativeWorkflow {
         output = await this.options.call(node, input, 'plan');
         // An explicit policy or feasibility refusal is final. Repair is only a
         // bounded, read-only schema/length correction, never an approval retry.
-        if (output?.proceed === false) throw new Error(`agent ${node.id} rejected: ${String(output.reason || 'no approval')}`);
+        if (output?.proceed !== true) throw new Error(`agent ${node.id} rejected: ${String(output?.reason || 'no strict approval')}`);
         let errors = validateRoleContract(output);
         if (errors.length) {
           const originalError = contractValidationError(node.id, errors);
@@ -101,7 +101,7 @@ export class NativeWorkflow {
           try {
             output = await this.options.call(node, repairInput, 'plan');
             repairResponseReceived = true;
-            if (output?.proceed === false) throw new Error(`agent ${node.id} rejected: ${String(output.reason || 'no approval')}`);
+            if (output?.proceed !== true) throw new Error(`agent ${node.id} rejected: ${String(output?.reason || 'no strict approval')}`);
             errors = validateRoleContract(output);
             if (errors.length) throw contractValidationError(node.id, errors);
             this.record('plan_repair', node.id, 'ok', undefined, { repairedOutput: output });
