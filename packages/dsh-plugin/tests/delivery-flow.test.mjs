@@ -122,6 +122,18 @@ test('connected-service contract failures enter one focused repair before public
       assert.match(task,/CONNECTED SERVICE REPAIR/);
       assert.match(task,/agent.invoke/);
       assert.match(task,/Preserve the existing interface, charts, stored data/);
+      // Check the guidance actually delivered to the repair runner, alongside
+      // the real browser acceptance of its corrected connected app below.
+      const guidance=task.slice(task.lastIndexOf('CONNECTED SERVICE REPAIR:'));
+      assert.match(guidance,/window\.liveuiapp\.perform\(currentRequest, currentFields\)/);
+      assert.match(guidance,/entities:\[\{name,id\?,detail\?,group\?\}\]/);
+      assert.match(guidance,/every returned entity name\/detail\/group.*data-liveui-view="records"/);
+      assert.match(guidance,/unknown groups.*fallback/);
+      assert.match(guidance,/cache-before-notify.*liveui:ready\/liveui:result/);
+      assert.match(guidance,/retain the previous observed records/);
+      assert.match(guidance,/empty textContent.*drafts\/preferences outside/);
+      assert.match(guidance,/Do not invent service records, amounts or dates/);
+      assert.doesNotMatch(guidance,/Only wire|resultArea\.textContent = result\.text/);
     }
     const connected='<html><body><form data-liveui-action="agent.invoke"><label>Task<textarea name="task"></textarea></label><button data-liveui-action="agent.invoke">Run</button></form><p id="result"></p><ul data-liveui-view="records"></ul><script>document.querySelector("form").onsubmit=async event=>{event.preventDefault();const value=document.querySelector("textarea").value;const r=await window.liveuiagent.ai(value,{request:value});document.querySelector("#result").textContent=r.text;if(r.ok===true){document.querySelector("[data-liveui-view=records]").replaceChildren(...(r.data?.entities||[]).map(entity=>{const row=document.createElement("li");row.textContent=[entity.name,entity.detail,entity.group].filter(value=>value!==undefined&&value!==null&&value!=="").join(" · ");return row;}));}};</script><!--'+'fixture '.repeat(180)+'--></body></html>';
     await writeFile(path.join(work,'index.html'),calls===1?html('localStorage.setItem("draft","local");'):connected);
