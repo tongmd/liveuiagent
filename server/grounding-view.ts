@@ -1,15 +1,18 @@
+import {parsePrimaryMembership,type PrimaryMembership} from './native-primary-projection.js';
 // Existing design metadata describes a projection, not business authorization.
 export type GroundingViewContext = {
   itemLabel: string;
+  primaryMembership?:PrimaryMembership;
   collectionLabel?: string;
   perItemActions: Array<{ id: string; label: string }>;
 };
 export function groundingViewContext(pkg: any): GroundingViewContext | undefined {
   const intent = pkg?.manifest?.intent;
   const itemLabel = typeof intent?.itemLabel === 'string' ? intent.itemLabel.trim() : '';
-  if (!itemLabel) return undefined;
+  const primaryMembership=intent?.primaryMembership===undefined?undefined:parsePrimaryMembership(intent.primaryMembership);
+  if (!itemLabel && primaryMembership===undefined) return undefined;
   const collectionLabel = typeof intent?.presentation?.collection === 'string' ? intent.presentation.collection.trim() : '';
-  return {itemLabel,...(collectionLabel ? {collectionLabel} : {}),perItemActions:Object.entries(pkg?.actions?.actions ?? {})
+  return {itemLabel,...(primaryMembership ? {primaryMembership} : {}),...(collectionLabel ? {collectionLabel} : {}),perItemActions:Object.entries(pkg?.actions?.actions ?? {})
     .filter(([, action]: [string, any]) => action?.perItem === true)
     .map(([id, action]: [string, any]) => ({id,label:String(action.label || id)}))};
 }

@@ -29,3 +29,8 @@ export function hydrateAppState(stored:any,adapter:AppStateAdapter|undefined){
  stored.runtimeState.entities=(Array.isArray(stored.runtimeState.entities)?stored.runtimeState.entities:[]).map((row:any)=>{const record=typeof row.appRecordId==='string'?records.find(r=>r.recordId===row.appRecordId):undefined;const {appState:_,...withoutStale}=row;return record?{...withoutStale,appState:record.values}:withoutStale;});
  return stored;
 }
+
+/** Initial projection can inspect the same owner/app store but never gains write capability. */
+export function createInitialAppStateAdapter(db:Database.Database,owner:string,appId:string,fields:AppRecordField[],permissions:unknown):AppStateAdapter|undefined{
+ return createAppStateAdapter(db,owner,appId,fields,Array.isArray(permissions)&&permissions.includes('storage.app')?['storage.app']:[]);
+}

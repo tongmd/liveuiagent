@@ -1,3 +1,4 @@
+import {parsePrimaryMembership,primaryMembershipPolicy,primaryProjectionDeficiencies,type PrimaryMembership} from './native-primary-projection.js';
 import {normalizeGroundingEntities} from './grounding-entities.js';
 import {schemaDesignCatalog,validateSchemaDesignRefinement,refinementCurrentDesign} from './native-schema-design.js';
 import {applyNativeStructuredJsonPolicy} from './native-structured-json-policy.js';
@@ -6,7 +7,7 @@ import { consumedGroundingFields, consumedSlotsFromIndices, requireConsumedSlots
 import { writeGroundingDiagnostics, type GroundingDiagnosticsReceipt } from './grounding-diagnostics.js';
 import { stateDisplayPaths, stateDisplayFields, stateDisplayValues } from './native-state-display.js';
 import {resolveControlPreparation} from './gui-interaction-planner.js';
-import { createAppStateAdapter, appStateCapabilitySchemas, appRecordFields, hydrateAppState, type AppStateAdapter } from './native-app-state.js';
+import { createAppStateAdapter, createInitialAppStateAdapter, appStateCapabilitySchemas, appRecordFields, hydrateAppState, type AppStateAdapter } from './native-app-state.js';
 import { independentInferencePair } from './inference-pair.js';
 import { nativeRowSlotContext } from './native-row-context.js';
 import { groundingViewContext, groundingViewPolicy, parseProjectionPolicy, projectionCoverageGaps, type GroundingViewContext } from './grounding-view.js';
@@ -154,6 +155,7 @@ type AgentPlan = {
   orchestration: AgentOrchestrationPlan;
   // 画廊小组件用的单条记录名词(如"Mac 型号"/"吸尘器"),供 buildPreviewWidget 渲染真实标签。
   itemLabel: string;
+  primaryMembership:PrimaryMembership;
   // 画廊卡片的展示元数据(emoji glyph / 主数值 / 数值标签 / 集合名 / 动作动词),由 Business Slot Agent 决定。
   presentation: AppPresentation;
 };
@@ -995,6 +997,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
   accent: string;
   actions: Array<{ label: string; description: string; perItem?: boolean; consumedSlots?: string[] }>;
   services: string[];
+  primaryMembership:PrimaryMembership;
   itemLabel: string;
   presentation: AppPresentation;
 }> {
@@ -1011,7 +1014,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
     system: [
       'You are LiveUIAgent Business Slot Agent.',
       'Generate concise semantic input slots for a generated app.',
-      'Return only JSON with keys: appName, tagline, accent, slots, actions, services, itemLabel.',
+      'Return only JSON with keys: appName, tagline, accent, slots, actions, services, itemLabel, primaryMembership.',
       'services: which of the availableServices this app must call REAL APIs on to genuinely fulfill the need (0-4 names, exact strings from availableServices). Match the NEED, not keywords: a dinner-party music queue needs spotify; collecting rent from roommates needs venmo. Personal records belong in the matching real service, not app-local memory: journals/diaries/logs/notes → simple_note; tasks/checklists/plans/reminders and staged schedules you progress through → todoist; files/folders/drafts → file_system; contacts/calls/sms and voice recordings → phone; buying/orders and also delivery addresses/payment cards/carts/product reviews → amazon; emails → gmail; money owed between people → venmo or splitwise; a trusted-people circle for payments → venmo. A need that MONITORS or reacts to activity in a service (a spending diary built from your payments, a buy signal that checks wallet balance) must include that service. Pick EVERY service the need touches (a side business that restocks on amazon and collects payment on venmo needs both). Return [] only when NO service fits the need at all. Never pick a service just because a word coincides.',
       'appName: a short, plain functional name identifying the actual purpose and object in the user request, in the same language as that request. Prefer familiar task vocabulary over invented brands, wordplay, vague aspirational words or marketing names. Do not switch to English for a non-English request. If the user explicitly supplies an app name, use that name verbatim. When naming.currentName is supplied, preserve it unless naming.changeRequest explicitly asks to rename this app; unrelated feature or styling changes never authorize renaming.',
       'tagline: ONE short plain sentence telling the user what this app does for them, in the prompt language. Never echo the prompt or the appName verbatim; never use technical words (输入/结果/状态/流程/工作流/agent/后端).',
@@ -1031,6 +1034,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
       'Every slot with type "select" must carry its own non-empty options array of {label, value} objects, with 2 to 5 mutually exclusive choices drawn from the user task vocabulary; label is in the prompt language and value is a lowercase ascii slug. A select slot without options is rejected.',
       'If a slot has no natural closed choice set, use type "string" or "text" instead of "select".',
       'itemLabel: the short singular noun for ONE row this app would list or fetch from a real service (e.g. "Mac 型号", "vacuum", "flight", "song") — used as a gallery-widget label. Empty string only if this app has no listable real-world items (a pure settings/status app).',
+      'primaryMembership is REQUIRED: choose app_local when users add/select records into this app-owned saved membership (including local targets/preferences); service_collection for existing user/service-owned collections; discovery only when the original need explicitly requests catalog browsing/search as the main list; none only for no entity list. This describes projection, not extra business authorization. Global discoverable objects are not already saved members. Choose from the original need, not future episodes.',
       'Also design how this app presents itself on its gallery tile. The tile is small and glanceable: one emoji, one big number, two short labels. Prefer showing over telling.',
       'glyph: exactly ONE emoji that a user would instantly associate with this app\'s domain (weather -> a sun/cloud emoji, food -> a food emoji, money -> a money emoji, music -> a music emoji, contacts -> a person emoji, shopping -> a cart/bag emoji, tasks -> a checkmark emoji, travel -> a plane emoji). Pick the emoji the domain actually suggests; never reuse a generic gear/box/sparkle for a domain that has its own obvious symbol.',
       'metricLabel: 2-6 characters naming the single most useful number this app tracks, in the prompt language (e.g. "当前最低", "本周完成", "待收金额", "今晚候选"). It is a label, not a sentence.',
@@ -1056,6 +1060,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
         ],
         actions: [{ label: 'string', description: 'string', perItem: 'optional boolean — true for at most three distinct actions operating on one listed item', consumedSlotIndices:'required explicit zero-based slot-index array for every perItem action, [] for identity-only; include optional editable values the action can change' }],
         services: ['exact name from availableServices'],
+        primaryMembership:'app_local|service_collection|discovery|none — required primary collection membership source from original need',
         itemLabel: 'string — singular noun for one listed item, or "" if none',
         glyph: 'string — exactly one domain-appropriate emoji',
         metric: 'empty string — no statistics before actual runtime evidence',
@@ -1101,6 +1106,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
     accent,
     actions,
     services,
+    primaryMembership:parsePrimaryMembership(response.primaryMembership),
     itemLabel: typeof response.itemLabel === 'string' ? compactLabel(compactText(response.itemLabel, 24), 24) : '',
     presentation,
   };
@@ -1145,7 +1151,7 @@ function normalizeBusinessControls(response:any,prompt:string,subject:string,hin
 export async function refineBusinessFieldsWithSchemas(input:{prompt:string;subject:string;design:Awaited<ReturnType<typeof makeBusinessFields>>;capabilities:AppWorldToolCapability[];llm?:LlmRuntimeConfig}) {
   if (!input.design.services.length) return input.design;
   const catalog=schemaDesignCatalog(input.capabilities,input.design.services);
-  const request=JSON.stringify({originalAppNeed:input.prompt,lockedAppName:input.design.appName,lockedServices:input.design.services,currentDesign:refinementCurrentDesign(input.design),selectedPublicCapabilities:catalog,hostOfferedAppState:{scope:'authenticated-current-owner-app',source:'app-state',declaredFields:appRecordFields(input.design.slots),capabilities:appStateCapabilitySchemas(appRecordFields(input.design.slots),['storage.app','app_state.write']),truthBoundary:'Only declared app-local user preferences/targets; never evidence that an external object changed. Refined declared fields receive the same existing scoped storage contract. No records, owner identifiers or values are supplied.'}});
+  const request=JSON.stringify({originalAppNeed:input.prompt,lockedAppName:input.design.appName,lockedServices:input.design.services,lockedPrimaryMembership:input.design.primaryMembership,currentDesign:refinementCurrentDesign(input.design),selectedPublicCapabilities:catalog,hostOfferedAppState:{scope:'authenticated-current-owner-app',source:'app-state',declaredFields:appRecordFields(input.design.slots),capabilities:appStateCapabilitySchemas(appRecordFields(input.design.slots),['storage.app','app_state.write']),truthBoundary:'Only declared app-local user preferences/targets; never evidence that an external object changed. Refined declared fields receive the same existing scoped storage contract. No records, owner identifiers or values are supplied.'}});
   if(Buffer.byteLength(request)>220000)throw new Error('Schema design request exceeds byte bound');
   const system=[
       'You refine a Native application design before UI construction. This is a pure design decision: never execute tools or business operations.',
@@ -2468,6 +2474,7 @@ export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWo
     proposal,
     orchestration,
     itemLabel: slotDesign.itemLabel,
+    primaryMembership:slotDesign.primaryMembership,
     presentation: slotDesign.presentation,
   };
 }
@@ -2652,6 +2659,7 @@ function makeManifest(appId: string, plan: AgentPlan) {
       proposal: plan.proposal,
       orchestration: plan.orchestration,
       itemLabel: plan.itemLabel,
+      primaryMembership:plan.primaryMembership,
       presentation: plan.presentation,
     },
     version: '0.1.0',
@@ -5909,6 +5917,7 @@ export async function runAppWorldGrounding(input: {
         turnTime,
       `You analyze a GUI form submission for the generated app "${input.appName}" BEFORE execution.`,
         groundingViewPolicy,
+        primaryMembershipPolicy,
         'App-state capabilities, when present, are real owner/app-bound SQLite storage for declared local preferences/targets. They do not mutate or prove external service state. Persist required local data with app_state.upsert_record and verify it with a subsequent app_state.read_record or list_records; never claim history or a proposed value is a persisted record. External service writes still require external read-back. Bind a primary row to a real local record with optional appRecordId; never invent a row or business amount from a local preference.',
       ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
       `Wired services this turn can write to: ${wiredServices}.`,
@@ -5946,6 +5955,7 @@ export async function runAppWorldGrounding(input: {
   let summary = '';
   let entities: Array<{ name: string; id?: string; detail?: string; group?: string }> = [];
   let entitiesProvided = false;
+  let proposedEntities:unknown;
   let stats: Array<{ label: string; value: string }> = [];
   let evaluation: { pass: boolean; deficiencies: string[] } | null = null;
   let feedback: string[] = [];
@@ -5992,6 +6002,7 @@ export async function runAppWorldGrounding(input: {
   for (let round = 1; round <= 4; round++) {
     // Prior rows remain context only; each repair round must provide its own final list.
     entitiesProvided = false;
+    proposedEntities=undefined;
     remainingActionMs();
     callsAtRoundStart = totalSuccesses();
     const roundSuccessLimit = round === 1 ? 24 : 16;
@@ -6011,6 +6022,7 @@ export async function runAppWorldGrounding(input: {
         turnTime,
           `You are the backend workflow agent for the generated app "${input.appName}".`,
         groundingViewPolicy,
+        primaryMembershipPolicy,
         'App-state capabilities, when present, are real owner/app-bound SQLite storage for declared local preferences/targets. They do not mutate or prove external service state. Persist required local data with app_state.upsert_record and verify it with a subsequent app_state.read_record or list_records; never claim history or a proposed value is a persisted record. External service writes still require external read-back. Bind a primary row to a real local record with optional appRecordId; never invent a row or business amount from a local preference.',
           ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
           'A user submitted a GUI form. Ground their request in REAL API calls against the available APIs below, then summarize.',
@@ -6078,6 +6090,7 @@ export async function runAppWorldGrounding(input: {
           item !== null && typeof item === 'object' && !Array.isArray(item)
           && typeof (item as Record<string, unknown>).name === 'string'
           && Boolean(((item as Record<string, unknown>).name as string).trim()));
+        proposedEntities=decision?.entities;
         entities = normalizeGroundingEntities(decision?.entities,formEchoes,appStateCalls,input.appState?.recordFields ?? []);
         stats = (Array.isArray(decision?.stats) ? decision.stats : [])
           .filter((item: unknown) => item && typeof item === 'object' && String((item as Record<string, unknown>).label || '').trim() && String((item as Record<string, unknown>).value ?? '').trim())
@@ -6120,6 +6133,7 @@ export async function runAppWorldGrounding(input: {
         turnTime,
                 'You are the Write Verifier for real API calls a backend agent is about to make on behalf of a GUI submission.',
         groundingViewPolicy,
+        primaryMembershipPolicy,
         'App-state capabilities, when present, are real owner/app-bound SQLite storage for declared local preferences/targets. They do not mutate or prove external service state. Persist required local data with app_state.upsert_record and verify it with a subsequent app_state.read_record or list_records; never claim history or a proposed value is a persisted record. External service writes still require external read-back. Bind a primary row to a real local record with optional appRecordId; never invent a row or business amount from a local preference.',
                 'Check the API operation family AND its arguments against the explicit current user request; the goal may be mistaken: (1) every amount must trace to a submitted value, a value read earlier this turn, or goal.expectedNumbers (respect the scope of expectedNumbers: an event share is not a cumulative balance; a bill split share = total ÷ ALL participants including the payer; the payer is owed, never owing; NEVER a placeholder like 0.01); (2) names/titles the user provided must be used VERBATIM (no renaming, translating, date prefixes, or concatenated form fields); (3) an update must REPLACE the field content, not append, unless the user asked to add; (4) a change aimed at one named object must not touch its siblings; (5) no UI component ids (d_b1, slot_2) inside names or contents.',
                 'DUPLICATE & TURN-SCOPE gate: reject the batch with {"approved": false, "reject": true, "reason": "<why>"} when (a) previousCalls already show a successful create of the same object (same bill/record, matching amounts or title) and the batch re-creates it WITHOUT first deleting the stale copy, or (b) the batch DELETES or re-records an object whose id does NOT trace to a create in previousCalls (i.e. it predates this turn) and the user request does not explicitly ask to remove or correct that record, or (c) the batch COMPLETES/closes/checks-off an item whose name is NOT mentioned in the user request or targetEntity — completing unmentioned siblings corrupts per-item state. Also reject when the API family contradicts explicit intent (for example recording an actual payment for a new bill, debt or future payment request), or when fixing the call would require changing the API family or inventing missing business values. Return approved:false, reject:true with the concrete reason so the executor can re-plan; do not disguise an intent error as an argument correction.',
@@ -6255,6 +6269,7 @@ export async function runAppWorldGrounding(input: {
         turnTime,
         'You are an INDEPENDENT evaluator for a generated app backend turn. You did not execute it; judge only from the evidence.',
         groundingViewPolicy,
+        primaryMembershipPolicy,
         'App-state capabilities, when present, are real owner/app-bound SQLite storage for declared local preferences/targets. They do not mutate or prove external service state. Persist required local data with app_state.upsert_record and verify it with a subsequent app_state.read_record or list_records; never claim history or a proposed value is a persisted record. External service writes still require external read-back. Bind a primary row to a real local record with optional appRecordId; never invent a row or business amount from a local preference.',
         'Decide whether the executed real API calls and the user-visible result fulfill the user request and the goal contract.',
         'Respond ONLY with JSON: {"pass": true|false, "deficiencies": ["<concrete, actionable gap>", ...]}.',
@@ -6282,6 +6297,9 @@ export async function runAppWorldGrounding(input: {
     if (mailGaps.length) { evaluation.pass = false; evaluation.deficiencies.unshift(...mailGaps); }
     const readOnlyRepairBefore=projectionReadOnlyRepair;
     const coverageGaps = projectionCoverageGaps(goal.projectionPolicy, input.priorProjection?.entities ?? [], entities);
+    const membershipGaps=primaryProjectionDeficiencies(input.viewContext?.primaryMembership,proposedEntities,appStateCalls,input.appState?.recordFields ?? [],stats);
+    coverageGaps.push(...membershipGaps);
+    if(membershipGaps.some(gap=>gap.startsWith('projection_capacity:')))projectionReadOnlyRepair=true;
     if (coverageGaps.length) {
       // Lock only when coverage is the sole remaining failure, not unfinished business.
       if (evaluation.pass && evaluation.deficiencies.length === 0) projectionReadOnlyRepair = true;
@@ -7011,17 +7029,20 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         const readPermissions = plan.toolCapabilities
           .filter((tool) => tool.permission.startsWith('tool.appworld.') && String((tool as Record<string, any>).method || '').toUpperCase() === 'GET')
           .map((tool) => tool.permission);
-        if (readPermissions.length) {
+        if (readPermissions.length || (stored.owner && Array.isArray(appPackage.manifest.permissions) && appPackage.manifest.permissions.includes('storage.app'))) {
           try {
+            const initialAppState=createInitialAppStateAdapter(db,stored.owner ?? '',stored.appId,appRecordFields(plan.interaction.businessFields ?? []),appPackage.manifest.permissions);
+
             const initial = await runAppWorldGrounding({
-              bridge: appWorldBridge,
+              bridge: appWorldBridge ?? undefined,
+              appState:initialAppState,
               permissions: readPermissions,
               payload: {},
               appName: String(appPackage.manifest.name),
               appPurpose: plan.sourcePrompt,
               viewContext: groundingViewContext(appPackage),
               actionLabel: "First open",
-              actionDescription: 'Read-only initial load: fetch the existing data in the real services that this app is about, so the first open already shows it. Make NO write calls.',
+              actionDescription: 'Read-only initial load: read the actual primary membership store according to primaryMembership. For app_local, list the authenticated owner/app records first; an empty local collection remains empty even when global discovery returns objects. For service_collection read actual collection membership; discovery is only explicitly requested browsing, never saved membership. Verify all collection stats against those members. Make NO write calls.',
               llm: input.llm,
             });
             const published = applyVerifiedInitialContent(stored, initial);
@@ -7182,7 +7203,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       let authoritativeEntities = false;
       const localPermissions=permissions.filter(permission=>permission==='storage.app'||permission==='app_state.write');
       const appState = stored.owner && stored.owner === String(input.user || '').trim()
-        ? createAppStateAdapter(db,stored.owner,stored.appId,appRecordFields((stored.runtimeState.interaction as InteractionModel | undefined)?.businessFields ?? []),localPermissions) : undefined;
+        ? createAppStateAdapter(db,stored.owner ?? '',stored.appId,appRecordFields((stored.runtimeState.interaction as InteractionModel | undefined)?.businessFields ?? []),localPermissions) : undefined;
       if ((appWorldBridge || appState) && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off') {
         const appWorldPermissions = permissions.filter((permission) => permission.startsWith('tool.appworld.') && permission !== 'tool.appworld.db.snapshot');
         if (appWorldPermissions.length || appState) {
@@ -7378,7 +7399,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       // 每个用户看到:自己的应用 + 共享应用(owner 为空,含预置 demo 和迁移前的历史应用)。
       const apps = listOwnedApps(db, user).map((stored) => {
         const localPermissions=Object.values(stored.appPackage.actions?.actions ?? {}).flatMap((action:any)=>action.permissions ?? []);
-        const adapter=stored.owner && stored.owner===user ? createAppStateAdapter(db,stored.owner,stored.appId,appRecordFields((stored.runtimeState.interaction as InteractionModel | undefined)?.businessFields ?? []),localPermissions) : undefined;
+        const adapter=stored.owner && stored.owner===user ? createAppStateAdapter(db,stored.owner ?? '',stored.appId,appRecordFields((stored.runtimeState.interaction as InteractionModel | undefined)?.businessFields ?? []),localPermissions) : undefined;
         const enriched = enrichAppRecord(hydrateAppState(stored,adapter));
         saveStoredApp(db, options.registryRoot, enriched);
         return enriched;

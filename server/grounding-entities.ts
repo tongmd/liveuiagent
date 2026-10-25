@@ -24,16 +24,13 @@ export function hasLocalReadNameBinding(entity:GroundedEntity,calls:Array<Record
 export function normalizeGroundingEntities(raw:unknown,formEchoes:ReadonlySet<string>,calls:Array<Record<string,any>>,fields:readonly AppRecordField[]):GroundedEntity[]{
  return (Array.isArray(raw)?raw:[])
   .filter((item:unknown)=>item&&typeof item==='object'&&String((item as Record<string,unknown>).name||'').trim())
-  .slice(0,20)
+  // Proof uses the full submitted name before presentation compaction.
+  .filter((item:Record<string,unknown>)=>Boolean(item.id!==undefined&&item.id!==null&&String(item.id).trim())||!formEchoes.has(String(item.name).trim())||hasLocalReadNameBinding({name:String(item.name).trim(),...(typeof item.appRecordId==='string'?{appRecordId:item.appRecordId}:{})},calls,fields))
   .map((item:Record<string,unknown>)=>({
    name:compact(String(item.name),40),
    ...(item.id!==undefined&&item.id!==null&&String(item.id).trim()?{id:compact(String(item.id),24)}:{}),
    ...(typeof item.detail==='string'&&item.detail.trim()?{detail:compact(item.detail,80)}:{}),
    ...(typeof item.group==='string'&&item.group.trim()?{group:compact(item.group,24)}:{}),
    ...(typeof item.appRecordId==='string'&&item.appRecordId.trim()?{appRecordId:item.appRecordId}:{}),
-  }))
-  // Keep the existing API-id exception and echo rejection. An actual separately
-  // read local record can preserve a named row for the independent evaluator;
-  // it does not waive external writes/read-back, unknown outcomes or coverage.
-  .filter(entity=>Boolean(entity.id)||!formEchoes.has(entity.name)||hasLocalReadNameBinding(entity,calls,fields));
+  }));
 }
