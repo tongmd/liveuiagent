@@ -1,5 +1,6 @@
 import {approvedWorkerPlanningContext,nativeJsonUserMessage,type WorkerPlanningContext,type WorkerPlanningMode} from './native-worker-planning-context.js';
 import {SUPPORTING_PROTOCOL,approvedLocalPrimaryRemoval,prepareSupportingSections,sealSupportingSections,supportingText,supportingProjectionPolicy,type SupportingScope,type SupportingPreparation,type SupportingSeal} from './native-supporting-projections.js';
+import type {GuiPreparationHostContext} from './gui-field-proof.js';
 import {guiPlanningModelInput} from './gui-interaction-planner.js';
 import {canonicalizeDomainReferences} from './native-domain-references.js';
 import {writeDesignContractDiagnostics,writeDesignReferenceDiagnostics} from './design-contract-diagnostics.js';
@@ -1005,7 +1006,7 @@ function deriveBusinessSlotLabels(prompt: string, subject: string, tokens: strin
 }
 
 // Read-only GUI planning uses the same configured Native/DSH inference adapter.
-export async function planNativeGuiInteractionStep(system: string, input: unknown, llm: LlmRuntimeConfig) {
+export async function planNativeGuiInteractionStep(system: string, input: unknown, llm: LlmRuntimeConfig, host?:GuiPreparationHostContext) {
   // This role only selects one visible GUI operation. DeepSeek's default
   // thinking can spend the entire completion cap before emitting that JSON.
   // Keep business reasoning and all other models' configured policy intact.
@@ -1015,7 +1016,7 @@ export async function planNativeGuiInteractionStep(system: string, input: unknow
     // Completion caps include model reasoning, not only the small final step JSON.
     // Match the existing Native role budget while keeping the planner/action deadlines.
     user: JSON.stringify(guiPlanningModelInput(input)), temperature: 0, maxTokens: 8192});
- try{const step=resolveControlPreparation(preparation,input);writeGuiPlanningDiagnostics(input,preparation,step);return step;}catch(error){if((error as any)?.code==='invalid_gui_interaction'){writeGuiPlanningDiagnostics(input,preparation,undefined,error);Object.assign(error as object,{planningContractInvalid:true});}throw error;}
+ try{const complete=host?.completeMissing(preparation)??preparation;const step=resolveControlPreparation(complete,input);host?.validated(complete);const restoredTargets=(complete as any)?.fields?.filter((f:any)=>!(preparation as any)?.fields?.some((old:any)=>old.target===f.target)).map((f:any)=>f.target)??[];writeGuiPlanningDiagnostics(input,complete,step,undefined,restoredTargets.length?{restoredTargets,modelProposal:preparation}:undefined);return step;}catch(error){if((error as any)?.code==='invalid_gui_interaction'){writeGuiPlanningDiagnostics(input,preparation,undefined,error);Object.assign(error as object,{planningContractInvalid:true});}throw error;}
 }
 
 export async function makeBusinessFields(prompt: string, subject: string, tokens: string[], context: {
