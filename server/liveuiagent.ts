@@ -1,5 +1,5 @@
 import {parsePrimaryMembership,primaryMembershipPolicy,primaryProjectionDeficiencies,type PrimaryMembership} from './native-primary-projection.js';
-import {normalizeGroundingEntities} from './grounding-entities.js';
+import {normalizeGroundingEntities,hasLocalDeleteReadProof} from './grounding-entities.js';
 import {schemaDesignCatalog,validateSchemaDesignRefinement,refinementCurrentDesign} from './native-schema-design.js';
 import {applyNativeStructuredJsonPolicy} from './native-structured-json-policy.js';
 import {writeGuiPlanningDiagnostics} from './gui-planning-diagnostics.js';
@@ -6205,6 +6205,10 @@ export async function runAppWorldGrounding(input: {
         }
         const localCapability = appStateCapabilities.find(tool => tool.apiName === apiName);
         if (localCapability && input.appState) {
+          if(apiName==='app_state.delete_record'&&!hasLocalDeleteReadProof(args.recordId,args.expectedRevision,appStateCalls)){
+            appStateCalls.push({source:'app-state',api:apiName,ok:false,executionState:'not_started',dispatchOutcome:'not_dispatched',dispatchBlocked:true,actualAttempted:false,automaticRetry:false,attemptedArguments:args,error:'Delete not dispatched: first read/list this exact current owner/app record and revision after its latest local mutation, then make a new decision. Model provenance or a guessed revision is not evidence.'});
+            continue;
+          }
           remainingActionMs();
           appStateAttempts += 1;
           try {

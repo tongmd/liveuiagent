@@ -34,3 +34,17 @@ export function normalizeGroundingEntities(raw:unknown,formEchoes:ReadonlySet<st
    ...(typeof item.appRecordId==='string'&&item.appRecordId.trim()?{appRecordId:item.appRecordId}:{}),
   }));
 }
+
+/** Only the executor's current-turn, host-produced receipt log is accepted.
+ * A guessed CAS revision or model-supplied provenance is not a read proof. */
+export function hasLocalDeleteReadProof(recordId:unknown,revision:unknown,calls:Array<Record<string,any>>):boolean{
+ if(typeof recordId!=='string'||!Number.isSafeInteger(revision)||Number(revision)<1)return false;
+ const latestMutation=calls.filter(call=>call.source==='app-state'&&['app_state.upsert_record','app_state.delete_record'].includes(call.api)&&(call.request??call.attemptedArguments)?.recordId===recordId&&Number.isSafeInteger(call.order)).reduce((last,call)=>Math.max(last,call.order),-1);
+ return calls.some(call=>{
+  const response=call.response;
+  if(call.source!=='app-state'||call.ok!==true||call.executionState!=='succeeded'||call.requestSource!=='host-bound-app-state-dispatched-arguments'||!Number.isSafeInteger(call.order)||call.order<=latestMutation||response?.source!=='app-state'||response.scope!=='authenticated-current-owner-app'||response.persisted!==true)return false;
+  const records=call.api==='app_state.read_record'&&response.operation==='read'&&call.request?.recordId===recordId?[response.record]
+   :call.api==='app_state.list_records'&&response.operation==='list'&&Array.isArray(response.records)?response.records:[];
+  return records.some((record:any)=>record?.recordId===recordId&&record.revision===revision);
+ });
+}
