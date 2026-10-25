@@ -3,7 +3,7 @@ import { rowActionSlotMap } from './native-action-slots.js';
 type FieldType = 'string' | 'text' | 'select' | 'boolean' | 'date' | 'number';
 export type SurfaceField = {name: string; label: string; type?: FieldType; required?: boolean; options?: Array<{label: string; value: string}>};
 export type SurfaceAction = {actionId: string; label: string; perItem?: boolean; consumedSlots?: string[]};
-export type SurfaceContract = {businessFields: SurfaceField[]; actions: SurfaceAction[]; persistedStateFields: Array<{name: string; label: string}>};
+export type SurfaceContract = {readonlySupporting?:true;businessFields: SurfaceField[]; actions: SurfaceAction[]; persistedStateFields: Array<{name: string; label: string}>};
 export type SemanticSurfaceDesign = {
   schemaVersion: 1;
   sectionOrder: Array<'summary' | 'records' | 'composer'>;
@@ -104,7 +104,8 @@ export function compileSemanticSurface(raw: unknown, contract: SurfaceContract):
   const item = design.layout.records === 'cards' ? add('item', 'Card', {child: body}) : body;
   const list = add('items', 'List', {children: {componentId: item, path: '/entities'}});
   const listHeading = add('records_heading', 'SectionHeading', {title: design.headings.records});
-  add('records', 'Column', {children: [listHeading, list]});
+  const supporting = contract.readonlySupporting===true?[add('supporting_readonly_text', 'Text', {text: {path: '/supportingText'}, variant: 'body'})]:[];
+  add('records', 'Column', {children: [listHeading, list, ...supporting]});
   const composerHeading = add('composer_heading', 'SectionHeading', {title: design.headings.composer});
   const fieldRows: string[] = [];
   let pair: string[] = [];

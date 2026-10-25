@@ -18,6 +18,6 @@ export function stageHostCommandResult(stored:any,payload:Record<string,any>,aut
  const collection=sources&&Object.keys(sources)[0];
  if(!collection||!Array.isArray(stored.data?.[collection]))throw Error('existing app record collection required');
  const result={title:'App result',value:payload.result,subtitle:payload.result,sections:[],bullets:[]};
- stored.runtimeState={...stored.runtimeState,entities:payload.entities,entityStats:Array.isArray(payload.entityStats)?payload.entityStats:[],intentActionCount:Number(stored.runtimeState.intentActionCount||0)+1,intentResult:result,lastCommandResult:payload.result,hostCommandRequestId:randomUUID(),hostCommandPrepareAllowed:false,hostCommandRenewedFrom:null,lastCommand:{command:payload.command,requestId:payload.requestId},lastActionPayload:payload};
+ stored.runtimeState={...stored.runtimeState,entities:payload.entities,...(payload.supportingProjection?{supportingProjection:payload.supportingProjection}:{}),entityStats:Array.isArray(payload.entityStats)?payload.entityStats:[],intentActionCount:Number(stored.runtimeState.intentActionCount||0)+1,intentResult:result,lastCommandResult:payload.result,hostCommandRequestId:randomUUID(),hostCommandPrepareAllowed:false,hostCommandRenewedFrom:null,lastCommand:{command:payload.command,requestId:payload.requestId},lastActionPayload:payload};
  return {collection,records:stored.data[collection],result};
 }

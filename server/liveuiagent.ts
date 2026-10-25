@@ -1,4 +1,5 @@
 import {approvedWorkerPlanningContext,nativeJsonUserMessage,type WorkerPlanningContext,type WorkerPlanningMode} from './native-worker-planning-context.js';
+import {SUPPORTING_PROTOCOL,prepareSupportingSections,sealSupportingSections,supportingText,supportingProjectionPolicy,type SupportingScope,type SupportingPreparation,type SupportingSeal} from './native-supporting-projections.js';
 import {guiPlanningModelInput} from './gui-interaction-planner.js';
 import {canonicalizeDomainReferences} from './native-domain-references.js';
 import {writeDesignContractDiagnostics,writeDesignReferenceDiagnostics} from './design-contract-diagnostics.js';
@@ -3009,7 +3010,7 @@ function deriveA2uiPlan(stored: StoredApp): A2uiPlan {
   };
 }
 
-function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtimeState'>) {
+function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtimeState'> & Partial<Pick<StoredApp,'owner'|'appId'>>) {
   const collection = plan.collection;
   const records = requiredArray<Record<string, unknown>>(stored.data?.[collection], `A2UI state for ${plan.signature} missing records collection ${collection}`).slice();
   if (!records.length) throw new Error(`A2UI state for ${plan.signature} missing records in ${collection}`);
@@ -3051,6 +3052,7 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
     .slice(0, 8);
   return {
     entities,
+    supportingText: supportingText(stored.runtimeState.supportingProjection,{owner:stored.owner??'',appId:stored.appId??''}),
     appRecords: Array.isArray(stored.runtimeState.appRecords) ? stored.runtimeState.appRecords : [],
     appPreferences: Array.isArray(stored.runtimeState.appPreferences) ? stored.runtimeState.appPreferences : [],
     unclassifiedAppRecords: Array.isArray(stored.runtimeState.unclassifiedAppRecords) ? stored.runtimeState.unclassifiedAppRecords : [],
@@ -3209,7 +3211,7 @@ export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ na
     const count = refCounts.get(id) || 0;
     if (id === 'overview' ? count !== 0 : count !== 1) return reject(`component "${id}" is referenced ${count} time(s) — every component except overview must be referenced exactly once (do not list a child both in a container's children and elsewhere)`);
   }
-  const rootPaths = new Set(['/entitiesTitle', '/entitiesEmptyHint', '/draft/result', '/draft/state', '/draft/stats', '/draft/statLabel', '/draft/statValue']);
+  const rootPaths = new Set(['/entitiesTitle', '/entitiesEmptyHint', '/draft/result', '/draft/state', '/draft/stats', '/draft/statLabel', '/draft/statValue', '/supportingText']);
   const textVariants = new Set(['h2', 'h3', 'body', 'caption']);
   // Widget 绑定白名单:与 Text 同一条纪律 —— 只能绑真实 grounding 数据或字面文本。
   // 行内(/entities item)作用域额外开放 title/detail/tag,它们都是 makeA2uiState 从
@@ -5282,10 +5284,12 @@ export function applyVerifiedInitialContent(stored: StoredApp, initial: {
   stats: Array<{ label: string; value: string }>;
   summary: string;
   evaluation: { pass: boolean; deficiencies?: string[] } | null;
+  supportingProjection?: SupportingSeal;
 } | null) {
   if (initial?.evaluation?.pass !== true) return false;
   stored.runtimeState.projectionDisplayMode = 'complete-grounded';
   stored.runtimeState.entities = initial.entities;
+  if(initial.supportingProjection)stored.runtimeState.supportingProjection=initial.supportingProjection;
   stored.runtimeState.entityStats = initial.stats;
   if (initial.summary && stored.runtimeState.intentResult && typeof stored.runtimeState.intentResult === 'object') {
     (stored.runtimeState.intentResult as Record<string, unknown>).subtitle = initial.summary;
@@ -5476,8 +5480,13 @@ function hasCompiledNativeView(stored:StoredApp):boolean {
   return stored.surfaceMode !== 'emitted' && Array.isArray((stored.appPackage.ui as any)?.meta?.designedOverview);
 }
 
+function supportingScope(stored:StoredApp):SupportingScope|undefined {
+  const nodes=(stored.appPackage.ui as any)?.meta?.designedOverview;
+  return hasCompiledNativeView(stored)&&stored.owner&&Array.isArray(nodes)&&nodes.some((n:any)=>n.id==='supporting_readonly_text'&&n.component==='Text'&&n.text?.path==='/supportingText'&&!n.action&&!n.children&&!n.child) ? {owner:stored.owner,appId:stored.appId}:undefined;
+}
+
 function projectionCapacityCheck(stored:StoredApp,turn?:{actionId:string;payload:Record<string,any>;isCommand:boolean}) {
-  return (proposal:{entities:unknown[];stats:Array<{label:string;value:string}>;summary:string;appStateCalls:Array<Record<string,any>>}):string[]=>{
+  return (proposal:{entities:unknown[];stats:Array<{label:string;value:string}>;summary:string;appStateCalls:Array<Record<string,any>>;supportingProjection?:SupportingSeal}):string[]=>{
     try {
       const scratch=structuredClone(stored);
       const records=new Map((Array.isArray(scratch.runtimeState.appRecords)?scratch.runtimeState.appRecords:[]).map((record:any)=>[record.recordId,record]));
@@ -5486,9 +5495,9 @@ function projectionCapacityCheck(stored:StoredApp,turn?:{actionId:string;payload
       }
       scratch.runtimeState.appRecords=[...records.values()];
       if(turn){
-        const payload={...turn.payload,entities:proposal.entities,entityStats:proposal.stats,result:proposal.summary};
+        const payload={...turn.payload,entities:proposal.entities,entityStats:proposal.stats,result:proposal.summary,...(proposal.supportingProjection?{supportingProjection:proposal.supportingProjection}:{})};
         if(turn.isCommand)stageHostCommandResult(scratch,payload,true);else updateStoredAgentApp(scratch,turn.actionId,payload,true);
-      }else {scratch.runtimeState.entities=proposal.entities;scratch.runtimeState.entityStats=proposal.stats;}
+      }else {scratch.runtimeState.entities=proposal.entities;scratch.runtimeState.entityStats=proposal.stats;if(proposal.supportingProjection)scratch.runtimeState.supportingProjection=proposal.supportingProjection;}
       // Exact real display mapping/compiler on a private in-memory clone. This
       // cannot authorize business work, persist history or repeat a write.
       scratch.runtimeState.projectionDisplayMode = 'complete-grounded';
@@ -5756,6 +5765,7 @@ function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Reco
     intentResult: result,
     intentActionCount: nextCount,
     entities: mergedEntities,
+    ...(payload.supportingProjection?{supportingProjection:payload.supportingProjection}:{}),
     // 聚合统计与已验证的主列表一起替换;未验证/缺省输出仍保留上一轮。
     entityStats: (Array.isArray((payload as Record<string, unknown>).entityStats) && (authoritativeEntities || ((payload as Record<string, unknown>).entityStats as unknown[]).length))
       ? (payload as Record<string, unknown>).entityStats
@@ -5981,12 +5991,14 @@ export async function runAppWorldGrounding(input: {
   fields?: Array<{ label: string; value: string; valueState?: 'empty_string' | 'null' }>;
   appName: string;
   appPurpose?: string;
+  supportingProjectionScope?: SupportingScope;
+  priorSupportingProjection?: SupportingSeal;
   // Actual user command, never synthesized action/field labels. Presentation only.
   currentUserCommand?: string;
   viewContext?: GroundingViewContext;
   // Last verified UI projection only: not fresh world evidence or business authorization.
   priorProjection?: { entities: unknown[]; stats: unknown[] };
-  projectionCapacity?: (proposal:{entities:unknown[];stats:Array<{label:string;value:string}>;summary:string;appStateCalls:Array<Record<string,any>>})=>string[];
+  projectionCapacity?: (proposal:{entities:unknown[];stats:Array<{label:string;value:string}>;summary:string;appStateCalls:Array<Record<string,any>>;supportingProjection?:SupportingSeal})=>string[];
   actionLabel?: string;
   actionDescription?: string;
   targetEntity?: { name: string; id: string; appRecordId?:string } | null;
@@ -5996,7 +6008,7 @@ export async function runAppWorldGrounding(input: {
   // 语义的回合知道上一批产出了什么。
   recentTurns?: Array<Record<string, unknown>>;
   llm?: LlmRuntimeConfig;
-}): Promise<{ calls: AppWorldCallResult[]; appStateCalls: Array<Record<string, unknown>>; appStateExecutionEvidence: {attemptedCalls:number;successfulCalls:number;unknownDispatchOutcomes:number;unknownWriteOutcomes:number}; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; diagnostics?: GroundingDiagnosticsReceipt; deadlineExceeded?: boolean; executionEvidence?: { attemptedApiCalls: number; successfulApiCalls: number; unknownDispatchOutcomes: number; unknownWriteOutcomes: number; notStartedApiCalls: number; totalApiAttemptLimit: number; zeroSuccessfulCallCause?: string } } | null> {
+}): Promise<{ calls: AppWorldCallResult[]; appStateCalls: Array<Record<string, unknown>>; appStateExecutionEvidence: {attemptedCalls:number;successfulCalls:number;unknownDispatchOutcomes:number;unknownWriteOutcomes:number}; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; supportingProjection?: SupportingSeal; diagnostics?: GroundingDiagnosticsReceipt; deadlineExceeded?: boolean; executionEvidence?: { attemptedApiCalls: number; successfulApiCalls: number; unknownDispatchOutcomes: number; unknownWriteOutcomes: number; notStartedApiCalls: number; totalApiAttemptLimit: number; zeroSuccessfulCallCause?: string } } | null> {
   // The ablation keeps planning/catalog access but supplies no external facts.
   // Guard the shared executor as well as its current callers.
   if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') return null;
@@ -6009,6 +6021,10 @@ export async function runAppWorldGrounding(input: {
   let serviceClock: Awaited<ReturnType<NonNullable<AppWorldBridge['getClock']>>> = null;
   try { serviceClock = await input.bridge?.getClock?.() ?? null; } catch { /* Actual host UTC is the fallback. */ }
   const turnTime = `Actual host time for this turn: ${hostNow} (UTC). Authoritative current turn clock: ${serviceClock ? JSON.stringify(serviceClock) : JSON.stringify({dateTime:hostNow,timezone:'UTC',source:'host:UTC',reason:'service clock unavailable'})}. For an action completed or logged now, when the user gives no date, use this authoritative current date. Prefer a current clock returned by the actual service. A service clock with timezone unspecified is service-local wall time: preserve its calendar date; do not pretend it is UTC or invent an offset. Explicit user dates take precedence; use an explicitly supplied timezone only when conversion is justified. A timestamp on another record, cached application text or client-provided claim is not the current clock. Never borrow another item's historical date for a new completion or log entry.`;
+  if(input.priorSupportingProjection){
+    if(!input.supportingProjectionScope)throw Error('supporting_projection: installed typed scope required for sealed prior context');
+    supportingText(input.priorSupportingProjection,input.supportingProjectionScope);
+  }
   const capabilities = authorizedGroundingCapabilities(await input.bridge?.getCapabilities() ?? [],input.permissions);
   const appStateCapabilities = input.appState?.capabilities ?? [];
   if (!capabilities.length && !appStateCapabilities.length) return null;
@@ -6056,6 +6072,7 @@ export async function runAppWorldGrounding(input: {
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
         persistedDomainPolicy,
+        ...(input.supportingProjectionScope?[supportingProjectionPolicy]:[]),
       ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
       `Wired services this turn can write to: ${wiredServices}.`,
       'Turn the submission into an executable goal contract. Respond ONLY with JSON:',
@@ -6095,6 +6112,8 @@ export async function runAppWorldGrounding(input: {
   let entities: Array<{ name: string; id?: string; detail?: string; group?: string }> = [];
   let entitiesProvided = false;
   let proposedEntities:unknown;
+  let proposedSupportingSections:unknown;
+  let approvedSupportingProjection:SupportingSeal|undefined;
   let stats: Array<{ label: string; value: string }> = [];
   let evaluation: { pass: boolean; deficiencies: string[] } | null = null;
   let feedback: string[] = [];
@@ -6142,6 +6161,8 @@ export async function runAppWorldGrounding(input: {
     // Prior rows remain context only; each repair round must provide its own final list.
     entitiesProvided = false;
     proposedEntities=undefined;
+    proposedSupportingSections=undefined;
+    approvedSupportingProjection=undefined;
     remainingActionMs();
     callsAtRoundStart = totalSuccesses();
     const roundSuccessLimit = round === 1 ? 24 : 16;
@@ -6164,6 +6185,7 @@ export async function runAppWorldGrounding(input: {
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
         persistedDomainPolicy,
+        ...(input.supportingProjectionScope?[supportingProjectionPolicy]:[]),
           ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
           'A user submitted a GUI form. Ground their request in REAL API calls against the available APIs below, then summarize.',
           'Respond ONLY with JSON: {"calls": [{"api": "<apiName>", "args": {...}}, ...]} to make the next API call(s) — BATCH every independent call you can already determine into ONE array (e.g. the create plus one add per song); one call per turn wastes the user\'s time.',
@@ -6233,6 +6255,7 @@ export async function runAppWorldGrounding(input: {
           && typeof (item as Record<string, unknown>).name === 'string'
           && Boolean(((item as Record<string, unknown>).name as string).trim()));
         proposedEntities=decision?.entities;
+        proposedSupportingSections=decision?.supportingSections;
         // This association only avoids suppressing a same-form-name entity.
         // The independent evaluator and all write/read/membership gates still decide truth.
         const readonlyExternalReadResponses=calls.slice(Math.max(0,lastWriteAt)).filter(call=>call.tool?.method==='GET').map(call=>call.response);
@@ -6289,6 +6312,7 @@ export async function runAppWorldGrounding(input: {
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
         persistedDomainPolicy,
+        ...(input.supportingProjectionScope?[supportingProjectionPolicy]:[]),
                 'The host-authored batchScope describes ONLY the actual bounded proposedCalls selected for this dispatch. Judge whether EACH call is safe, authorized incremental progress toward the explicit user intent, with actual identity, amounts, prerequisites and protection of untargeted objects. A finite batch need not complete the entire goal, reach the final requested count or touch every requested destination in the SAME batch. Remaining work is not itself grounds to reject a safe batch. Worker end-state contracts describe the eventual result, not a requirement that each write batch finish it; they never override explicit user intent. Do not approve unrelated or harmful partial work. If the user explicitly requires atomic/all-or-nothing execution and this partial batch would violate that requirement, reject it. Batch metadata grants no authority, invents no prerequisites and claims no completion. Final complete-goal coverage, fresh post-write read-back and current full membership remain mandatory for the separate final evaluators.',
                 'Check the API operation family AND its arguments against the explicit current user request; the goal may be mistaken: (1) every amount must trace to a submitted value, a value read earlier this turn, or goal.expectedNumbers (respect the scope of expectedNumbers: an event share is not a cumulative balance; a bill split share = total ÷ ALL participants including the payer; the payer is owed, never owing; NEVER a placeholder like 0.01); (2) names/titles the user provided must be used VERBATIM (no renaming, translating, date prefixes, or concatenated form fields); (3) an update must REPLACE the field content, not append, unless the user asked to add; (4) a change aimed at one named user-facing unit must not change sibling values; a packed-record representation-only partition must satisfy the shared policy rather than impose a same-backend-record constraint; (5) no UI component ids (d_b1, slot_2) inside names or contents.',
                 'DUPLICATE & TURN-SCOPE gate: reject the batch with {"approved": false, "reject": true, "reason": "<why>"} when (a) previousCalls already show a successful create of the same object (same bill/record, matching amounts or title) and the batch re-creates it WITHOUT first deleting the stale copy, or (b) the batch DELETES or re-records an object whose id does NOT trace to a create in previousCalls (i.e. it predates this turn) and the user request does not explicitly ask to remove or correct that record, or (c) the batch COMPLETES/closes/checks-off an item whose name is NOT mentioned in the user request or targetEntity — completing unmentioned siblings corrupts per-item state. Also reject when the API family contradicts explicit intent (for example recording an actual payment for a new bill, debt or future payment request), or when fixing the call would require changing the API family or inventing missing business values. Return approved:false, reject:true with the concrete reason so the executor can re-plan; do not disguise an intent error as an argument correction.',
@@ -6423,6 +6447,17 @@ export async function runAppWorldGrounding(input: {
     }
     // ③ 独立评审：只看证据(目标契约、API 调用记录、用户将看到的结果),不看执行 agent 的过程。
     remainingActionMs();
+    let supportingPrepared:SupportingPreparation|undefined;
+    const supportingGaps:string[]=[];
+    try {
+      if(input.supportingProjectionScope){
+        const evidence=historyLog.filter(c=>c.ok===true&&typeof c.order==='number');
+        const method=(api:unknown)=>capabilities.find(c=>c.apiName===api)?.method??'';
+        const lastWrite=evidence.filter(c=>method(c.api)!=='GET').reduce((n,c)=>Math.max(n,Number(c.order)),-1);
+        const localWrites=appStateCalls.filter(c=>c.ok===true&&typeof c.api==='string'&&['app_state.upsert_record','app_state.delete_record'].includes(c.api)).reduce((n,c)=>Math.max(n,Number(c.order)),-1);
+        supportingPrepared=prepareSupportingSections(proposedSupportingSections,[...evidence.map(c=>({...c,method:method(c.api)}) as any),...appStateCalls.map(c=>({...c,method:typeof c.api==='string'&&['app_state.read_record','app_state.list_records'].includes(c.api)?'GET':'POST'}) as any)],lastWrite,localWrites);
+      }else if(proposedSupportingSections!==undefined&&(!Array.isArray(proposedSupportingSections)||proposedSupportingSections.length))throw Error('supporting_projection: installed typed readonly surface required');
+    }catch(error){supportingGaps.push(String((error as Error).message));}
     const verdictRaw = await openAIChatJson({
       label: 'Grounding Evaluator Agent',
       llm: input.llm,
@@ -6433,6 +6468,8 @@ export async function runAppWorldGrounding(input: {
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
         persistedDomainPolicy,
+        ...(input.supportingProjectionScope?[supportingProjectionPolicy]:[]),
+        ...(input.supportingProjectionScope?['For nonempty supportingProjection, independently verify every section role and source-bound visible row against the original app purpose and current request. The host verifies exact provenance, not semantic role. When correct, include supportingApproval:{approved:true,proposalSha256:<the exact supplied proposalSha256>} alongside pass/deficiencies; otherwise pass:false with concrete deficiencies. A primary saved member may not be removed or downgraded into a readonly section. Inspect priorSupportingProjection only as prior display context, never fresh service facts.']:[]),
         'Decide whether the executed real API calls and the user-visible result fulfill the user request and the goal contract.',
         'Respond ONLY with JSON: {"pass": true|false, "deficiencies": ["<concrete, actionable gap>", ...]}.',
         'Fail when: a requested create/update has no successful write call; a named targetCount of logical units is not established by successful writes and complete fresh read-back (API-call or backend-record count alone does not prove unit count); the visible summary or entities echo the request instead of naming real created entities; any requested deliverable lacks actual successful writes and current read-back evidence, whether it belongs in primary rows or in verified summary/stats. Also fail omitted required primary units or rows whose actual object type is incompatible with the declared row operation. Do not require every created supporting object to appear as an actionable row.',
@@ -6440,7 +6477,7 @@ export async function runAppWorldGrounding(input: {
         'Treat the goal contract as a fallible plan: fail a repayment/transfer write for a new bill, shared debt, or future payment request unless the user explicitly requested that transfer or reported a completed repayment. Do not approve only because execution matched a mistaken goal. A successful read alone never fulfills a requested mutation. Also fail if a write lacks a successful read AFTER the last write verifying the changed target and current state; step/time limits and mustFinish do not waive this evidence requirement. When evidence is incomplete, return pass:false with the missing evidence, not assumed success.',
         'Also fail when any visibleEntities entry lacks traceable successful response evidence inside apiCalls, or inside appStateCalls for explicitly app-local rows/metadata only. For actual user-chosen document members, evidence can be the exact member name and location in complete fresh structured container content under the shared membership policy; no independent service member object or invented unit ID is required. Arbitrary text mentions are not membership: external service objects still require external API evidence; local values cannot prove external state. Entities are a read-back of the corresponding store, and a row whose name/id cannot be traced to response evidence is fabricated no matter how plausible it looks (e.g. inventing inbox subjects the API never returned).',
       ].join('\n'),
-      user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities, visibleStats: stats }),
+      user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities, visibleStats: stats, ...(supportingPrepared?{supportingProjection:{...supportingPrepared,sources:supportingPrepared.sources.map(c=>({api:c.api,order:c.order}))}}:{}), ...(input.priorSupportingProjection?{priorSupportingProjection:input.priorSupportingProjection}:{}), ...(supportingGaps.length?{supportingSourceDeficiencies:supportingGaps}:{}) }),
     }) as Record<string, any>;
     evaluation = {
       pass: verdictRaw?.pass === true && entitiesProvided && lastWriteAt <= lastReadAt && localWriteAt <= localReadAt && localPendingReadback.size === 0 && appStateUnknown === 0 && unknownWriteOutcomes === 0 && totalSuccesses() > 0,
@@ -6458,9 +6495,16 @@ export async function runAppWorldGrounding(input: {
     const mailGaps = mailEvidence.deficiencies();
     if (mailGaps.length) { evaluation.pass = false; evaluation.deficiencies.unshift(...mailGaps); }
     const readOnlyRepairBefore=projectionReadOnlyRepair;
+    if(supportingPrepared&&input.supportingProjectionScope)try{approvedSupportingProjection=sealSupportingSections(supportingPrepared,input.supportingProjectionScope,supportingPrepared.sections.length?verdictRaw?.supportingApproval:{approved:true,proposalSha256:supportingPrepared.proposalSha256});}catch(error){supportingGaps.push(String((error as Error).message));}
     const coverageGaps = projectionCoverageGaps(goal.projectionPolicy, input.priorProjection?.entities ?? [], entities);
+    if(input.supportingProjectionScope&&supportingPrepared&&['app_local','service_collection'].includes(input.viewContext?.primaryMembership??'')){
+      const present=(old:any,row:any)=>old?.appRecordId?old.appRecordId===row?.appRecordId:opaqueIdentity(old?.id)?opaqueIdentity(old.id)===opaqueIdentity(row?.id):old?.name===row?.name;
+      const moved=(old:any,row:any)=>typeof old?.name==='string'&&old.name===row?.name&&(!opaqueIdentity(row?.id)||!opaqueIdentity(old?.id)||opaqueIdentity(old.id)===opaqueIdentity(row.id));
+      for(const old of input.priorProjection?.entities??[])if(!entities.some(row=>present(old,row))&&supportingPrepared.sections.some(section=>section.rows.some(row=>moved(old,row))))supportingGaps.push('supporting_projection: a prior saved primary member cannot be downgraded into a readonly supporting section');
+    }
+    coverageGaps.push(...supportingGaps);
     const membershipGaps=primaryProjectionDeficiencies(input.viewContext?.primaryMembership,proposedEntities,appStateCalls,input.appState?.recordFields ?? [],stats);
-    membershipGaps.push(...(input.projectionCapacity?.({entities,stats,summary,appStateCalls}) ?? []));
+    membershipGaps.push(...(input.projectionCapacity?.({entities,stats,summary,appStateCalls,...(approvedSupportingProjection?{supportingProjection:approvedSupportingProjection}:{})}) ?? []));
     coverageGaps.push(...membershipGaps);
     if(membershipGaps.some(gap=>gap.startsWith('projection_capacity:')))projectionReadOnlyRepair=true;
     if (coverageGaps.length) {
@@ -6489,7 +6533,7 @@ export async function runAppWorldGrounding(input: {
     evaluation={pass:false,deficiencies:[(error as Error).message,...(lastWriteAt>lastReadAt?['not_verified: no successful read-back after the last write']:[])]};
     return {calls,appStateCalls,appStateExecutionEvidence:appStateExecutionEvidence(),summary,entities,stats,goal,evaluation,attempts:historyLog,deadlineExceeded:true,executionEvidence:executionEvidence(),diagnostics:persistDiagnostics('deadline_exceeded')};
   }
-  return { calls, appStateCalls, appStateExecutionEvidence:appStateExecutionEvidence(), summary, entities, stats, goal, evaluation, attempts: historyLog, executionEvidence: executionEvidence(), diagnostics:persistDiagnostics(evaluation?.pass===true?'returned_verified':'returned_not_verified') };
+  return { ...(evaluation?.pass===true&&approvedSupportingProjection?{supportingProjection:approvedSupportingProjection}:{}), calls, appStateCalls, appStateExecutionEvidence:appStateExecutionEvidence(), summary, entities, stats, goal, evaluation, attempts: historyLog, executionEvidence: executionEvidence(), diagnostics:persistDiagnostics(evaluation?.pass===true?'returned_verified':'returned_not_verified') };
 }
 
 // 没有命中 AppWorld API 的领域(比如"每天吃什么"),后端 agent 直接完成这轮工作
@@ -6582,7 +6626,7 @@ export async function designAppSurface(input: {
   const rowActionSlots = rowActionSlotMap(input.actions, input.businessFields.map(field => field.name));
   const declaredDomainFields=domainFieldUnion(input.businessFields as DomainField[],input.persistedDomainFields);
   const persistedStateFields=stateDisplayFields(declaredDomainFields).map(field=>declaredDomainFields.find(value=>value.name===field.name)!);
-  const contract = {businessFields: input.businessFields, actions: input.actions, persistedStateFields};
+  const contract = {readonlySupporting:true as const,businessFields: input.businessFields, actions: input.actions, persistedStateFields};
   assertSurfaceContract(contract);
   let feedback = '';
   for (let round = 1, maxRounds = designAttempts(); round <= maxRounds; round++) {
@@ -7186,6 +7230,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
               payload: {},
               appName: String(appPackage.manifest.name),
               appPurpose: plan.sourcePrompt,
+              supportingProjectionScope:supportingScope(stored),
               viewContext: groundingViewContext(appPackage,hasCompiledNativeView(stored)?{compiledNativeBudget:true}:undefined),
               projectionCapacity:hasCompiledNativeView(stored)?projectionCapacityCheck(stored):undefined,
               actionLabel: "First open",
@@ -7293,6 +7338,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const action = hostRoute?.action ?? requiredObject<Record<string, any>>((stored.appPackage.actions as any).actions, `app ${input.appId} missing actions`)[actionId];
       if (!action) throw httpError(`action not found: ${actionId}`, 404);
       const rawPayload = commandEvent ? {...commandEvent} : structuredClone(extractPayload(input.eventPayload));
+      delete (rawPayload as Record<string,unknown>).supportingProjection;
       const owner = String(input.user || '').trim();
       if(!owner) throw httpError('authenticated owner required for durable action admission',403);
       // Identity belongs to the logical user click, not to each HTTP arrival.
@@ -7420,6 +7466,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             targetEntity,
             appName: String(stored.appPackage.manifest.name || input.appId),
             appPurpose: String(stored.appPackage.manifest.intent?.sourcePrompt || ''),
+            supportingProjectionScope:supportingScope(stored),
+            priorSupportingProjection:stored.runtimeState.supportingProjection as SupportingSeal|undefined,
             viewContext: groundingViewContext(stored.appPackage,hasCompiledNativeView(stored)?{compiledNativeBudget:true}:undefined),
             projectionCapacity:hasCompiledNativeView(stored)?projectionCapacityCheck(stored,{actionId,payload:rawPayload,isCommand}):undefined,
             priorProjection: { entities: Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : [], stats: Array.isArray(stored.runtimeState.entityStats) ? stored.runtimeState.entityStats : [] },
@@ -7444,6 +7492,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             }
             authoritativeEntities = true;
             rawPayload.entities = grounding.entities;
+            if(grounding.supportingProjection)(rawPayload as Record<string,unknown>).supportingProjection=grounding.supportingProjection;
             rawPayload.entityStats = grounding.stats;
           }
         }
