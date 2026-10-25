@@ -208,3 +208,16 @@ test('different apps overlap within the limit and same-app actions remain FIFO',
   for (const request of [a,b,other]) assert.equal((await f.finished(request.data.id)).status,'done');
   assert.equal(peak,2);
 });
+
+test('connected generation begins with a working host boundary while pure local generation remains unseeded',async t=>{
+  const connected=await fixture(t,{async run({work,onEvent}){
+    const initial=await readFile(path.join(work,'index.html'),'utf8');
+    assert.match(initial,/liveui-task-form/);assert.match(initial,/window.liveuiagent.ai/);
+    onEvent({type:'tool_call',name:'write_file'});
+    await writeFile(path.join(work,'app.json'),JSON.stringify({name:'Reading shelves',description:'A service-backed reading view',features:['Run reading requests'],checks:[]}));return {};
+  }});
+  const c=await connected.api('generate','POST',{prompt:'Keep my reading shelves in notes',context:{connectedServices:[{name:'simple_note',description:'Notes'}]}});
+  const done=await connected.finished(c.data.id);assert.equal(done.status,'done',done.error);assert.equal(done.repairAttempts||0,0);
+  const local=await fixture(t,{async run(input){await assert.rejects(()=>readFile(path.join(input.work,'index.html'),'utf8'),{code:'ENOENT'});return writer().run(input)}});
+  const l=await local.api('generate','POST',{prompt:'A local counter',context:{connectedServices:[]}});assert.equal((await local.finished(l.data.id)).status,'done');
+});

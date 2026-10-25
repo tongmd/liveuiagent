@@ -3,6 +3,7 @@ import { renameSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { buildTask } from './prompts.mjs';
+import { seedConnectedApp } from './host-action-starter.mjs';
 import { validateDelivery } from './delivery.mjs';
 import { validateBrowserDelivery } from './browser-delivery.mjs';
 import { resolveJobModel } from './model-config.mjs';
@@ -209,6 +210,7 @@ async function execute({ a, job, context, provider }) {
         catch (error) { if (error.code !== 'ENOENT') throw error; }
       }
     }
+    if (job.mode !== 'action' && Array.isArray(context?.connectedServices) && context.connectedServices.length) await seedConnectedApp(work);
     await writeJson(path.join(work, 'user-memory.json'), context?.personalContext ?? a.state.memory);
     if (job.status === 'cancelled') return;
     let task = buildTask({ prompt: job.prompt, mode: job.mode, memory: context?.personalContext ?? a.state.memory, history: previous?.history, context });
