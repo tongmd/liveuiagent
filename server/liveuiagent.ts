@@ -2782,6 +2782,7 @@ function makeActions(plan: AgentPlan) {
     {
       type: 'agent_action',
       label: fn.label,
+      description: fn.description,
       ...(fn.perItem ? { perItem: true, consumedSlots:requireConsumedSlots(fn.consumedSlots,plan.interaction.businessFields.map(field=>field.name)) } : {}),
       agent: fn.entryAgent,
       input: 'event.payload',
