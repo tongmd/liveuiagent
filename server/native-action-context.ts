@@ -1,3 +1,4 @@
+import {domainFieldUnion,persistedDomainPolicy,type DomainField} from './native-domain-fields.js';
 import type {AppWorldToolCapability} from './appworld-bridge.js';
 import {requireConsumedSlots} from './native-action-slots.js';
 import {schemaDesignCatalog} from './native-schema-design.js';
@@ -9,7 +10,7 @@ export function authorizedGroundingCapabilities(capabilities:AppWorldToolCapabil
  return capabilities.filter(tool=>tool.appName!=='__meta__'&&allowed.has(tool.permission)&&!/signup|login|logout|verify|verification|password|delete_account/i.test(tool.apiName));
 }
 type Field={name:string;label:string;type?:string;required?:boolean;options?:Array<{label:string;value:string}>};
-export function nativeActionContext(input:{originalAppNeed:string;action:{id:string;label?:string;description?:string;perItem?:boolean;consumedSlots?:unknown};fields:Field[];eventPayload:unknown;requestPayload:Record<string,unknown>;targetEntity?:{name:string;id:string;appRecordId?:string}|null;primaryFieldName?:string;secondaryFieldName?:string;permissions:string[];capabilities:AppWorldToolCapability[]}){
+export function nativeActionContext(input:{originalAppNeed:string;action:{id:string;label?:string;description?:string;perItem?:boolean;consumedSlots?:unknown};fields:Field[];persistedDomainFields?:DomainField[];eventPayload:unknown;requestPayload:Record<string,unknown>;targetEntity?:{name:string;id:string;appRecordId?:string}|null;primaryFieldName?:string;secondaryFieldName?:string;permissions:string[];capabilities:AppWorldToolCapability[]}){
  const eventPayload=input.eventPayload&&typeof input.eventPayload==='object'&&!Array.isArray(input.eventPayload)?input.eventPayload as Record<string,unknown>:{};
  const names=input.fields.map(field=>field.name);
  if(new Set(names).size!==names.length)throw Error('Action context has duplicate declared fields');
@@ -17,8 +18,9 @@ export function nativeActionContext(input:{originalAppNeed:string;action:{id:str
  const authorized=authorizedGroundingCapabilities(input.capabilities,input.permissions);
  const publicCapabilities=authorized.filter(tool=>tool.source==='appworld');
  const catalog=schemaDesignCatalog(publicCapabilities,[...new Set(publicCapabilities.map(tool=>tool.appName))]);
- const local=appStateCapabilitySchemas(appRecordFields(input.fields),input.permissions);
+ const local=appStateCapabilitySchemas(appRecordFields(domainFieldUnion(input.fields as DomainField[],input.persistedDomainFields)),input.permissions);
  return {
+  persistedDomainFields:input.persistedDomainFields??[],domainStatePolicy:persistedDomainPolicy,
   schemaVersion:1,source:'host-owned-action-contract',originalAppNeed:input.originalAppNeed,
   operation:{id:input.action.id,label:input.action.label,description:input.action.description,perItem:input.action.perItem===true,consumedSlotNames:consumed,consumptionScope:consumed===null?'unknown-global-operation':'exact-declared-row-slots',targetEntity:input.targetEntity?structuredClone(input.targetEntity):null},
   fields:input.fields.map(field=>{

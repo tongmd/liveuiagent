@@ -5,7 +5,7 @@ import {createAppWorldBridge} from '../server/appworld-bridge.js';import {planAg
 const publicBytes=fs.readFileSync(new URL('./fixtures/public-wide-api-openapi.json',import.meta.url));
 const publicSha='aa9257f59d8fc3f6912f2ba1f43cf7a03282d8b4c85aeb12bd89b8bcab78e37d';
 const reply=(x:any)=>({choices:[{message:{content:JSON.stringify(x)}}]});
-const design={appName:'Day planner',tagline:'Manage daily entries',accent:'#426b57',slots:[{label:'Entry time',type:'string',required:false}],actions:[{label:'Save entry',description:'Save a daily entry'}],primaryMembership:'service_collection',services:['phone'],itemLabel:'Entry',glyph:'⏰',tileTagline:'Daily entries',metricLabel:'Entries',collection:'Entries',actionVerb:'Save'};
+const design={appName:'Day planner',tagline:'Manage daily entries',accent:'#426b57',persistedDomainFields:[],slots:[{label:'Entry time',type:'string',required:false}],actions:[{label:'Save entry',description:'Save a daily entry'}],primaryMembership:'service_collection',services:['phone'],itemLabel:'Entry',glyph:'⏰',tileTagline:'Daily entries',metricLabel:'Entries',collection:'Entries',actionVerb:'Save'};
 async function setup(t:any){
  assert.equal(createHash('sha256').update(publicBytes).digest('hex'),publicSha);
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'public-catalog-'));const oldFetch=globalThis.fetch;const names=['APPWORLD_ENABLED','APPWORLD_API_BASE','APPWORLD_SNAPSHOT_ROOT'];const before=Object.fromEntries(names.map(k=>[k,process.env[k]]));for(const k of names)delete process.env[k];

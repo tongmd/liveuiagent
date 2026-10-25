@@ -58,7 +58,7 @@ test('none rejects invented primary rows; missing actual read cannot verify empt
  assert(primaryProjectionDeficiencies('none',[{name:'Unexpected'}],[],[]).length>0);assert(primaryProjectionDeficiencies('app_local',[],[],[]).length>0);
 });
 test('new BusinessSlot designs must declare membership independently of display noun',async()=>{
- const base={appName:'Collection',tagline:'Collect selected entries',accent:'#426b57',slots:[{label:'Entry name',type:'string',required:false}],actions:[{label:'Add entry',description:'Add selected entry'}],services:[],itemLabel:'Entry',glyph:'📚',tileTagline:'Chosen entries',metricLabel:'Entries',collection:'Entries',actionVerb:'Add'};
+ const base={appName:'Collection',tagline:'Collect selected entries',accent:'#426b57',persistedDomainFields:[],slots:[{label:'Entry name',type:'string',required:false}],actions:[{label:'Add entry',description:'Add selected entry'}],services:[],itemLabel:'Entry',glyph:'📚',tileTagline:'Chosen entries',metricLabel:'Entries',collection:'Entries',actionVerb:'Add'};
  for(const primaryMembership of [undefined,'app_local']){
   let calls=0;const run=()=>makeBusinessFields('Collect chosen entries','Entries',[],{focus:'Entries',resultFocus:'Entries'},{model:'fixture',chatCompletion:async()=>{calls++;return reply({...base,...(primaryMembership?{primaryMembership}:{})});}});if(primaryMembership){assert.equal((await run()).primaryMembership,'app_local');}else await assert.rejects(run(),/primaryMembership/);assert.equal(calls,1);
  }

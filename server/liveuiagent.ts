@@ -1,3 +1,4 @@
+import {domainFieldUnion,persistedDomainPolicy,type DomainField} from './native-domain-fields.js';
 import {assertLocalRowRecordIdentity} from './native-row-identity.js';
 import {requireActionRequestId,installHostActionNonces} from './native-action-request.js';
 import {opaqueIdentity,appRecordIdentity} from './opaque-identity.js';
@@ -275,6 +276,7 @@ type InteractionModel = {
   secondaryFieldName: string;
   fields: FieldSpec[];
   businessFields: BusinessSlotSpec[];
+  persistedDomainFields?: BusinessSlotSpec[];
   fieldGroups: Array<{ id: string; title: string; description?: string; fieldNames: string[] }>;
   primaryText: string;
   secondaryText: string;
@@ -1010,6 +1012,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
   naming?: { currentName: string; changeRequest: string };
 }, llm?: LlmRuntimeConfig, availableServices: Array<{ name: string; description: string }> = []): Promise<{
   slots: BusinessSlotSpec[];
+  persistedDomainFields: BusinessSlotSpec[];
   appName: string;
   tagline: string;
   accent: string;
@@ -1032,13 +1035,15 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
     system: [
       'You are LiveUIAgent Business Slot Agent.',
       'Generate concise semantic input slots for a generated app.',
-      'Return only JSON with keys: appName, tagline, accent, slots, actions, services, itemLabel, primaryMembership.',
+      'Return only JSON with keys: appName, tagline, accent, slots, persistedDomainFields, actions, services, itemLabel, primaryMembership.',
       'services: which of the availableServices this app must call REAL APIs on to genuinely fulfill the need (0-4 names, exact strings from availableServices). Match the NEED, not keywords: a dinner-party music queue needs spotify; collecting rent from roommates needs venmo. Personal records belong in the matching real service, not app-local memory: journals/diaries/logs/notes → simple_note; tasks/checklists/plans/reminders and staged schedules you progress through → todoist; files/folders/drafts → file_system; contacts/calls/sms and voice recordings → phone; buying/orders and also delivery addresses/payment cards/carts/product reviews → amazon; emails → gmail; money owed between people → venmo or splitwise; a trusted-people circle for payments → venmo. A need that MONITORS or reacts to activity in a service (a spending diary built from your payments, a buy signal that checks wallet balance) must include that service. Pick EVERY service the need touches (a side business that restocks on amazon and collects payment on venmo needs both). Return [] only when NO service fits the need at all. Never pick a service just because a word coincides.',
       'appName: a short, plain functional name identifying the actual purpose and object in the user request, in the same language as that request. Prefer familiar task vocabulary over invented brands, wordplay, vague aspirational words or marketing names. Do not switch to English for a non-English request. If the user explicitly supplies an app name, use that name verbatim. When naming.currentName is supplied, preserve it unless naming.changeRequest explicitly asks to rename this app; unrelated feature or styling changes never authorize renaming.',
       'tagline: ONE short plain sentence telling the user what this app does for them, in the prompt language. Never echo the prompt or the appName verbatim; never use technical words (输入/结果/状态/流程/工作流/agent/后端).',
       'accent: the app\'s brand color as a 6-digit hex (#rrggbb) that FITS the domain — warm appetizing tones for food, violet/indigo for music, greens for cleaning or health, gold/teal for money. Medium saturation and medium-dark brightness so white text stays readable on it; never pale pastels or near-black.',
       'actions: between 1 and 4 buttons a real consumer app for this need would offer, ordered by importance. Each is {label, description, perItem?, consumedSlotIndices?}. label: 2-8 characters/words, starts with a verb, prompt language — the first one is the main thing the user came to do (like 给我推荐 or 换一批), never generic verb+field combos like 保存口味 or 刷新食材. description: one sentence describing what happens when tapped. Together the declared actions must cover the FULL lifecycle the need implies — if the need involves playing something, include a stop/pause action; if the original need explicitly involves maintaining a list, cover its requested add/edit/remove and item operations within this action budget. Search results alone do not imply CRUD, and local removal never grants external deletion permissions. Money coming back to the user is RECORDING a repayment (标记已还 / Mark repaid) — never word it as "request" unless the need is explicitly about sending payment requests. Set "perItem": true on at most THREE distinct actions that operate on a single listed object (mark ONE task done, remove ONE entry, record ONE person\'s repayment) when the lifecycle involves acting on individual items — that action gets a button on each list row.',
       'ACTION AFFORDANCES: derive only operations required by the original need. When that need requires both new objects and changing existing values, make the existing-object update explicit in an action label and description, or clearly label a shared create/update action and describe its target-selection semantics. Never assume Add silently updates an existing object. Monitoring/checking values does not save a new target. A conditional later operation needs its own clear existing action and target identity; do not invent extra functionality or broaden service permissions. The actual inputs and selected row must express new values, not only display old ones.',
+      persistedDomainPolicy,
+      'persistedDomainFields: REQUIRED array (empty only if the original need requires no separate stored domain state), at most 12 {label,type,options?} declarations. They describe action-derived or remembered business state, never extra composer inputs. No name, required, default or hiddenInForm keys. The host assigns exact field names. Use the same type/closed-option rules as slots; do not duplicate a slot name or label.',
       'Each slot must be a user-visible instruction slot for a persistent app workflow.',
       'TASK INPUT COVERAGE: derive slots from the user operations before preferences. For each requested create/add/edit operation, include how the user identifies the object and supplies each explicitly user-controlled business value (including values set separately for each object). Existing listed-row identity may supply the target of an item action, but never a new value the user must enter. A global default or rule cannot replace a per-object value. Do not infer that saved/existing items make their editable values unnecessary.',
       'Allocate the 1-6 slots to core task inputs first; remove optional settings to make room. Monitoring, discovery and editing are different operations: settings for when/how to check do not provide a way to add or change an object. Cover the requested lifecycle with reachable inputs and actions, including an empty-list entry path where the user must create or add items. Do not turn every app into a generic Request field.',
@@ -1076,6 +1081,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
         slots: [
           { label: 'string', type: 'string|text|select|boolean|date|number', required: 'boolean', placeholder: 'optional string', helpText: 'optional string', options: 'required non-empty [{label, value}] when type is select, omit otherwise' },
         ],
+        persistedDomainFields: [{label:'string',type:'string|text|select|boolean|date|number',options:'only for select; actual original-need closed values'}],
         actions: [{ label: 'string', description: 'string', perItem: 'optional boolean — true for at most three distinct actions operating on one listed item', consumedSlotIndices:'required explicit zero-based slot-index array for every perItem action, [] for identity-only; include optional editable values the action can change' }],
         services: ['exact name from availableServices'],
         primaryMembership:'app_local|service_collection|discovery|none — required primary collection membership source from original need',
@@ -1098,6 +1104,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
     }
   }
   const {slots:normalized,actions}=normalizeBusinessControls(response,prompt,subject,hintLabels);
+  const persistedDomainFields=normalizePersistedDomainFields(response.persistedDomainFields,normalized);
   const accent = String(response.accent ?? '').trim().toLowerCase();
   if (!/^#[0-9a-f]{6}$/.test(accent)) throw new Error(`Business Slot Agent returned invalid accent: ${accent || '(empty)'}`);
   // 域选择是 agent 决策(按需求语义),严格校验:未知服务名直接失败,无关键词兜底。
@@ -1119,6 +1126,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
   };
   return {
     slots: normalized,
+    persistedDomainFields,
     appName: compactLabel(requiredText(response.appName, 'Business Slot Agent missing appName', 24), 14),
     tagline: compactText(requiredText(response.tagline, 'Business Slot Agent missing tagline', 160), 60),
     accent,
@@ -1166,10 +1174,23 @@ function normalizeBusinessControls(response:any,prompt:string,subject:string,hin
   return {slots:normalized,actions};
 }
 
+function normalizePersistedDomainFields(raw:unknown,inputs:BusinessSlotSpec[]):BusinessSlotSpec[]{
+ if(!Array.isArray(raw)||raw.length>12)throw Error('Design requires explicit persistedDomainFields array of at most 12 fields');
+ const fields=raw.map((value:any,index)=>{
+  if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).some(key=>!['label','type','options'].includes(key)))throw Error('Invalid persisted domain field declaration');
+  const label=compactLabel(requiredText(value.label,'Persisted domain field missing label',24),16);
+  if(isGenericVisibleFieldLabel(label)||isInternalWorkflowFieldName(label))throw Error('Persisted domain state cannot use workflow field labels');
+  if(value.type!=='select'&&value.options!==undefined)throw Error('Only persisted select fields may declare options');
+  if(!['string','text','select','boolean','date','number'].includes(value.type))throw Error('Invalid persisted domain field type');
+  return {name:fieldNameFromLabel(label,index).replace(/^slot_(\d+)$/,'domain_$1'),label,type:value.type,...(value.type==='select'?{options:sanitizeSlotOptions(value.options,label)}:{})} as BusinessSlotSpec;
+ });
+ domainFieldUnion(inputs,fields);return fields;
+}
+
 export async function refineBusinessFieldsWithSchemas(input:{prompt:string;subject:string;design:Awaited<ReturnType<typeof makeBusinessFields>>;capabilities:AppWorldToolCapability[];llm?:LlmRuntimeConfig}) {
   if (!input.design.services.length) return input.design;
   const catalog=schemaDesignCatalog(input.capabilities,input.design.services);
-  const request=JSON.stringify({originalAppNeed:input.prompt,lockedAppName:input.design.appName,lockedServices:input.design.services,lockedPrimaryMembership:input.design.primaryMembership,currentDesign:refinementCurrentDesign(input.design),selectedPublicCapabilities:catalog,hostOfferedAppState:{scope:'authenticated-current-owner-app',source:'app-state',declaredFields:appRecordFields(input.design.slots),capabilities:appStateCapabilitySchemas(appRecordFields(input.design.slots),['storage.app','app_state.write']),truthBoundary:'Only declared app-local user preferences/targets; never evidence that an external object changed. Refined declared fields receive the same existing scoped storage contract. No records, owner identifiers or values are supplied.'}});
+  const request=JSON.stringify({originalAppNeed:input.prompt,lockedAppName:input.design.appName,lockedServices:input.design.services,lockedPrimaryMembership:input.design.primaryMembership,currentDesign:refinementCurrentDesign(input.design),selectedPublicCapabilities:catalog,hostOfferedAppState:{scope:'authenticated-current-owner-app',source:'app-state',declaredFields:appRecordFields(domainFieldUnion(input.design.slots,input.design.persistedDomainFields)),capabilities:appStateCapabilitySchemas(appRecordFields(domainFieldUnion(input.design.slots,input.design.persistedDomainFields)),['storage.app','app_state.write']),truthBoundary:'Only declared app-local user inputs and persistent domain state; never evidence that an external object changed. Refined declared fields receive the same existing scoped storage contract. No records, owner identifiers or values are supplied.'}});
   if(Buffer.byteLength(request)>220000)throw new Error('Schema design request exceeds byte bound');
   const system=[
       'You refine a Native application design before UI construction. This is a pure design decision: never execute tools or business operations.',
@@ -1177,7 +1198,9 @@ export async function refineBusinessFieldsWithSchemas(input:{prompt:string;subje
       'Keep the original application purpose, language and selected services. Refine only user-facing slots and existing lifecycle action descriptions as needed to express natural, task-relevant editable values supported by those real request schemas. Optional API inputs may still be important editable app controls; API defaults do not make them uneditable. Public optional user preferences directly relevant to operations already implied by the original need belong to that same application control space, not a new business lifecycle. Within the six-slot bound, audit these real parameters rather than permanently omitting their controls because a service provides defaults. Preserve every explicitly user-controlled operation and core value in the original need; within the existing input bound, remove irrelevant optional settings rather than core task inputs. Do not expose every API field: exclude internal identifiers, credentials, execution metadata and irrelevant settings. Do not invent future user values or broaden the app lifecycle or authorization.',
       'Audit the stored-value lifecycle as well as external request schemas: when the original need implies setting or editing per-item user-controlled preferences or targets, provide an explicit entity-bound update affordance consuming its declared new-value fields. Do not assume Add silently updates an existing item. The host-offered app-state read/list/upsert contract persists only declared owner/app-local values; it is not an external service capability, payment, purchase, message or other external success. Do not request new permissions. Keep this within the same 1–4 actions and at most three per-item actions; do not add operations absent from the original need.',
       'Choose select only for a closed set explicitly given in the original need or an actual enum in the supplied selected public API schemas. Preserve real enum values byte-for-byte as strings, including case, whitespace, underscores and non-ASCII text; labels may be localized but must not change identifiers. Open service catalogs and search results require a string/text search or selection-description slot, not model-invented options. Do not assume an API string is an enum or add arbitrary subjective categories. Keep exact values within the existing 40-character bound; reject rather than truncate. A model assertion of provenance is not host-verified membership. Do not silently change an already generated control outside this model design decision.',
-      'Return ONLY {slots:[{label,type,required,placeholder?,helpText?,options?}],actions:[{label,description,perItem?,consumedSlotIndices?}]}. No other top-level or nested keys. There must be 1–6 slots and 1–4 actions, at most three distinct perItem actions. Every slot type must be string|text|select|boolean|date|number and required must be a boolean. required means globally mandatory in the shared form for every action: values used only for a particular per-item edit must not block unrelated primary operations. Audit optional public user preferences against the original app purpose, not hypothetical future requests; optional preferences stay optional. A select requires nonempty options [{label,value}].',
+      persistedDomainPolicy,
+      'Also return REQUIRED persistedDomainFields array of 0-12 {label,type,options?} for original-need action-derived or remembered business state. These are not input slots; never declare required/hiddenInForm/default/name. Do not duplicate a slot. Preserve or refine the full declared persistent lifecycle without inventing values.',
+      'Return ONLY {persistedDomainFields:[{label,type,options?}],slots:[{label,type,required,placeholder?,helpText?,options?}],actions:[{label,description,perItem?,consumedSlotIndices?}]}. No other top-level or nested keys. There must be 1–6 slots and 1–4 actions, at most three distinct perItem actions. Every slot type must be string|text|select|boolean|date|number and required must be a boolean. required means globally mandatory in the shared form for every action: values used only for a particular per-item edit must not block unrelated primary operations. Audit optional public user preferences against the original app purpose, not hypothetical future requests; optional preferences stay optional. A select requires nonempty options [{label,value}].',
       'currentDesign already uses this same legal output shape; internal app-state schema field names are read-only reference, not extra slot output keys. For a non-item action (perItem false or omitted), completely OMIT consumedSlotIndices, even []; it is forbidden there. Only perItem true actions must explicitly give consumedSlotIndices: zero-based positions in YOUR refined slots, including optional editable new values it can consume; [] is identity-only. Do not bind unrelated stale fields. Preserve meaningful actions and exact row identity; do not invent targetless item actions. Host validates and normalizes the result; invalid output will fail design, not use a local substitute.',
     ].join('\n');
   // Both pure design calls share the original single-call timeout, including
@@ -1191,7 +1214,7 @@ export async function refineBusinessFieldsWithSchemas(input:{prompt:string;subje
       try{
         validateSchemaDesignRefinement(raw);
         const controls=normalizeBusinessControls(raw,input.prompt,input.subject,[]);
-        return {...input.design,...controls};
+        return {...input.design,...controls,persistedDomainFields:normalizePersistedDomainFields(raw.persistedDomainFields,controls.slots)};
       }catch(error){
         if(attempt!==0)throw error;
         remainingActionMs();
@@ -1535,12 +1558,13 @@ function sanitizeDataModels(value: unknown, request: OrchestratorAgentRequest): 
   const agentState = models.find((model) => model.id === 'agent_state' && model.dataSource === request.collection);
   if (!agentState) throw new Error(`orchestrator dataModels must include agent_state backed by ${request.collection}`);
   const fieldNames = new Set(agentState.fields.map((field) => field.name));
-  const missingFields = request.interaction.fields
+  const missingFields = [...request.interaction.fields,...(request.interaction.persistedDomainFields??[])]
     .map((field) => field.name)
     .filter((name) => !fieldNames.has(name));
   if (missingFields.length) {
     throw new Error(`orchestrator agent_state missing generated business fields: ${missingFields.join(', ')}`);
   }
+  for(const declared of domainFieldUnion(request.interaction.businessFields,request.interaction.persistedDomainFields)){const actual=agentState.fields.find(field=>field.name===declared.name);if(!actual||actual.type!==declared.type||JSON.stringify(actual.options??[])!==JSON.stringify(declared.options??[]))throw Error('Orchestrator changed declared domain field schema: '+declared.name);}
   return models;
 }
 
@@ -1943,7 +1967,7 @@ async function openAIOrchestratorProvider(request: OrchestratorAgentRequest): Pr
     dataSource: request.collection,
     scope: 'app',
     storage: 'sqlite-json',
-    fields: request.interaction.fields.map((field) => ({
+    fields: [...request.interaction.fields,...(request.interaction.persistedDomainFields??[])].map((field) => ({
       name: field.name,
       label: field.label,
       type: field.type,
@@ -2019,10 +2043,11 @@ async function openAIOrchestratorProvider(request: OrchestratorAgentRequest): Pr
           minimumValidAgents: requiredAgentSkeleton(model),
 	          requestedToolCapabilities: request.toolCapabilities,
           generatedInteractionFields: request.interaction.fields,
+          persistedDomainFields:request.interaction.persistedDomainFields??[],
 	          allowedSchedulerClasses: ['latency_first', 'balanced', 'reasoning'],
 	          routeContracts,
 	          minimumValidRoutes: routeSkeleton,
-	          dataModelRule: `Include an agent_state model backed by data source ${request.collection}. The model object must include id, displayName, primaryKey, dataSource, scope, storage, and fields. Use id "agent_state", displayName "Agent State", primaryKey "id", dataSource "${request.collection}", scope "app", and storage "sqlite-json". fields must copy every generatedInteractionFields item by name, label, type, required, hiddenInForm, and options. Every generatedInteractionFields item of type "select" already carries a non-empty options array: copy it verbatim, never drop or rewrite it. Do not rename prompt/context/state/nextStep/result, but keep them hidden; business fields must remain visible semantic instruction slots. If any field uses type "select", it must include a non-empty options array of {label, value} objects. Use only field types string, text, select, boolean, date, or number.`,
+	          dataModelRule: `Include an agent_state model backed by data source ${request.collection}. The model object must include id, displayName, primaryKey, dataSource, scope, storage, and fields. Use id "agent_state", displayName "Agent State", primaryKey "id", dataSource "${request.collection}", scope "app", and storage "sqlite-json". fields must copy every generatedInteractionFields item and persistedDomainFields item by name, label, type, required, hiddenInForm, and options. Every generatedInteractionFields item of type "select" already carries a non-empty options array: copy it verbatim, never drop or rewrite it. Do not rename prompt/context/state/nextStep/result, but keep them hidden; business input fields remain visible semantic instruction slots; persistedDomainFields are declared stored business state only and must not become form inputs. Domain state is distinct from hidden workflow state. If any field uses type "select", it must include a non-empty options array of {label, value} objects. Use only field types string, text, select, boolean, date, or number.`,
 	          minimumValidDataModels: [dataModelSkeleton],
 	          uiPlanRule: 'uiPlan must include layoutVariant, sections, topSections, and notes. layoutVariant must be one of focus, split, rail, or flow. sections must include at least five objects covering roles identity, result, input, actions, and records. Every section object must include id, role, kind, title, order, and emphasis. role must be one of identity, result, input, actions, detail, records, signals, or views. kind must be one of icon, card, form, grid, data_list, or tabs. topSections must reference emitted section ids.',
           minimumValidUiPlan: {
@@ -2328,6 +2353,7 @@ export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWo
   const allAppWorldCapabilities = appWorld ? await appWorld.getCapabilities() : [];
   const slotDesign = appWorld ? await refineBusinessFieldsWithSchemas({prompt,subject,design:initialSlotDesign,capabilities:allAppWorldCapabilities,llm}) : initialSlotDesign;
   const businessFields = slotDesign.slots;
+  const persistedDomainFields = slotDesign.persistedDomainFields;
   // 名字、一句话简介、品牌色都由 Business Slot Agent 一并设计:
   // 颜色贴合领域(吃饭暖色/音乐紫色),而不是 hash 随机挑。
   const name = slotDesign.appName;
@@ -2384,6 +2410,7 @@ export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWo
     secondaryFieldName,
     fields,
     businessFields,
+    persistedDomainFields,
     fieldGroups: [
       {
         id: 'business_slots',
@@ -2899,7 +2926,7 @@ function makeWorkflow(plan: AgentPlan) {
 
 type A2uiPlan = Pick<AgentPlan, 'name' | 'description' | 'subject' | 'sourcePrompt' | 'signature' | 'collection' | 'result' | 'orchestration'> & {
   functions: Array<Pick<AgentFunction, 'id' | 'label' | 'perItem' | 'consumedSlots'>>;
-  interaction: Pick<InteractionModel, 'historyTitle' | 'inputTitle' | 'inputDescription' | 'businessFields' | 'primaryFieldName' | 'secondaryFieldName'>;
+  interaction: Pick<InteractionModel, 'historyTitle' | 'inputTitle' | 'inputDescription' | 'businessFields' | 'persistedDomainFields' | 'primaryFieldName' | 'secondaryFieldName'>;
   designedOverview?: Array<Record<string, unknown>>;
 };
 
@@ -2937,6 +2964,7 @@ function deriveA2uiPlan(stored: StoredApp): A2uiPlan {
       historyTitle: requiredText(interaction.historyTitle, `app ${stored.appId} missing history title for A2UI`, 80),
       inputTitle: requiredText(interaction.inputTitle, `app ${stored.appId} missing input title for A2UI`, 80),
       inputDescription: requiredText(interaction.inputDescription, `app ${stored.appId} missing input description for A2UI`, 240),
+      persistedDomainFields: interaction.persistedDomainFields,
       businessFields: requiredArray<BusinessSlotSpec>(interaction.businessFields, `app ${stored.appId} missing business fields for A2UI`),
       primaryFieldName: requiredText(interaction.primaryFieldName, `app ${stored.appId} missing primary field for A2UI`, 80),
       secondaryFieldName: requiredText(interaction.secondaryFieldName, `app ${stored.appId} missing secondary field for A2UI`, 80),
@@ -2978,7 +3006,7 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
         // 未带 group 前缀的裸名字:Row 里既要 badge 又要标题时,name 会重复显示分组。
         title: compactText(bareName, 60),
         appRecordId:appRecordIdentity(item.appRecordId),
-        appState: stateDisplayValues(plan.interaction.businessFields, localRecord?.values),
+        appState: stateDisplayValues(domainFieldUnion(plan.interaction.businessFields,plan.interaction.persistedDomainFields), localRecord?.values),
       };
     });
   const entityStats = (Array.isArray(stored.runtimeState.entityStats) ? stored.runtimeState.entityStats as Array<Record<string, unknown>> : [])
@@ -3064,7 +3092,7 @@ function workflowStepView(route: { id: string; entryActionId: string }, index: n
 // 拒因写进 lastDesignRejectReason(同步校验,无竞态):泛化反馈 3 轮收敛不了,
 // 设计器重试环要拿到"哪个组件哪条规则"级别的精确反馈。
 let lastDesignRejectReason = '';
-export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: string; type?: FieldType; required?: boolean; options?: Array<{ label: string; value: string }> }>; actionIds: string[]; rowActionSlots?: Record<string,string[]>; requireWidgets?: boolean }): Array<Record<string, unknown>> | null {
+export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: string; type?: FieldType; required?: boolean; options?: Array<{ label: string; value: string }> }>; persistedDomainFields?: DomainField[]; actionIds: string[]; rowActionSlots?: Record<string,string[]>; requireWidgets?: boolean }): Array<Record<string, unknown>> | null {
   lastDesignRejectReason = '';
   const reject = (why: string) => { if (!lastDesignRejectReason) lastDesignRejectReason = why; return null; };
   if (!Array.isArray(raw) || raw.length < 3 || raw.length > 70) return reject('components must be an array of 3-70 objects');
@@ -3149,7 +3177,7 @@ export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ na
   // Widget 绑定白名单:与 Text 同一条纪律 —— 只能绑真实 grounding 数据或字面文本。
   // 行内(/entities item)作用域额外开放 title/detail/tag,它们都是 makeA2uiState 从
   // grounding 的 name/detail/group 直接投影出来的字段。
-  const itemPaths = new Set(['name', 'title', 'detail', 'tag', ...stateDisplayPaths(opts.slots)]);
+  const itemPaths = new Set(['name', 'title', 'detail', 'tag', ...stateDisplayPaths(domainFieldUnion(opts.slots as DomainField[],opts.persistedDomainFields))]);
   // Collect ids living inside /entities list items — only there may Texts bind name/detail.
   const itemScoped = new Set<string>();
   const collectScope = (id: string) => {
@@ -3878,6 +3906,7 @@ function makeA2uiSurface(plan: A2uiPlan, actionIds: string[], currentState: Retu
     slots: plan.interaction.businessFields.map((field) => ({ name: field.name, type: field.type, options: field.options })),
     actionIds: actionButtons.map((button) => button.actionId),
     // 每个行操作复用 package 中同一份明确输入契约。
+    persistedDomainFields:plan.interaction.persistedDomainFields,
     rowActionSlots:rowActionSlotMap(plan.functions.map(fn=>({actionId:`${fn.id}.run`,perItem:fn.perItem,consumedSlots:fn.consumedSlots})),plan.interaction.businessFields.map(field=>field.name)),
   });
   if (!designed) throw new Error(`app ${plan.name} missing a valid agent-designed surface (no template fallback)`);
@@ -5982,6 +6011,7 @@ export async function runAppWorldGrounding(input: {
         groundingViewPolicy,
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
+        persistedDomainPolicy,
       ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
       `Wired services this turn can write to: ${wiredServices}.`,
       'Turn the submission into an executable goal contract. Respond ONLY with JSON:',
@@ -6089,6 +6119,7 @@ export async function runAppWorldGrounding(input: {
         groundingViewPolicy,
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
+        persistedDomainPolicy,
           ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
           'A user submitted a GUI form. Ground their request in REAL API calls against the available APIs below, then summarize.',
           'Respond ONLY with JSON: {"calls": [{"api": "<apiName>", "args": {...}}, ...]} to make the next API call(s) — BATCH every independent call you can already determine into ONE array (e.g. the create plus one add per song); one call per turn wastes the user\'s time.',
@@ -6200,6 +6231,7 @@ export async function runAppWorldGrounding(input: {
         groundingViewPolicy,
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
+        persistedDomainPolicy,
                 'Check the API operation family AND its arguments against the explicit current user request; the goal may be mistaken: (1) every amount must trace to a submitted value, a value read earlier this turn, or goal.expectedNumbers (respect the scope of expectedNumbers: an event share is not a cumulative balance; a bill split share = total ÷ ALL participants including the payer; the payer is owed, never owing; NEVER a placeholder like 0.01); (2) names/titles the user provided must be used VERBATIM (no renaming, translating, date prefixes, or concatenated form fields); (3) an update must REPLACE the field content, not append, unless the user asked to add; (4) a change aimed at one named object must not touch its siblings; (5) no UI component ids (d_b1, slot_2) inside names or contents.',
                 'DUPLICATE & TURN-SCOPE gate: reject the batch with {"approved": false, "reject": true, "reason": "<why>"} when (a) previousCalls already show a successful create of the same object (same bill/record, matching amounts or title) and the batch re-creates it WITHOUT first deleting the stale copy, or (b) the batch DELETES or re-records an object whose id does NOT trace to a create in previousCalls (i.e. it predates this turn) and the user request does not explicitly ask to remove or correct that record, or (c) the batch COMPLETES/closes/checks-off an item whose name is NOT mentioned in the user request or targetEntity — completing unmentioned siblings corrupts per-item state. Also reject when the API family contradicts explicit intent (for example recording an actual payment for a new bill, debt or future payment request), or when fixing the call would require changing the API family or inventing missing business values. Return approved:false, reject:true with the concrete reason so the executor can re-plan; do not disguise an intent error as an argument correction.',
                 'Otherwise respond ONLY with JSON: {"approved": true} only when the API intent and all args are right, or {"approved": false, "correctedCalls": [{"api": "<same api>", "args": {...fixed args...}}, ...], "reason": "<what you fixed>"}. Use correctedCalls only for evidenced argument corrections within an already-correct API family; keep the SAME apis in the SAME order. For a wrong API family return reject:true instead of correctedCalls.',
@@ -6342,6 +6374,7 @@ export async function runAppWorldGrounding(input: {
         groundingViewPolicy,
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
+        persistedDomainPolicy,
         'Decide whether the executed real API calls and the user-visible result fulfill the user request and the goal contract.',
         'Respond ONLY with JSON: {"pass": true|false, "deficiencies": ["<concrete, actionable gap>", ...]}.',
         'Fail when: a requested create/update has no successful write call; a named targetCount is not met by successful write calls; the visible summary or entities echo the request instead of naming real created entities; any requested deliverable lacks actual successful writes and current read-back evidence, whether it belongs in primary rows or in verified summary/stats. Also fail omitted required primary units or rows whose actual object type is incompatible with the declared row operation. Do not require every created supporting object to appear as an actionable row.',
@@ -6480,6 +6513,7 @@ export async function designAppSurface(input: {
   description: string;
   sourcePrompt: string;
   businessFields: Array<{ name: string; label: string; type?: FieldType; required?: boolean; options?: Array<{ label: string; value: string }> }>;
+  persistedDomainFields?: BusinessSlotSpec[];
   actions: Array<{ actionId: string; label: string; perItem?: boolean; consumedSlots?: string[] }>;
   llm?: LlmRuntimeConfig;
   onDesign?: (design: SemanticSurfaceDesign) => void;
@@ -6488,7 +6522,8 @@ export async function designAppSurface(input: {
   const actionIds = input.actions.map(action => action.actionId);
   // Invalid host action contracts fail before spending a model call.
   const rowActionSlots = rowActionSlotMap(input.actions, input.businessFields.map(field => field.name));
-  const persistedStateFields = stateDisplayFields(input.businessFields).map(field => input.businessFields.find(item => item.name === field.name)!);
+  const declaredDomainFields=domainFieldUnion(input.businessFields as DomainField[],input.persistedDomainFields);
+  const persistedStateFields=stateDisplayFields(declaredDomainFields).map(field=>declaredDomainFields.find(value=>value.name===field.name)!);
   const contract = {businessFields: input.businessFields, actions: input.actions, persistedStateFields};
   assertSurfaceContract(contract);
   let feedback = '';
@@ -6514,7 +6549,7 @@ export async function designAppSurface(input: {
     let compiled: ReturnType<typeof compileSemanticSurface>;
     try {
       compiled = compileSemanticSurface(decision, contract);
-      if (!validateDesignedOverview(compiled.components, {slots, actionIds, rowActionSlots, requireWidgets: true})) {
+      if (!validateDesignedOverview(compiled.components, {slots,persistedDomainFields:input.persistedDomainFields, actionIds, rowActionSlots, requireWidgets: true})) {
         throw Error(lastDesignRejectReason || 'Compiled surface failed strict validation');
       }
     } catch (error) {
@@ -6663,6 +6698,7 @@ export async function designAppPreview(input: {
   sourcePrompt: string;
   itemLabel?: string;
   businessFields?: Array<{name: string; type?: FieldType}>;
+  persistedDomainFields?: BusinessSlotSpec[];
   llm?: LlmRuntimeConfig;
 }): Promise<{ components: Array<Record<string, unknown>>; size: { width: number; height: number } }> {
   const contract = [
@@ -6670,7 +6706,7 @@ export async function designAppPreview(input: {
     'Component vocabulary (exact, read-only): Card{child}, Column{children[],align?}, Row{children[],align?}, Text{text: string | {"path": "..."}, variant?: h2|h3|body|caption}, List{children:{componentId:"<item component id>", path:"/entities"}}. No TextField, no Button — tapping the card opens the full app.',
     'Every component object is {"id": "...", "component": "<Kind>", ...} — the kind key is "component", never "type". Strict tree: every component except the root "preview" must be referenced exactly once.',
     'Bindable paths (live data): /entitiesTitle, /entitiesEmptyHint, /draft/result (latest outcome sentence), /draft/state (short status), /draft/stats (one aggregate line). Inside the /entities List item subtree, Texts may bind {"path":"name"} and {"path":"detail"} — entities are the REAL records this app tracks (dishes, songs, product models, contacts...), fetched from real services.',
-    'An entity row may additionally show a Text bound to appState/<declaredField> from persistedStateFields. Only that real entity\'s explicitly associated owner/app SQLite metadata is available; missing/null/unassociated values display Not set. These local preferences/targets never substitute for external service results. No record IDs, credentials, arbitrary nested paths, /appRecords indexing or synthetic rows.',
+    'An entity row may additionally show a Text bound to appState/<declaredField> from persistedStateFields. Only that real entity\'s explicitly associated owner/app SQLite metadata is available; missing/null/unassociated values display Not set. These declared local inputs/domain state never substitute for external service results. No record IDs, credentials, arbitrary nested paths, /appRecords indexing or synthetic rows.',
     'THE REQUIRED SHAPE — follow it exactly, choose only the flavor: root "preview" is a Column whose hero is a List bound to /entities. The List item is a Row of two main Texts (plus an optional declared local metadata Text): first {"path":"name"} (variant body — it renders as the bold row title), then {"path":"detail"} (variant caption — it renders as the small right-aligned meta). After the List you MAY add ONE closing status Text (variant caption) bound to /draft/state, /draft/stats or /draft/result — only if that path carries real extra information for THIS app. Nothing else: no Cards, no headings, no literal data values, no invented numbers, no decorative filler strings.',
     'NEVER include the app name or any literal stat/number — the chrome already shows them, and a literal value would freeze stale data into the card. Every visible string must come from a live binding. Same language as the intention. 2-16 components, root id "preview" (Column).',
     'Also choose the card size: "size": {"width": <px>, "height": <px>} — width 220-260 fits the row list (min 170 enforced); height is a hint only, the card grows to fit ALL content.',
@@ -6689,7 +6725,7 @@ export async function designAppPreview(input: {
           appName: input.name,
           description: input.description,
           intention: input.sourcePrompt,
-          persistedStateFields: stateDisplayFields(input.businessFields || []).map(field => ({name:field.name,type:field.type || 'string',path:`appState/${field.name}`})),
+          persistedStateFields: stateDisplayFields(domainFieldUnion(input.businessFields as DomainField[] || [],input.persistedDomainFields)).map(field => ({name:field.name,type:field.type || 'string',path:`appState/${field.name}`})),
           ...(input.itemLabel ? { entityNoun: input.itemLabel } : {}),
           ...(feedback ? { previousAttemptRejected: feedback } : {}),
         }),
@@ -6699,7 +6735,7 @@ export async function designAppPreview(input: {
       feedback = `The model call itself failed (${compactText(String((error as Error).message), 100)}); produce the JSON again.`;
       continue;
     }
-    const valid = validateDesignedPreview(decision?.components, input.businessFields);
+    const valid = validateDesignedPreview(decision?.components, domainFieldUnion(input.businessFields as DomainField[] || [],input.persistedDomainFields));
     console.warn(`[preview-designer] attempt ${round}: ${Array.isArray(decision?.components) ? decision.components.length : 'no'} components, valid=${Boolean(valid)}${valid ? '' : `, reject: ${compactText(lastPreviewRejectReason, 200)}`}, ${Date.now() - startedAt}ms`);
     if (valid) {
       const rawW = Number((decision?.size as Record<string, unknown> | undefined)?.width);
@@ -6795,6 +6831,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         description: String(plan.description || plan.subject),
         sourcePrompt: nextPrompt,
         businessFields: plan.interaction.businessFields,
+        persistedDomainFields:plan.interaction.persistedDomainFields,
         actions: Object.entries((nextPackage.actions as Record<string, any>).actions).map(([id, action]: [string, any]) => ({ actionId: `actions.${id}`, label: String(action?.label || id), perItem: action?.perItem === true, ...(action?.perItem===true?{consumedSlots:action.consumedSlots}:{}) })),
         llm: input.llm,
       }),
@@ -6804,6 +6841,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         sourcePrompt: nextPrompt,
         itemLabel: plan.itemLabel,
         businessFields: plan.interaction.businessFields,
+        persistedDomainFields:plan.interaction.persistedDomainFields,
         llm: input.llm,
       }),
     );
@@ -7031,6 +7069,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
           description: String(appPackage.manifest.description || plan.subject),
           sourcePrompt: prompt,
           businessFields: plan.interaction.businessFields,
+          persistedDomainFields:plan.interaction.persistedDomainFields,
           actions: Object.entries((appPackage.actions as Record<string, any>).actions).map(([id, action]: [string, any]) => ({ actionId: `actions.${id}`, label: String(action?.label || id), perItem: action?.perItem === true, ...(action?.perItem===true?{consumedSlots:action.consumedSlots}:{}) })),
           llm: input.llm,
         }),
@@ -7040,6 +7079,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
           sourcePrompt: prompt,
           itemLabel: plan.itemLabel,
           businessFields: plan.interaction.businessFields,
+          persistedDomainFields:plan.interaction.persistedDomainFields,
           llm: input.llm,
         }),
       );
@@ -7077,7 +7117,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
           .map((tool) => tool.permission);
         if (readPermissions.length || (stored.owner && Array.isArray(appPackage.manifest.permissions) && appPackage.manifest.permissions.includes('storage.app'))) {
           try {
-            const initialAppState=createInitialAppStateAdapter(db,stored.owner ?? '',stored.appId,appRecordFields(plan.interaction.businessFields ?? []),appPackage.manifest.permissions);
+            const initialAppState=createInitialAppStateAdapter(db,stored.owner ?? '',stored.appId,appRecordFields(domainFieldUnion(plan.interaction.businessFields ?? [],plan.interaction.persistedDomainFields)),appPackage.manifest.permissions);
 
             const initial = await runAppWorldGrounding({
               bridge: appWorldBridge ?? undefined,
@@ -7212,7 +7252,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
           assertRowActionPayload(action, rawPayload, requiredArray<BusinessSlotSpec>((stored.runtimeState.interaction as InteractionModel)?.businessFields, 'perItem action needs declared business fields').map(field => field.name),
             (Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : []).map((row: any) => ({ entityName: String(row.name || '').trim(), entityId: opaqueIdentity(row.id), appRecordId:appRecordIdentity(row.appRecordId) })),
             (stored.appPackage.ui.meta as any)?.a2ui, actionId);
-          if(rawPayload.appRecordId){const row=(stored.runtimeState.entities as any[]).find(row=>appRecordIdentity(row.appRecordId)===rawPayload.appRecordId&&opaqueIdentity(row.id)===rawPayload.entityId&&String(row.name||'').trim()===rawPayload.entityName);assertLocalRowRecordIdentity(db,{owner:stored.owner??'',appId:stored.appId,appRecordId:rawPayload.appRecordId,name:String(row?.name||''),fields:appRecordFields((stored.runtimeState.interaction as InteractionModel).businessFields)});}
+          if(rawPayload.appRecordId){const row=(stored.runtimeState.entities as any[]).find(row=>appRecordIdentity(row.appRecordId)===rawPayload.appRecordId&&opaqueIdentity(row.id)===rawPayload.entityId&&String(row.name||'').trim()===rawPayload.entityName);assertLocalRowRecordIdentity(db,{owner:stored.owner??'',appId:stored.appId,appRecordId:rawPayload.appRecordId,name:String(row?.name||''),fields:appRecordFields(domainFieldUnion((stored.runtimeState.interaction as InteractionModel).businessFields,(stored.runtimeState.interaction as InteractionModel).persistedDomainFields))});}
         } catch (error) {
           // This is a pre-dispatch contract rejection, not an unknown write outcome.
           throw httpError((error as Error).message, 400);
@@ -7267,7 +7307,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         },
       });
       nativeWorkflow.record('turn', 'agents.orchestrator', 'running', { originalRequest: input.eventPayload });
-      const hostActionContract = nativeActionContext({originalAppNeed:String(stored.appPackage.manifest.intent?.sourcePrompt || ''),action:{id:actionId,label:action.label,description:action.description,perItem:action.perItem,consumedSlots:action.consumedSlots},fields:(stored.runtimeState.interaction as InteractionModel)?.businessFields ?? [],eventPayload:input.eventPayload,requestPayload:rawPayload,targetEntity,primaryFieldName:(stored.runtimeState.interaction as InteractionModel)?.primaryFieldName,secondaryFieldName:(stored.runtimeState.interaction as InteractionModel)?.secondaryFieldName,permissions,capabilities:await appWorldBridge?.getCapabilities() ?? []});
+      const hostActionContract = nativeActionContext({originalAppNeed:String(stored.appPackage.manifest.intent?.sourcePrompt || ''),action:{id:actionId,label:action.label,description:action.description,perItem:action.perItem,consumedSlots:action.consumedSlots},fields:(stored.runtimeState.interaction as InteractionModel)?.businessFields ?? [],persistedDomainFields:(stored.runtimeState.interaction as InteractionModel)?.persistedDomainFields,eventPayload:input.eventPayload,requestPayload:rawPayload,targetEntity,primaryFieldName:(stored.runtimeState.interaction as InteractionModel)?.primaryFieldName,secondaryFieldName:(stored.runtimeState.interaction as InteractionModel)?.secondaryFieldName,permissions,capabilities:await appWorldBridge?.getCapabilities() ?? []});
       const workerHandoffs = await nativeWorkflow.plan({
         originalRequest: input.eventPayload, requestPayload: rawPayload, action: { id: actionId, label: action.label, description: action.description },
         appPurpose: stored.appPackage.manifest.intent?.sourcePrompt,
@@ -7297,7 +7337,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       let authoritativeEntities = false;
       const localPermissions=permissions.filter(permission=>permission==='storage.app'||permission==='app_state.write');
       const appState = stored.owner && stored.owner === String(input.user || '').trim()
-        ? createAppStateAdapter(db,stored.owner ?? '',stored.appId,appRecordFields((stored.runtimeState.interaction as InteractionModel | undefined)?.businessFields ?? []),localPermissions) : undefined;
+        ? createAppStateAdapter(db,stored.owner ?? '',stored.appId,appRecordFields(domainFieldUnion((stored.runtimeState.interaction as InteractionModel | undefined)?.businessFields ?? [],(stored.runtimeState.interaction as InteractionModel | undefined)?.persistedDomainFields)),localPermissions) : undefined;
       if ((appWorldBridge || appState) && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off') {
         const appWorldPermissions = permissions.filter((permission) => permission.startsWith('tool.appworld.') && permission !== 'tool.appworld.db.snapshot');
         if (appWorldPermissions.length || appState) {
@@ -7510,7 +7550,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       // 每个用户看到:自己的应用 + 共享应用(owner 为空,含预置 demo 和迁移前的历史应用)。
       const apps = listOwnedApps(db, user).map((stored) => {
         const localPermissions=Object.values(stored.appPackage.actions?.actions ?? {}).flatMap((action:any)=>action.permissions ?? []);
-        const adapter=stored.owner && stored.owner===user ? createAppStateAdapter(db,stored.owner ?? '',stored.appId,appRecordFields((stored.runtimeState.interaction as InteractionModel | undefined)?.businessFields ?? []),localPermissions) : undefined;
+        const adapter=stored.owner && stored.owner===user ? createAppStateAdapter(db,stored.owner ?? '',stored.appId,appRecordFields(domainFieldUnion((stored.runtimeState.interaction as InteractionModel | undefined)?.businessFields ?? [],(stored.runtimeState.interaction as InteractionModel | undefined)?.persistedDomainFields)),localPermissions) : undefined;
         const enriched = enrichAppRecord(hydrateAppState(stored,adapter));
         saveStoredApp(db, options.registryRoot, enriched);
         return enriched;

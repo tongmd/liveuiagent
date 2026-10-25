@@ -48,7 +48,9 @@ function keys(value:any,allowed:string[],where:string){
 // This is only an output-shape gate. Existing Business Slot normalization owns
 // cardinality, labels, options, collisions, required flags and consumed indices.
 export function validateSchemaDesignRefinement(raw:any){
- keys(raw,['slots','actions'],'refinement');
+ keys(raw,['slots','persistedDomainFields','actions'],'refinement');
+ if(!Array.isArray(raw.persistedDomainFields)||raw.persistedDomainFields.length>12)throw Error('Schema design requires explicit persistedDomainFields array of at most 12 fields');
+ for(const field of raw.persistedDomainFields){keys(field,['label','type','options'],'persisted domain field');if(!['string','text','select','boolean','date','number'].includes(field.type))throw Error('Invalid persisted domain field type');if(field.options!==undefined){if(!Array.isArray(field.options))throw Error('Invalid persisted domain options');for(const option of field.options)keys(option,['label','value'],'option');}}
  if(!Array.isArray(raw.slots)||!Array.isArray(raw.actions))throw Error('Schema design requires explicit slots and actions');
  for(const slot of raw.slots){
   keys(slot,['label','type','required','placeholder','helpText','options'],'slot');
@@ -64,7 +66,7 @@ export function validateSchemaDesignRefinement(raw:any){
 
 /** Present the current normalized design in the exact legal refinement shape.
  * Internal names remain only a host lookup for bindings, never output keys. */
-export function refinementCurrentDesign(design:{slots:Array<{name:string}>;actions:Array<{perItem?:boolean;consumedSlots?:string[]}>}) {
+export function refinementCurrentDesign(design:{slots:Array<{name:string}>;persistedDomainFields?:Array<{name:string}>;actions:Array<{perItem?:boolean;consumedSlots?:string[]}>}) {
  const names=design.slots.map(slot=>slot.name);
  if(names.some(name=>typeof name!=='string'||!name.trim())||new Set(names).size!==names.length)throw Error('Invalid or duplicate current design slot names');
  const slots=design.slots.map(rawSlot=>{const slot=rawSlot as Record<string,unknown>;return Object.fromEntries(['label','type','required','placeholder','helpText','options'].filter(key=>slot[key]!==undefined).map(key=>[key,structuredClone(slot[key])]));});
@@ -75,5 +77,6 @@ export function refinementCurrentDesign(design:{slots:Array<{name:string}>;actio
   return {...Object.fromEntries(['label','description','perItem'].filter(key=>action[key]!==undefined).map(key=>[key,structuredClone(action[key])])),
    ...(action.perItem===true?{consumedSlotIndices:requireConsumedSlots(action.consumedSlots,names).map(name=>names.indexOf(name))}:{})};
  });
- const current={slots,actions};validateSchemaDesignRefinement(current);return current;
+ const persistedDomainFields=(design.persistedDomainFields??[]).map(raw=>{const field=raw as Record<string,unknown>;return Object.fromEntries(['label','type','options'].filter(key=>field[key]!==undefined).map(key=>[key,structuredClone(field[key])]));});
+ const current={slots,persistedDomainFields,actions};validateSchemaDesignRefinement(current);return current;
 }
