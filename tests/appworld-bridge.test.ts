@@ -1,3 +1,4 @@
+import {AppWorldRequestNotStartedError} from '../server/appworld-request-error.js';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -64,6 +65,8 @@ async function main() {
     '/dbs/save': JSON.stringify({ message: 'saved' }),
   };
 
+  let replyFailureMode: 'none'|'server'|'unauthenticated' = 'none';
+  let replyEffects = 0;
   const server = createServer((req, res) => {
     const url = new URL(req.url || '/', apiBase);
     const bodyChunks: Buffer[] = [];
@@ -85,6 +88,9 @@ async function main() {
       }
       if (req.method === 'POST' && key === '/gmail/gmail/email_threads/8/emails/9/reply') {
         requests.push({url:url.toString(),body:Buffer.concat(bodyChunks).toString('utf8')});
+        if (replyFailureMode === 'unauthenticated') { replyFailureMode = 'none'; res.writeHead(401, {'content-type':'application/json'}); res.end(JSON.stringify({message:'authentication required'})); return; }
+        replyEffects++;
+        if (replyFailureMode === 'server') { res.writeHead(503, {'content-type':'application/json'}); res.end(JSON.stringify({message:'token expired after reply side effect'})); return; }
         res.writeHead(200, {'content-type':'application/json'}); res.end('{}'); return;
       }
       if (req.method === 'PATCH' && key === '/simple_note/notes/7') {
@@ -183,12 +189,30 @@ async function main() {
     assert.deepEqual(new Set(reply.requiredParams), new Set(['body','email_thread_id','email_id']));
     assert(appWorldCatalogLine(reply).includes('email_addresses:'));
     assert(appWorldCatalogLine(reply).includes('otherwise, to the sender'));
-    await assert.rejects(bridge!.callTool(reply.id, {email_thread_id:8,email_id:9}), /Missing AppWorld argument/);
+    const beforeInvalidReply = requests.length;
+    await assert.rejects(bridge!.callTool(reply.id, {email_thread_id:8,email_id:9}), (error: unknown) => {
+      assert(error instanceof AppWorldRequestNotStartedError);
+      assert.match(error.message, /Missing AppWorld argument/);
+      assert(error.cause instanceof Error);
+      assert.equal(error.message, error.cause.message, 'keep the original local rejection and cause');
+      return true;
+    });
+    assert.equal(requests.length, beforeInvalidReply, 'typed no-request proof never dispatched a business HTTP request');
     await bridge!.callTool(reply.id, {email_thread_id:8,email_id:9,body:'Reply text',email_addresses:['recipient@example.test']});
     assert.deepEqual(JSON.parse(requests.at(-1)!.body), {body:'Reply text',email_addresses:['recipient@example.test']});
     assert.equal(new URL(requests.at(-1)!.url).search, '');
     assert.equal(authHeaders.at(-1), `Bearer ${secret}`);
     assert(!appWorldCatalogLine(reply).includes(secret));
+    const beforeFailedReply = requests.length;
+    replyFailureMode = 'server';
+    await assert.rejects(bridge!.callTool(reply.id, {email_thread_id:8,email_id:9,body:'uncertain reply',email_addresses:['recipient@example.test']}), /503/);
+    assert.equal(requests.length, beforeFailedReply + 1, 'a reply failure containing auth words is never replayed inside the bridge');
+    replyFailureMode = 'none';
+    const beforeUnauthenticatedReply = requests.length, beforeEffects = replyEffects;
+    replyFailureMode = 'unauthenticated';
+    await bridge!.callTool(reply.id, {email_thread_id:8,email_id:9,body:'valid after auth refresh',email_addresses:['recipient@example.test']});
+    assert.equal(requests.length, beforeUnauthenticatedReply + 2, 'actual HTTP401 can refresh once');
+    assert.equal(replyEffects, beforeEffects + 1, 'the unauthenticated rejection had no send effect');
     assert.throws(() => resolveApiSchema({$ref:'#/components/schemas/missing'}, {}), /Missing/);
     assert.throws(() => resolveApiSchema({$ref:'https://example.test/schema'}, {}), /Unsupported/);
     assert.throws(() => resolveApiSchema({$ref:'#/self'}, {self:{$ref:'#/self'}}), /Unsupported/);

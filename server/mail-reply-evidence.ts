@@ -1,3 +1,4 @@
+import { AppWorldRequestNotStartedError } from './appworld-request-error.js';
 import type { AppWorldCallResult, AppWorldToolCapability } from './appworld-bridge.js';
 
 type Mail = { id: string; sender: string; recipients: string[] };
@@ -20,6 +21,7 @@ export class MailReplyEvidence {
   private reads = new Map<string, {mail: Mail; threadId?: string; call: number}>();
   private replies: PendingReply[] = [];
   private blocked = new Map<string,string>();
+  private uncertain = new Map<string,{recipients:string[]; reason:string}>();
   private reject(source: string, reason: string): never { this.blocked.set(source, reason); throw new Error(reason); }
   constructor(private readonly identityEmail: string) {}
   before(tool: AppWorldToolCapability, args: Record<string, unknown>): string[] | null {
@@ -29,7 +31,7 @@ export class MailReplyEvidence {
     if (!self || !source || !id(args.email_thread_id) || (source.threadId && source.threadId !== id(args.email_thread_id))) {
       this.reject(id(args.email_id), 'not_verified: read the exact source email in this thread during this turn before replying; authenticated identity and actual sender/recipients are required');
     }
-    if (this.replies.some(r => r.error || r.sourceId === source.mail.id && !this.isVerified(r))) {
+    if (this.uncertain.has(source.mail.id) || this.replies.some(r => r.error || r.sourceId === source.mail.id && !this.isVerified(r))) {
       this.reject(id(args.email_id), 'not_verified: a reply already executed without verified delivery; read its sent_email_id to verify recipients, do not resend');
     }
     const explicit = Object.hasOwn(args, 'email_addresses') && args.email_addresses !== null && args.email_addresses !== undefined;
@@ -42,6 +44,14 @@ export class MailReplyEvidence {
     // Explicit self-address remains valid. Do not infer self permission with a
     // broad keyword regex or silently rewrite the user's recipient choice.
     return explicit ? [...new Set((args.email_addresses as string[]).map(email))] : [source.mail.sender];
+  }
+  failedAttempt(tool: AppWorldToolCapability, args: Record<string,unknown>, expectedRecipients: string[], error: unknown) {
+    if (!isGmailReply(tool)) return;
+    // Only a typed assertion made by local bridge validation proves the
+    // business HTTP request never started. Status codes and error wording do
+    // not prove a remote non-idempotent operation was rolled back.
+    if (error instanceof AppWorldRequestNotStartedError) return;
+    this.uncertain.set(id(args.email_id), {recipients:expectedRecipients, reason:'not_verified: reply delivery is unknown after a failed API attempt without a sent_email_id; inspect actual messages, do not resend this source email during this turn'});
   }
   observe(result: AppWorldCallResult, call: number, expectedRecipients?: string[] | null) {
     const {tool, request, response} = result;
@@ -68,9 +78,9 @@ export class MailReplyEvidence {
     return !reply.error && reply.sentId && read && read.call > reply.afterCall && read.mail.sender === email(this.identityEmail) && same(read.mail.recipients, reply.recipients);
   }
   deficiencies(): string[] {
-    return [...this.blocked.values(), ...this.replies.filter(r => !this.isVerified(r)).map(r => r.error || `not_verified: read sent email ${r.sentId || '(missing sent_email_id)'} after the reply and verify its actual sender/recipients; do not resend`)];
+    return [...this.blocked.values(), ...[...this.uncertain.values()].map(a=>a.reason), ...this.replies.filter(r => !this.isVerified(r)).map(r => r.error || `not_verified: read sent email ${r.sentId || '(missing sent_email_id)'} after the reply and verify its actual sender/recipients; do not resend`)];
   }
   facts() {
-    return {identityEmail: email(this.identityEmail), sourceEmails: [...this.reads.values()].map(r => ({emailId: r.mail.id, ...(r.threadId ? {threadId: r.threadId} : {}), sender: r.mail.sender, recipients: r.mail.recipients})), executedReplies: this.replies.map(r => ({sourceEmailId:r.sourceId,sentEmailId:r.sentId,expectedRecipients:r.recipients,verified:Boolean(this.isVerified(r)),...(r.error?{error:r.error}:{})}))};
+    return {identityEmail: email(this.identityEmail), uncertainReplies:[...this.uncertain.entries()].map(([sourceEmailId,a])=>({sourceEmailId,expectedRecipients:a.recipients,error:a.reason})), sourceEmails: [...this.reads.values()].map(r => ({emailId: r.mail.id, ...(r.threadId ? {threadId: r.threadId} : {}), sender: r.mail.sender, recipients: r.mail.recipients})), executedReplies: this.replies.map(r => ({sourceEmailId:r.sourceId,sentEmailId:r.sentId,expectedRecipients:r.recipients,verified:Boolean(this.isVerified(r)),...(r.error?{error:r.error}:{})}))};
   }
 }

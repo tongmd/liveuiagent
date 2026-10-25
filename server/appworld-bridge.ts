@@ -1,3 +1,4 @@
+import { AppWorldHttpError, AppWorldRequestNotStartedError } from './appworld-request-error.js';
 import { resolveApiSchema, validateApiValue } from './appworld-schema.js';
 import { remainingActionMs, withoutActionDeadline, actionDeadlineAt, actionDeadlineError } from './action-deadline.js';
 import fs from 'node:fs';
@@ -126,11 +127,11 @@ async function fetchJson(url: string, options: RequestInit & { label: string; ti
     });
     const text = await response.text();
     remainingActionMs();
-    if (!response.ok) throw new Error(`${options.label} failed ${response.status}: ${text.slice(0, 400)}`);
+    if (!response.ok) throw new AppWorldHttpError(response.status, `${options.label} failed ${response.status}: ${text.slice(0, 400)}`);
     return text ? JSON.parse(text) : null;
   } catch (error) {
     if (actionDeadlineAt() !== undefined && Date.now() >= actionDeadlineAt()!) throw actionDeadlineError();
-    if ((error as Error).name === 'AbortError') throw new Error(`${options.label} timed out after ${options.timeoutMs}ms`);
+    if ((error as Error).name === 'AbortError') throw new Error(`${options.label} timed out after ${options.timeoutMs}ms`, {cause:error});
     throw error;
   } finally {
     clearTimeout(timeout);
@@ -548,12 +549,14 @@ export function createAppWorldBridge(projectRoot: string): AppWorldBridge | null
       const snapshot = await writeSnapshot('manual');
       return { tool, request: args, response: snapshot, dbChanges: null };
     }
-    if (tool.inputSchema) validateApiValue(args, tool.inputSchema as Record<string, any>, tool.apiName);
+    try {
+      if (tool.inputSchema) validateApiValue(args, tool.inputSchema as Record<string, any>, tool.apiName);
+    } catch (error) { throw new AppWorldRequestNotStartedError(error); }
     // Final enforcement for every execution path, including explicit MCP
     // calls. Catalog/schema discovery and evaluator snapshots remain usable;
     // fail before auth bootstrap can read mail or write account records.
     if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') {
-      throw new Error(`AppWorld business tool disabled by LIVEUIAGENT_APPWORLD_GROUNDING=off: ${id}`);
+      throw new AppWorldRequestNotStartedError(new Error(`AppWorld business tool disabled by LIVEUIAGENT_APPWORLD_GROUNDING=off: ${id}`));
     }
     // Session bootstrap (signup/verify/login) writes to the users table; run it
     // BEFORE the before-snapshot so those rows never land inside the scoring
@@ -563,7 +566,10 @@ export function createAppWorldBridge(projectRoot: string): AppWorldBridge | null
     const before = await writeSnapshot(`before-${tool.appName}-${tool.apiName}`);
     // AppWorld mounts each app's OpenAPI paths under /{appName}; the per-app
     // openapi.json documents paths without that prefix.
-    const { url, usedKeys } = buildRequestUrl(config.apiBase, `/${tool.appName}${tool.path}`, args);
+    let preparedUrl: ReturnType<typeof buildRequestUrl>;
+    try { preparedUrl = buildRequestUrl(config.apiBase, `/${tool.appName}${tool.path}`, args); }
+    catch (error) { throw new AppWorldRequestNotStartedError(error); }
+    const { url, usedKeys } = preparedUrl;
     const queryKeys = Object.keys(args).filter(key => tool.parameterLocations?.[key] === 'query');
     for (const key of queryKeys) {
       const value = args[key];
@@ -588,8 +594,10 @@ export function createAppWorldBridge(projectRoot: string): AppWorldBridge | null
     try {
       response = await callOnce();
     } catch (error) {
-      // A cached session can go stale if the world was reset under us; drop it and retry once.
-      if (tool.requiresAuth && /\b401\b|not authorized|token is missing|expired/i.test((error as Error).message)) {
+      // Only the actual HTTP unauthenticated rejection is eligible for one
+      // refresh. A remote JSON field or "expired" in a 500 error cannot
+      // authorize replay of a non-idempotent operation.
+      if (tool.requiresAuth && error instanceof AppWorldHttpError && error.status === 401) {
         sessionTokens.delete(tool.appName);
         response = await callOnce();
       } else {

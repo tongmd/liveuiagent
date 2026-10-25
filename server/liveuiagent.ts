@@ -6032,9 +6032,12 @@ export async function runAppWorldGrounding(input: {
           historyLog.push({ api: apiName, ok: false, error: 'unknown api name' });
           continue;
         }
+        let replyRecipients: string[] | null = null;
+        let bridgeAttempted = false;
         try {
           input.llm?.onProgress?.(`Calling API: ${capability.apiName}`);
-          const replyRecipients = mailEvidence.before(capability, args);
+          replyRecipients = mailEvidence.before(capability, args);
+          bridgeAttempted = true;
           const result = await input.bridge.callTool(capability.id, args);
           calls.push(result);
           mailEvidence.observe(result, calls.length, replyRecipients);
@@ -6042,6 +6045,7 @@ export async function runAppWorldGrounding(input: {
           else lastWriteAt = calls.length;
           historyLog.push({ api: capability.apiName, ok: true, response: compactText(JSON.stringify(result.response ?? ''), 400) });
         } catch (error) {
+          if (bridgeAttempted && replyRecipients) mailEvidence.failedAttempt(capability, args, replyRecipients, error);
           historyLog.push({ api: capability.apiName, ok: false, error: compactText((error as Error).message, 240) });
         }
       }
