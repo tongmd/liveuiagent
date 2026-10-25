@@ -32,8 +32,9 @@ export function hostCommandComponents(): Record<string,any>[] {
  const d=hostCommandDescriptor();
  return [
   {id:d.containerId,component:'Column',children:[d.inputId,d.buttonId],align:'stretch'},
-  {id:d.inputId,component:'TextField',label:'Ask this app',value:{path:d.inputPath},variant:'long'},
-  {id:d.buttonId,component:'Button',label:'Execute',action:{event:{name:d.actionId,context:{command:{path:d.inputPath}}}}},
+  {id:d.inputId,component:'TextField',label:'Ask this app',value:{path:d.inputPath},variant:'longText'},
+  {id:PREFIX+'execute_label',component:'Text',text:'Execute'},
+  {id:d.buttonId,component:'Button',child:PREFIX+'execute_label',action:{event:{name:d.actionId,context:{command:{path:d.inputPath}}}}},
  ];
 }
 function assertNoReserved(value:unknown):void {
