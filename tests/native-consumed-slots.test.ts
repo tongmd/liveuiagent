@@ -55,7 +55,7 @@ test('real runtime owner/app route rejects forged row payload before model, tool
 
 test('designer rejects a missing action contract before any model call; identity-only surfaces cannot gain a targetless composer',async()=>{
  let calls=0;await assert.rejects(designAppSurface({name:'Entries',description:'Edit entries',sourcePrompt:'Edit an entry',businessFields:fields,actions:[{actionId:'actions.edit',label:'Update',perItem:true}],llm:{model:'fixture',chatCompletion:async()=>{calls++;throw Error('unreachable');}}}),/explicit array/);assert.equal(calls,0);
- const nodes=components();nodes[0].children=nodes[0].children.filter((id:string)=>id!=='refresh');assert.equal(validateDesignedOverview(nodes,{...opts,actionIds:['actions.edit','actions.done']}),null,'only-perItem design remains unsupported rather than inventing a global action');
+ const nodes=components().filter(node=>!['refresh','refreshLabel'].includes(node.id));nodes[0].children=nodes[0].children.filter((id:string)=>id!=='refresh');assert.ok(validateDesignedOverview(nodes,{...opts,actionIds:['actions.edit','actions.done']}),'legitimate only-perItem app has exact row entries and no invented global action');
 });
 
 test('explicit maintained-list lifecycle supports Add plus three exact row actions without expanding the four-action budget',async()=>{

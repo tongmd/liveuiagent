@@ -1,3 +1,4 @@
+import {semanticDesign} from './fixtures/native-semantic-design.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -25,9 +26,9 @@ test('overview and preview designers accept the same declared row metadata but r
  for(const binding of ['appState/target','appState/api_token','appState/undeclared','appState/target/owner','/appRecords/0/values/target','/owner']){
   for(const mode of ['overview','preview']){
    let calls=0;let contract:any;
-   const input:any={name:'Parts',description:'Parts with a local target cost',sourcePrompt:'Track parts and local targets',businessFields:fields,actions:[{actionId:'save.run',label:'Save target'}],llm:{model:'fixture-only',chatCompletion:async(req:any)=>{calls++;contract=JSON.parse(req.messages[1].content);return reply(mode==='overview'?{components:overview(calls===1?binding:'appState/target')}:{components:preview(calls===1?binding:'appState/target'),size:{width:230,height:200}});}}};
+   const input:any={name:'Parts',description:'Parts with a local target cost',sourcePrompt:'Track parts and local targets',businessFields:fields,actions:[{actionId:'save.run',label:'Save target'}],llm:{model:'fixture-only',chatCompletion:async(req:any)=>{calls++;contract=JSON.parse(req.messages[1].content);return reply(mode==='overview'?semanticDesign([calls===1?binding.replace(/^appState\//,''):'target']):{components:preview(calls===1?binding:'appState/target'),size:{width:230,height:200}});}}};
    if(mode==='overview')await designAppSurface(input);else await designAppPreview(input);
-   assert.equal(calls,binding==='appState/target'?1:2);assert.ok(contract.persistedStateFields.some((f:any)=>f.path==='appState/target'));assert.ok(!contract.persistedStateFields.some((f:any)=>f.name==='api_token'));
+   assert.equal(calls,binding==='appState/target'?1:2);assert.ok(contract.persistedStateFields.some((f:any)=>mode==='overview'?f.name==='target':f.path==='appState/target'));assert.ok(!contract.persistedStateFields.some((f:any)=>f.name==='api_token'));
   }
  }
 });

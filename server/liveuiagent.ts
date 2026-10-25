@@ -1,3 +1,4 @@
+import { assertSurfaceContract, compileSemanticSurface, semanticSurfaceDesignPolicy, type SemanticSurfaceDesign } from './native-surface-design.js';
 import {factorNativePlanInput} from './native-plan-factor.js';
 import {parsePrimaryMembership,primaryMembershipPolicy,primaryProjectionDeficiencies,type PrimaryMembership} from './native-primary-projection.js';
 import {normalizeGroundingEntities,hasLocalDeleteReadProof} from './grounding-entities.js';
@@ -3039,7 +3040,7 @@ function workflowStepView(route: { id: string; entryActionId: string }, index: n
 
 // Validate an agent-designed A2UI overview subtree against the strict renderer:
 // known component vocabulary, whitelisted data bindings, real action ids. Returns
-// the sanitized tree (ids prefixed d_ to avoid clashes) or null → template fallback.
+// the sanitized tree (ids prefixed d_ to avoid clashes) or null; generation fails closed.
 // 拒因写进 lastDesignRejectReason(同步校验,无竞态):泛化反馈 3 轮收敛不了,
 // 设计器重试环要拿到"哪个组件哪条规则"级别的精确反馈。
 let lastDesignRejectReason = '';
@@ -3365,6 +3366,7 @@ export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ na
       }
       if(Object.hasOwn(rowActions,actionName))return bad('perItem action requires an entity-bound row Button, not a targetless composer duplicate');
       topLevelButtonCount += 1;
+      if (composerButtonActions.has(actionName)) return bad('two composer Buttons bound to the SAME action');
       composerButtonActions.add(actionName);
       // Context is injected at render time so slot bindings always match the live fields.
       out.push({ id: `d_${id}`, component: 'Button', child: ref(node.child), variant: node.variant === 'primary' ? 'primary' : 'default', action: { event: { name: `actions.${actionName}` } }, checks: [] });
@@ -3384,7 +3386,8 @@ export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ na
   };
   if (!walk('overview')) return reject(lastDesignRejectReason || 'component tree failed to validate from the overview root');
   // 列表条目必须同时展示 name 和 detail,否则真实创建的对象只剩一行裸名字。
-  // composer 至少一个顶层按钮:行内按钮在实体为空时不可达,不能是动作的唯一入口。
+  // Only declared non-item actions need composer entry points. Row-only apps
+  // intentionally have no actionable row when the collection is empty; never invent Add.
   for (const slot of rowContextSlots) if (!boundSlots.has(slot)) return reject(`row action slot "${slot}" needs its editable composer TextField`);
   if (!fieldCount) return reject('missing at least one TextField input');
   if (opts.requireWidgets) {
@@ -3392,7 +3395,7 @@ export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ na
     if (missing.length) return reject(`missing editable composer input(s) for declared business slots: ${missing.join(', ')}; labels or result text do not substitute for inputs`);
   }
   if (opts.requireWidgets) for (const action of actionSet) if (!composerButtonActions.has(action)&&!itemButtonActions.has(action)) return reject(`declared action "${action}" needs a visible composer or entity-bound row Button; an unrelated action does not substitute`);
-  if (!topLevelButtonCount) return reject('missing at least one composer Button OUTSIDE the /entities list (a row button cannot be the only entry point)');
+  if ([...actionSet].some(action => !Object.hasOwn(rowActions, action)) && !topLevelButtonCount) return reject('declared non-perItem actions need a composer Button OUTSIDE the /entities list');
   if (!entityListCount) return reject('missing the List bound to /entities');
   if (!resultLineCount) return reject('missing a Text bound to /draft/result');
   if (!itemNameBinds || !itemDetailBinds) return reject('the /entities item subtree must contain Texts bound to BOTH name and detail');
@@ -6410,7 +6413,7 @@ function designAttempts(): number {
 }
 
 // UI Designer Agent: the surface IS designed by the agent workflow from the
-// intention. No template fallback — an invalid design fails the generation loudly.
+// intention. Semantic design is compiled on every generation; invalid design fails loudly.
 export async function designAppSurface(input: {
   name: string;
   description: string;
@@ -6418,83 +6421,52 @@ export async function designAppSurface(input: {
   businessFields: Array<{ name: string; label: string; type?: FieldType; required?: boolean; options?: Array<{ label: string; value: string }> }>;
   actions: Array<{ actionId: string; label: string; perItem?: boolean; consumedSlots?: string[] }>;
   llm?: LlmRuntimeConfig;
+  onDesign?: (design: SemanticSurfaceDesign) => void;
 }): Promise<Array<Record<string, unknown>>> {
-  const contract = [
-    'You design the user-facing surface of a freshly generated consumer app as an A2UI component tree.',
-    'Component vocabulary (exact): Card{child}, Column{children[],align?}, Row{children[],align?}, Text{text: string | {"path": "..."}, variant?: h2|h3|body|caption}, TextField{label, value:{path:"/draft/slots/<slot>"}, variant: shortText|longText|date|choice|toggle|stepper}, Button{child:"<Text component id>", variant?: primary|default, action:{event:{name:"<actionId>", context?:{"<knownSlot>":{path:"/draft/slots/<knownSlot>"}}}}}, List{children:{componentId:"<item component id>", path:"/entities"}}, StatBlock{label, value, caption?}, StatGrid{path:"/stats"}, Badge{text}, SectionHeading{title, kicker?, meta?}.',
-    'THE WIDGETS — this app must LOOK like an app, not like a form with paragraphs. Use them (a text-only surface is rejected):',
-    'StatBlock{label, value, caption?} — the hero figure of the app, rendered as one big accent-colored value with a small uppercase label above it. Put exactly ONE near the top, and bind it to the app\'s REAL headline aggregate: value MUST be {"path":"/draft/statValue"} with label {"path":"/draft/statLabel"} (the first computed aggregate — a total, a count, a range, a countdown; when no aggregate exists yet it shows the live record count). NEVER bind value to "/draft/state" (a 3-value internal workflow enum — it renders the same for every app and carries no information) and never bind "/draft/stats" (the flattened line StatGrid already renders per cell). Never invent a number as a literal.',
-    'StatGrid{path:"/stats"} — renders the app\'s REAL computed aggregates as a grid of up to 4 label/value cells. It takes no children and no literal content: /stats is the live array the grounding step computed. Include it once when the app tracks aggregates (totals, remaining counts, ranges, countdowns). It renders nothing when there are no aggregates yet, so it is always safe.',
-    'Badge{text} — a small pill for a short status or category. Inside the /entities item subtree bind {"path":"tag"} (the record\'s real group/category) to label each row; outside it may bind {"path":"/draft/state"}. Text longer than a couple of words does not belong in a Badge.',
-    'SectionHeading{title, kicker?, meta?} — replaces a bare h2/caption pair: title is the section name, kicker is a short uppercase eyebrow above it, meta renders as a small live pill on the right. Use it to head the content list (title may bind {"path":"/entitiesTitle"}) and the composer section instead of plain Texts. Do not put the same value in more than one place on the screen: if the StatBlock hero already shows {"path":"/draft/statValue"}, no SectionHeading meta may bind it too — give meta a literal that describes the section, or omit meta entirely.',
-    'Every declared business slot must have exactly one visible, editable composer TextField outside the /entities list, reachable even when no items exist, including optional slots. These slots are the user-facing business inputs, not internal dataSchema identifiers or settings. A label, result sentence, hidden/disabled/read-only control or a row-only control cannot substitute. Optional means the value may stay empty and the user need not fill it; it does not mean its control may be omitted. Never invent an unknown value or turn an optional slot into a required field. Keep the layout compact with rows and ordinary vertical scrolling. Existing row actions supply their selected object identity; do not invent a duplicate identity input or replace task-specific inputs with a generic Request field.',
-    'THE INPUTS — a typed slot must get its real control, never a bare text box. Every slot in the input carries a "component" field naming the exact TextField variant you MUST use for that slot; any other variant is rejected:',
-    'variant "date" — a tap-to-open calendar: the user picks a day off a month grid instead of typing a date.',
-    'variant "choice" — the slot\'s closed choice set rendered as tappable pills. Emit only {id, component, label, value, variant} — the real options come from the business model (the input lists them under "choices" so you can judge how much room the row needs); never write an options array yourself and never invent a choice.',
-    'variant "toggle" — an on/off switch: label on the left, switch on the right; it always takes its own full row.',
-    'variant "stepper" — a numeric value with − and + buttons, so the user nudges the number without typing.',
-    'variants "shortText"/"longText" stay for free-form "string"/"text" slots only.',
-    'Widget bindings obey the SAME whitelist as Text: literal string, or one of /entitiesTitle, /entitiesEmptyHint, /draft/result, /draft/state, /draft/stats, /draft/statLabel, /draft/statValue — plus name, title, detail, tag inside the /entities item subtree. Any other path is rejected. Never put a hard-coded number, price, count, date or percentage in a literal — the only honest numbers come from bindings.',
-    'Every component object is {"id": "...", "component": "<Kind>", ...} — the kind key is "component", never "type". The tree is strict: every component except the root "overview" must be referenced exactly once (a Button\'s child Text must NOT also appear in any children array; no unused components).',
-    'Bindable paths: /entitiesTitle (content-list header), /entitiesEmptyHint (empty-state hint), /draft/result (latest outcome sentence), /draft/state (short workflow status — Badge only, NEVER the StatBlock hero), /draft/statLabel + /draft/statValue (the app\'s first REAL computed aggregate: the StatBlock hero pair), /draft/stats (the aggregate-summary line: cumulative totals / remaining counts / countdowns), /stats (StatGrid only: the REMAINING aggregates after the first — the hero one is not repeated here), /draft/slots/<slot>. Inside the /entities item subtree, Texts and widgets may bind {"path":"name"} (group-prefixed display name), {"path":"title"} (the bare name, use this one when the row also carries a Badge on {"path":"tag"}), {"path":"detail"} and {"path":"tag"} — the item must be a small Card showing BOTH a name/title and detail.',
-    'Inside the /entities item subtree, Text, Badge and widget bindings may also use appState/<declaredField> from the supplied persistedStateFields whitelist. These are owner/app-local SQLite preferences or targets attached to that exact real entity by appRecordId; they are NOT external service results. Use a short literal label next to the bound value. Missing/unassociated/null values display Not set, never invent zero, a date or success. Do not bind record IDs, owner, revision, credentials, arbitrary nested paths or /appRecords indices, and never create a shadow entity list.',
-    'Layout rules: group shortText, date and stepper inputs two per Row so the composer stays compact; longText, choice and toggle inputs each take a full row (pills and switches need the width). Put composer action Buttons together in one Row at the end of the composer.',
-    'Per-entity row button: when an action below is marked perItem: true, the /entities item Card MUST additionally contain a Button (variant default, never primary) bound to THAT action, with its own short child Text label (1-18 chars, e.g. 标记完成) — it acts on the row it sits in. At most THREE row Buttons per item, each bound to a DIFFERENT action; row-only entry points are allowed for per-item actions and always carry selected entity identity; do not add a targetless composer duplicate; only entity-bound row entry points are supported for perItem actions. When no action is perItem, OMIT row buttons entirely.',
-    'Create, update and conditional follow-up affordances must match the supplied action labels and descriptions. Show an editable declared composer field for each new value; a read-only current value beside a row is not an editor. A row action that changes an existing value must pass exactly its declared consumedSlots, including optional editable values, from the composer together with the host-selected row identity. Do not relabel a create-only action as an update or imply that a price/check/read action saves user edits. Keep every supplied action reachable through its legitimate composer or entity-bound row entry; a per-item-only operation must not gain an unsafe targetless composer button. Creation needs a composer entry when the list is empty. Do not invent an action or a service permission to make a missing capability appear supported.',
-    'A row Button that needs a NEW input value (for example a destination or amount) MUST explicitly declare exactly the consumedSlots declared for THAT action, including optional editable values; every binding must use known business slots in action.event.context: {slot_name:{path:"/draft/slots/slot_name"}}. Read that value from the existing composer TextField; do not duplicate inputs inside rows or attach business actions to onchange. Do not pass unrelated or stale fields to actions that only need entity identity (for example mark done). Identity is injected by the host: never declare entityName, entityId, sourceComponentId or arbitrary context keys. Each declared key must equal its exact known slot name and path; no literals, nested objects or other paths.',
-    'Design rules: the root component MUST have id "overview" (a Column). Make it feel like a real consumer app for THIS intention, and it renders in a PHONE-WIDTH column (~390px) — single column, no wide side-by-side layouts. Shape it top to bottom: a StatBlock hero showing the app\'s live state; a StatGrid when the app has real aggregates; a SectionHeading over the content list; the List bound to /entities (each item a small Card with the record title and detail, plus a Badge on {"path":"tag"} when rows carry categories); the /draft/result line; then ONE compact composer section (its own SectionHeading + the TextFields) ending in a Row of composer Buttons for non-item-only actions (first one primary); item-only actions belong to their entity-bound rows. Prefer a widget over a sentence: aggregates belong in StatGrid, status in a Badge, section labels in SectionHeading — plain Texts are for the row title/detail and the /draft/result line. No internal jargon (never: agent, workflow, 记录, 流程, orchestration). Never repeat the app name or its description as captions or section labels — every visible string must add new information. All copy in the same language as the intention. At most 30 components, ids short.',
-    'Every TextField label must be a SPECIFIC human label of 2-18 characters — count them: English labels run long, so prefer compact forms ("Unpaid balance", not "Carry unpaid balance"). Button child Texts are literal 1-18 chars.',
-    'Respond ONLY with JSON: {"components": [ ... ]}',
-  ].join('\n');
-  const slots = input.businessFields.map((field) => ({ name: field.name, type: field.type, required: field.required, options: field.options }));
-  const actionIds = input.actions.map((action) => action.actionId);
-  const rowActionSlots=rowActionSlotMap(input.actions,input.businessFields.map(field=>field.name));
+  const slots = input.businessFields.map(field => ({ name: field.name, type: field.type, required: field.required, options: field.options }));
+  const actionIds = input.actions.map(action => action.actionId);
+  // Invalid host action contracts fail before spending a model call.
+  const rowActionSlots = rowActionSlotMap(input.actions, input.businessFields.map(field => field.name));
+  const persistedStateFields = stateDisplayFields(input.businessFields).map(field => input.businessFields.find(item => item.name === field.name)!);
+  const contract = {businessFields: input.businessFields, actions: input.actions, persistedStateFields};
+  assertSurfaceContract(contract);
   let feedback = '';
   for (let round = 1, maxRounds = designAttempts(); round <= maxRounds; round++) {
     const startedAt = Date.now();
-    let decision: Record<string, any>;
+    let decision: unknown;
     try {
       decision = await openAIChatJson({
-        label: 'UI Designer Agent',
-        llm: input.llm,
-        system: contract,
+        label: 'UI Designer Agent', llm: input.llm, system: semanticSurfaceDesignPolicy,
         user: JSON.stringify({
-          appName: input.name,
-          description: input.description,
-          intention: input.sourcePrompt,
-          persistedStateFields: stateDisplayFields(input.businessFields).map(field => ({name:field.name,type:field.type || 'string',path:`appState/${field.name}`,source:'owner/app SQLite, explicit real entity association only'})),
-          slots: input.businessFields.map((field) => {
-            const type = field.type || 'string';
-            return {
-              slot: field.name,
-              label: field.label,
-              required: Boolean(field.required),
-              type,
-              // 该槽位必须使用的输入 variant 直接算给设计器,省掉它自己做类型映射的出错空间。
-              component: type === 'date' ? 'TextField variant "date"' : type === 'select' ? 'TextField variant "choice"' : type === 'boolean' ? 'TextField variant "toggle"' : type === 'number' ? 'TextField variant "stepper"' : 'TextField variant "shortText" or "longText"',
-              // choice 的选项由校验器从业务模型里填,设计器只需知道有哪些,好安排版面。
-              ...(field.options?.length ? { choices: field.options.map((option) => option.label) } : {}),
-            };
-          }),
+          appName: input.name, description: input.description, intention: input.sourcePrompt,
+          persistedStateFields: persistedStateFields.map(field => ({name: field.name, label: field.label, type: field.type || 'string'})),
+          slots: input.businessFields.map(field => ({slot: field.name, label: field.label, type: field.type || 'string', required: Boolean(field.required), ...(field.options?.length ? {choices: field.options} : {})})),
           actions: input.actions,
-          ...(feedback ? { previousAttemptRejected: feedback } : {}),
+          ...(feedback ? {previousAttemptRejected: feedback} : {}),
         }),
-      }) as Record<string, any>;
+      });
     } catch (error) {
-      // 单次 LLM 调用抖动(空响应/超时)不该杀掉整次生成 —— 计为一次失败尝试重掷。
       console.warn(`[ui-designer] attempt ${round}: llm call failed: ${(error as Error).message}`);
-      feedback = `The model call itself failed (${compactText(String((error as Error).message), 100)}); produce the components JSON again.`;
+      feedback = `The model call itself failed (${compactText(String((error as Error).message), 100)}); produce the semantic design JSON again.`;
       continue;
     }
-    const valid = validateDesignedOverview(decision?.components, { slots, actionIds, rowActionSlots, requireWidgets: true });
-    console.warn(`[ui-designer] attempt ${round}: ${Array.isArray(decision?.components) ? decision.components.length : 'no'} components, valid=${Boolean(valid)}${valid ? '' : `, reject: ${compactText(lastDesignRejectReason, 200)}`}, ${Date.now() - startedAt}ms`);
-    if (!valid && decision?.components) console.warn(`[ui-designer] raw: ${JSON.stringify(decision.components).slice(0, 2000)}`);
-    if (valid) {
-      return decision.components as Array<Record<string, unknown>>; // 存原始树;渲染时再次校验并注入 actionContext
+    let compiled: ReturnType<typeof compileSemanticSurface>;
+    try {
+      compiled = compileSemanticSurface(decision, contract);
+      if (!validateDesignedOverview(compiled.components, {slots, actionIds, rowActionSlots, requireWidgets: true})) {
+        throw Error(lastDesignRejectReason || 'Compiled surface failed strict validation');
+      }
+    } catch (error) {
+      const reason = String((error as Error).message);
+      console.warn(`[ui-designer] attempt ${round}: semantic design rejected: ${compactText(reason, 200)}, ${Date.now() - startedAt}ms`);
+      feedback = `Your semantic design was REJECTED: ${reason}. Return the full strict semantic design JSON. Do not output components, bindings or events.`;
+      continue;
     }
-    feedback = `Your previous component tree was REJECTED: ${lastDesignRejectReason || 'failed strict validation'}. Fix exactly that and re-emit the full components JSON, keeping the vocabulary, binding whitelist and single-reference tree rule (every component except overview referenced exactly once; a Button's child Text must not also appear in any children array).`;
+    console.warn(`[ui-designer] attempt ${round}: semantic design compiled, ${compiled.components.length} components, valid=true, ${Date.now() - startedAt}ms`);
+    input.onDesign?.(compiled.design);
+    return compiled.components;
   }
-  throw httpError(`UI Designer Agent failed to produce a valid surface after ${designAttempts()} attempt(s)`, 502);
+  throw httpError(`UI Designer Agent failed to produce a valid semantic design after ${designAttempts()} attempt(s)`, 502);
 }
 
 // Preview 校验(只读子集,与 validateDesignedOverview 同一族):词汇 Card/Column/Row/
@@ -6757,6 +6729,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
     const [designedOverview, designedPreview] = await independentInferencePair(input.llm,
       () => designAppSurface({
         name: String(nextPackage.manifest.name),
+        onDesign: design => { ((nextPackage.ui as Record<string, any>).meta ||= {}).semanticSurfaceDesign = design; },
         description: String(plan.description || plan.subject),
         sourcePrompt: nextPrompt,
         businessFields: plan.interaction.businessFields,
@@ -6991,6 +6964,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const [designedOverview, designedPreview] = await independentInferencePair(input.llm,
         () => designAppSurface({
           name: String(appPackage.manifest.name),
+          onDesign: design => { ((appPackage.ui as Record<string, any>).meta ||= {}).semanticSurfaceDesign = design; },
           description: String(appPackage.manifest.description || plan.subject),
           sourcePrompt: prompt,
           businessFields: plan.interaction.businessFields,

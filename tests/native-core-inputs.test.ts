@@ -1,10 +1,11 @@
+import {semanticDesign} from './fixtures/native-semantic-design.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {makeBusinessFields,designAppSurface,createLiveUIRuntime} from '../server/liveuiagent.js';
+import {makeBusinessFields,designAppSurface,createLiveUIRuntime,validateDesignedOverview} from '../server/liveuiagent.js';
 
 const fields=[
  {name:'part_name',label:'Part name',type:'string',required:true},
@@ -28,8 +29,8 @@ function components(names=fields.map(f=>f.name),row=false){
  if(row)list.push({id:'rowGo',component:'Button',child:'rowText',action:{event:{name:'remove.run'}}},{id:'rowText',component:'Text',text:'Remove part'});
  return list;
 }
-async function design(raw:any[],allFields=fields,perItem=false,requests:any[]=[]){
- return designAppSurface({name:'Parts',description:'Track each part and its target cost',sourcePrompt:'Save repair parts and set a separate target cost and needed date for each part.',businessFields:allFields,actions:[{actionId:'save.run',label:'Set target'},...(perItem?[{actionId:'remove.run',label:'Remove part',perItem:true,consumedSlots:[]}]:[])],llm:{model:'fixture-only',chatCompletion:async(request:any)=>{requests.push(request);return reply({components:requests.length===1?raw:components(allFields.map(f=>f.name),perItem)});}}});
+async function design(raw:any[] | null,allFields=fields,perItem=false,requests:any[]=[]){
+ return designAppSurface({name:'Parts',description:'Track each part and its target cost',sourcePrompt:'Save repair parts and set a separate target cost and needed date for each part.',businessFields:allFields,actions:[{actionId:'save.run',label:'Set target'},...(perItem?[{actionId:'remove.run',label:'Remove part',perItem:true,consumedSlots:[]}]:[])],llm:{model:'fixture-only',chatCompletion:async(request:any)=>{requests.push(request);return reply(requests.length===1&&raw?{components:raw}:semanticDesign());}}});
 }
 
 test('business planning prioritizes explicit per-object task inputs over optional settings without generic Request',async()=>{
@@ -48,8 +49,8 @@ test('required business inputs cannot be omitted, substituted by text, disabled 
  const textOnly=components(['part_name','needed_date','alert_enabled']);textOnly.push({id:'targetLabel',component:'Text',text:'Target cost'});textOnly[0].children.push('targetLabel');badTrees.push(textOnly);
  for(const property of [{hidden:true},{visible:false},{disabled:true},{readOnly:true},{editable:false}]){const raw=components();Object.assign(raw.find(c=>c.id==='f_target_cost'),property);badTrees.push(raw);}
  const rowOnly=components();rowOnly[0].children=rowOnly[0].children.filter((id:string)=>id!=='f_target_cost');rowOnly.find(c=>c.id==='itemColumn').children.push('f_target_cost');badTrees.push(rowOnly);
- for(const raw of badTrees){const requests:any[]=[];const valid=await design(raw,fields,false,requests);assert.equal(requests.length,2,'invalid tree must enter bounded designer repair instead of shipping');const retry=JSON.parse(requests[1].messages[1].content);assert.match(retry.previousAttemptRejected,/target_cost/);assert.ok(valid.some(c=>c.id==='f_target_cost'&&c.component==='TextField'));const sent=JSON.parse(requests[0].messages[1].content);assert.equal(sent.slots.find((s:any)=>s.slot==='target_cost').required,true);assert.equal(sent.slots.find((s:any)=>s.slot==='alert_enabled').required,false);}
- const requests:any[]=[];await design(components(),fields,false,requests);assert.equal(requests.length,1,'all declared business inputs are editable without adding internal fields');
+ for(const raw of badTrees){assert.equal(validateDesignedOverview(raw,{slots:fields,actionIds:['save.run'],requireWidgets:true}),null);const requests:any[]=[];const valid=await design(raw,fields,false,requests);assert.equal(requests.length,2,'invalid tree must enter bounded designer repair instead of shipping');const retry=JSON.parse(requests[1].messages[1].content);assert.match(retry.previousAttemptRejected,/exactly/);assert.ok(valid.some(c=>c.value?.path==='/draft/slots/target_cost'&&c.component==='TextField'));const sent=JSON.parse(requests[0].messages[1].content);assert.equal(sent.slots.find((s:any)=>s.slot==='target_cost').required,true);assert.equal(sent.slots.find((s:any)=>s.slot==='alert_enabled').required,false);}
+ const requests:any[]=[];await design(null,fields,false,requests);assert.equal(requests.length,1,'all declared business inputs are editable without adding internal fields');
 });
 
 
@@ -57,12 +58,12 @@ test('optional business input omission or noneditable controls enter designer re
  const missing=components(fields.filter(f=>f.name!=='extra_details').map(f=>f.name));
  const bad=[missing];
  for(const property of [{hidden:true},{visible:false},{disabled:true},{readOnly:true},{readonly:true},{editable:false}]){const raw=components();Object.assign(raw.find(c=>c.id==='f_extra_details'),property);bad.push(raw);}
- for(const raw of bad){const requests:any[]=[];const result=await design(raw,fields,false,requests);assert.equal(requests.length,2);const retry=JSON.parse(requests[1].messages[1].content);assert.match(retry.previousAttemptRejected,/extra_details/);assert.ok(result.some(c=>c.id==='f_extra_details'&&c.component==='TextField'));const sent=JSON.parse(requests[0].messages[1].content);assert.equal(sent.slots.find((s:any)=>s.slot==='extra_details').required,false);assert.equal(result.find(c=>c.id==='f_extra_details')?.required,undefined);}
+ for(const raw of bad){assert.equal(validateDesignedOverview(raw,{slots:fields,actionIds:['save.run'],requireWidgets:true}),null);const requests:any[]=[];const result=await design(raw,fields,false,requests);assert.equal(requests.length,2);const retry=JSON.parse(requests[1].messages[1].content);assert.match(retry.previousAttemptRejected,/exactly/);assert.ok(result.some(c=>c.value?.path==='/draft/slots/extra_details'&&c.component==='TextField'));const sent=JSON.parse(requests[0].messages[1].content);assert.equal(sent.slots.find((s:any)=>s.slot==='extra_details').required,false);assert.equal(result.find(c=>c.value?.path==='/draft/slots/extra_details')?.required,undefined);}
 });
 
 test('persisted Native surface exposes editable core bindings and uses row identity without a duplicate identity slot',async t=>{
  const selectedFields=fields.filter(f=>f.name!=='part_name');
- const tree=await design(components(['target_cost','needed_date','alert_enabled','extra_details'],true),selectedFields,true);
+ const tree=await design(null,selectedFields,true);
  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'native-core-inputs-'));const db=new Database(':memory:');t.after(()=>{db.close();fs.rmSync(dir,{recursive:true,force:true});});
  const old=process.env.APPWORLD_ENABLED;process.env.APPWORLD_ENABLED='false';let runtime:any;try{runtime=createLiveUIRuntime(db,{registryRoot:path.join(dir,'apps'),projectRoot:process.cwd()});}finally{if(old===undefined)delete process.env.APPWORLD_ENABLED;else process.env.APPWORLD_ENABLED=old;}
  const interaction={focus:'Parts',resultFocus:'Targets',primaryFieldName:'target_cost',secondaryFieldName:'needed_date',businessFields:selectedFields,historyTitle:'Parts',inputTitle:'Part targets',inputDescription:'Set a target cost and needed date'};
@@ -73,8 +74,8 @@ test('persisted Native surface exposes editable core bindings and uses row ident
  db.prepare('INSERT INTO agent_apps(app_id,name,description,package_json,data_json,runtime_state_json,version,owner) VALUES(?,?,?,?,?,?,?,?)').run('parts','Parts','Track repair parts',JSON.stringify(pkg),JSON.stringify(data),JSON.stringify(state),'1','fixture-owner');
  const query=await runtime.queryState({user:'fixture-owner'});const app=query.apps[0];const surface=app.appPackage.ui.meta.a2ui;const nodes=surface.messages.flatMap((m:any)=>m.updateComponents?.components||[]);
  assert.deepEqual(nodes.filter((n:any)=>n.component==='TextField').map((n:any)=>n.value.path).sort(),['/draft/slots/alert_enabled','/draft/slots/extra_details','/draft/slots/needed_date','/draft/slots/target_cost']);
- const row=nodes.find((n:any)=>n.id==='d_rowGo');assert.equal(row.action.event.name,'actions.remove.run');assert.deepEqual(row.action.event.context,{entityName:{path:'/entityName'},entityId:{path:'/id'}});assert.equal(surface.initialData.entities[0].id,'part-42');
- const composer=nodes.find((n:any)=>n.id==='d_go');assert.deepEqual(composer.action.event.context.target_cost,{path:'/draft/slots/target_cost'});
+ const row=nodes.find((n:any)=>n.id==='d_action_1');assert.equal(row.action.event.name,'actions.remove.run');assert.deepEqual(row.action.event.context,{entityName:{path:'/entityName'},entityId:{path:'/id'}});assert.equal(surface.initialData.entities[0].id,'part-42');
+ const composer=nodes.find((n:any)=>n.id==='d_action_0');assert.deepEqual(composer.action.event.context.target_cost,{path:'/draft/slots/target_cost'});
  const reopened=await runtime.queryState({user:'fixture-owner'});assert.deepEqual(reopened.apps[0].appPackage.ui.meta.a2ui,surface);
  if(process.env.NATIVE_CORE_INPUT_FIXTURE_OUT)fs.writeFileSync(process.env.NATIVE_CORE_INPUT_FIXTURE_OUT,JSON.stringify(query));
  // New generation gates must not make previously persisted surfaces unreadable.
