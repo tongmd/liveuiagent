@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { createNativeDshRelay } from './dsh-native-relay.js';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -100,6 +101,7 @@ export function createDshNativeInference(config:Config) {
       let acquired=false;
       let dir:string|undefined;
       let runner:Runner|undefined;
+      let relay:Awaited<ReturnType<typeof createNativeDshRelay>>|undefined;
       try {
         await acquire(controller.signal);acquired=true;
         if(closed)throw transportError('Native DSH transport is closed','dsh_native_closed');
@@ -123,7 +125,10 @@ export function createDshNativeInference(config:Config) {
         // AppWorld, Telegram, database and host authentication credentials.
         runner=await factory({command:config.command,args,passEnv:[],isolatedHome:true});
         controller.signal.throwIfAborted();
-        const result=await runner!.run({work,home,task,model:String(request.model),provider:options?.provider??config.provider,signal:controller.signal,onEvent(event){
+        const provider=options?.provider??config.provider;
+        if(provider)relay=await createNativeDshRelay({provider,request,signal:controller.signal});
+        controller.signal.throwIfAborted();
+        const result=await runner!.run({work,home,task,model:String(request.model),provider:relay?.provider,signal:controller.signal,onEvent(event){
           if(event?.type==='tool_call'||event?.type==='tool'||event?.type==='tool_start'){
             controller.abort(transportError('Native DSH attempted a forbidden local tool','dsh_native_tool_forbidden'));
           }
@@ -135,7 +140,7 @@ export function createDshNativeInference(config:Config) {
           execution:{harness:'dsh',delivery:'native',toolsExecutedBy:'host'}};
       } finally {
         clearTimeout(timer);running.delete(controller);
-        try {await runner?.dispose();} finally {try {if(dir)await fs.rm(dir,{recursive:true,force:true});} finally {if(acquired)release();completions.delete(completion);markComplete();}}
+        try {await runner?.dispose();} finally {try {await relay?.close();} finally {try {if(dir)await fs.rm(dir,{recursive:true,force:true});} finally {if(acquired)release();completions.delete(completion);markComplete();}}}
       }
     },
     async dispose(){closed=true;for(const controller of running)controller.abort(transportError('Native DSH transport closed','dsh_native_closed'));for(const entry of waiting.splice(0)){entry.signal.removeEventListener('abort',entry.abort);entry.reject(transportError('Native DSH transport closed','dsh_native_closed'));}await Promise.allSettled([...completions]);},
