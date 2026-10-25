@@ -15,6 +15,7 @@ async function main() {
     openapi: '3.1.0',
     components: {schemas: {Note: {type:'object', required:['text'], properties:{text:{type:'string'},sourceComponentId:{type:'string'}}}}},
     paths: {
+      '/login': {post:{operationId:'explicit_login',requestBody:{content:{'application/x-www-form-urlencoded':{schema:{type:'object',properties:{username:{type:'string'},password:{type:'string'},scope:{type:'string',default:''}},required:['username','password']}}}},responses:{'200':{description:'ok'}}}},
       '/notes/{note_id}': {
         parameters:[{name:'note_id', in:'path', required:true, schema:{type:'integer'}}],
         patch: {operationId:'update_note', parameters:[{name:'notify', in:'query', schema:{type:'boolean'}}],
@@ -69,6 +70,11 @@ async function main() {
     req.on('data', (chunk) => bodyChunks.push(Buffer.from(chunk)));
     req.on('end', () => {
       const key = url.pathname;
+      if (key === '/simple_note/login') {
+        assert.equal(req.headers['content-type'],'application/x-www-form-urlencoded');
+        requests.push({url:url.toString(),body:Buffer.concat(bodyChunks).toString('utf8')});
+        res.writeHead(200, {'content-type':'application/json'}); res.end('{}'); return;
+      }
       if (key.endsWith('/auth/token')) {
         res.writeHead(200, {'content-type':'application/json'}); res.end(JSON.stringify({access_token:secret})); return;
       }
@@ -133,6 +139,13 @@ async function main() {
     assert.equal((result.response as any).created, true, 'AppWorld tool did not execute');
     assert(result.dbChanges, 'db change summary missing');
     assert(Array.isArray(result.dbChanges?.changedApps), 'db change summary must have changed apps');
+    const login = tools.find(t => t.apiName === 'explicit_login')!;
+    assert(appWorldCatalogLine(login).includes('username*')); assert(appWorldCatalogLine(login).includes('password*'));
+    await assert.rejects(bridge!.callTool(login.id, {}), /Missing AppWorld argument/);
+    await bridge!.callTool(login.id, {username:'mock+user@example.test',password:'mock & only=credential'});
+    assert.equal(new URLSearchParams(requests.at(-1)!.body).get('username'),'mock+user@example.test');
+    assert.equal(new URLSearchParams(requests.at(-1)!.body).get('password'),'mock & only=credential');
+    assert(!appWorldCatalogLine(login).includes('mock & only=credential'));
     const update = tools.find(t => t.apiName === 'update_note')!;
     assert.deepEqual(new Set(update.requiredParams), new Set(['text','note_id']));
     await assert.rejects(bridge!.callTool(update.id, {note_id:7}), /Missing AppWorld argument/);

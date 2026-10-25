@@ -30,6 +30,7 @@ export type AppWorldToolCapability = {
   requiredParams?: string[];
   inputSchema?: unknown;
   parameterLocations?: Record<string, 'path' | 'query' | 'body'>;
+  bodyEncoding?: 'json' | 'form';
   outputSchema?: unknown;
 };
 
@@ -156,9 +157,11 @@ function flattenApiDocs(openapi: unknown, appName: string) {
       const requestBody = operation.requestBody && typeof operation.requestBody === 'object'
         ? asRecord(resolveApiSchema(operation.requestBody, doc), `AppWorld operation ${operationId} requestBody must be an object`)
         : undefined;
-      const requestSchema = requestBody?.content && typeof requestBody.content === 'object'
-        ? (asRecord(requestBody.content, `AppWorld operation ${operationId} requestBody content must be an object`)['application/json'] as Record<string, unknown> | undefined)?.schema
-        : undefined;
+      const content = requestBody?.content && typeof requestBody.content === 'object'
+        ? asRecord(requestBody.content, `AppWorld operation ${operationId} requestBody content must be an object`) : {};
+      const bodyEncoding = content['application/json'] ? 'json' : content['application/x-www-form-urlencoded'] ? 'form' : undefined;
+      if (requestBody && !bodyEncoding) throw new Error(`Unsupported AppWorld request body encoding: ${operationId}`);
+      const requestSchema = (content[bodyEncoding === 'form' ? 'application/x-www-form-urlencoded' : 'application/json'] as Record<string, unknown> | undefined)?.schema;
       const responses = operation.responses && typeof operation.responses === 'object'
         ? asRecord(operation.responses, `AppWorld operation ${operationId} responses must be an object`)
         : undefined;
@@ -200,6 +203,7 @@ function flattenApiDocs(openapi: unknown, appName: string) {
         requiredParams,
         inputSchema,
         parameterLocations,
+        bodyEncoding,
         outputSchema,
       });
     }
@@ -572,8 +576,13 @@ export function createAppWorldBridge(projectRoot: string): AppWorldBridge | null
       method: tool.method,
       label: `AppWorld tool ${tool.id}`,
       timeoutMs: config.timeoutMs,
-      headers: tool.requiresAuth ? { Authorization: `Bearer ${await ensureSession(tool.appName)}` } : {},
-      ...(body && Object.keys(body).length ? { body: JSON.stringify(body) } : {}),
+      headers: {
+        ...(tool.requiresAuth ? { Authorization: `Bearer ${await ensureSession(tool.appName)}` } : {}),
+        ...(tool.bodyEncoding === 'form' ? {'content-type': 'application/x-www-form-urlencoded'} : {}),
+      },
+      ...(body && Object.keys(body).length ? { body: tool.bodyEncoding === 'form'
+        ? new URLSearchParams(Object.entries(body).map(([key,value]) => [key,String(value)])).toString()
+        : JSON.stringify(body) } : {}),
     });
     let response: unknown;
     try {
