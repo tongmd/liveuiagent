@@ -179,13 +179,13 @@ async function outputFile(work, name, maxBytes) {
   if (!stat.isFile() || stat.isSymbolicLink() || stat.size > maxBytes) throw new Error('DSH returned an invalid app file');
   return fs.readFile(file, 'utf8');
 }
-async function verifyDelivery(work, job) {
+async function verifyDelivery(work, job, context) {
   const delivery = await validateDelivery(work);
   if (!delivery.ok || closed || job.status === 'cancelled') return delivery;
   const controller = new AbortController();
   running.set(job.id, controller);
   try {
-    const browser = await validateBrowserDelivery(delivery.html, { chrome: config.chrome, signal: controller.signal });
+    const browser = await validateBrowserDelivery(delivery.html, { chrome: config.chrome, signal: controller.signal, requireAgentAction: Array.isArray(context?.connectedServices) && context.connectedServices.length > 0 });
     job.browserValidation = browser;
     (job.browserValidationAttempts ??= []).push(browser);
     return browser.ok ? delivery : { ok: false, errors: browser.errors };
@@ -222,17 +222,17 @@ async function execute({ a, job, context, provider }) {
       catch (error) { if (!job.timedOut || job.status === 'cancelled') throw error; generationError = error; }
       if (job.status === 'cancelled') return;
       job.phase = 'validate'; job.stage = '校验应用文件与脚本'; await save(a);
-      let delivery = await verifyDelivery(work, job);
+      let delivery = await verifyDelivery(work, job, context);
       if (closed || job.status === 'cancelled') return;
       if (!delivery.ok && delivery.errors.some(error => error.code === 'browser_unavailable')) throw new Error('浏览器交付检查不可用：' + delivery.errors.map(error => error.message).join('; '));
       if (!delivery.ok) {
         job.phase = 'repair'; job.stage = '修复交付文件'; job.repairAttempts = 1; await save(a);
-        const repairTask = task + '\n\nDELIVERY REPAIR ONLY (one attempt, 120 seconds). Existing files are the current draft. Do not redesign or research. Fix these host validation errors: ' + JSON.stringify(delivery.errors) + '. Write app.json first if missing, accurately describing only implemented features. Fix inline JavaScript syntax and preserve the user request and stored data. Finish immediately after writing the corrected files.';
+        const repairTask = task + '\n\nDELIVERY REPAIR ONLY (one attempt, 120 seconds). Existing files are the current draft. Do not redesign or research. Fix these host validation errors: ' + JSON.stringify(delivery.errors) + '. Write app.json first if missing, accurately describing only implemented features. Fix inline JavaScript syntax and preserve the user request and stored data. Finish immediately after writing the corrected files.' + (Array.isArray(context?.connectedServices) && context.connectedServices.length ? '\nCONNECTED SERVICE REPAIR: Preserve the existing interface, charts, stored data and implemented functions. Only wire the one primary natural-language task form and its submit button (both data-liveui-action="agent.invoke") to the host SDK. Forward the complete current task input and all relevant fields. Await the actual result and visibly render text/data. Handle ok:false (including data.ok:false) as an error, not a local success. Do not call on load. Minimal handler pattern, adapted to your existing controls: event.preventDefault(); const result = await window.liveuiagent.ai(currentRequest, currentFields); if (result.ok === false || result.data?.ok === false) { resultArea.textContent = result.error || result.data?.error || result.text; return; } resultArea.textContent = result.text; Handle thrown errors visibly too. Do not redesign or replace the application.' : '');
         try { await invokeDsh(a, job, work, home, repairTask, provider, Math.min(JOB_TIMEOUT, 120000)); }
         catch (error) { if (!job.timedOut || job.status === 'cancelled') throw error; }
         if (job.status === 'cancelled') return;
         job.phase = 'validate'; job.stage = '复查修复结果'; await save(a);
-        delivery = await verifyDelivery(work, job);
+        delivery = await verifyDelivery(work, job, context);
       }
       job.deliveryValidation = { ok: delivery.ok, errors: delivery.errors };
       if (!delivery.ok) throw new Error('应用交付校验未通过：' + delivery.errors.map(e => e.message).join('; '));
