@@ -203,5 +203,7 @@ test('actual 390px Web native command DOM sends visible text and host nonce to r
  assert.equal(requests.length,3);assert.equal(requests[2].eventPayload.command,command+' Please verify.');assert.notEqual(requests[2].eventPayload.requestId,firstNonce);assert.equal(requests[2].eventPayload.sourceComponentId,'host_app_command_execute');assert.deepEqual(Object.keys(requests[2].eventPayload).sort(),['command','requestId','sourceComponentId']);
  assert.equal(f.db.prepare('SELECT values_json FROM native_app_records WHERE owner=? AND app_id=? AND record_id=?').get('fixture-owner','parcels','parcel42').values_json.includes('249'),true);
  await page.waitForFunction(()=>document.querySelector('.a2ui-host textarea')?.value==='');assert.deepEqual(errors,[]);
- const dir='/Users/stone/output/dsh-polish-20261025/projection-design';await page.screenshot({path:path.join(dir,'host-command-390.png'),fullPage:true});
+ const dir=process.env.LIVEUI_TEST_ARTIFACTS??fs.mkdtempSync(path.join(os.tmpdir(),'native-command-390-'));
+ fs.mkdirSync(dir,{recursive:true});if(!process.env.LIVEUI_TEST_ARTIFACTS)t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
+ await page.screenshot({path:path.join(dir,'host-command-390.png'),fullPage:true});
 });
