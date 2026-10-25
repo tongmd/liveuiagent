@@ -24,7 +24,7 @@
     "test:evaluator": "tsx scripts/test-complete-app-evaluator.ts",
     "test:catalog": "node scripts/test-material-catalog.mjs",
     "check:release": "node scripts/check-release.mjs",
-    "test:dsh": "node --test packages/dsh-plugin/tests/*.test.mjs",
+    "test:dsh": "node --test --test-concurrency=1 packages/dsh-plugin/tests/*.test.mjs",
     "test:driver": "tsx --test tests/complete-app-driver.test.ts",
     "deploy": "bash scripts/deploy-liveui.sh",
     "test:deployment": "node --test tests/deployment.test.mjs",
