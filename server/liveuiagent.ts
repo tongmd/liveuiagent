@@ -1308,7 +1308,7 @@ const allowedAgentTools = new Set([
   ...webToolRegistry.map((tool) => tool.id),
 ]);
 function isAllowedAgentTool(toolId: string, allowedToolIds?: Set<string>) {
-  return allowedAgentTools.has(toolId) || toolId.startsWith('tool.appworld.') || allowedToolIds?.has(toolId) === true;
+  return allowedAgentTools.has(toolId) || allowedToolIds?.has(toolId) === true;
 }
 const requiredCoreAgents = ['agents.orchestrator', 'agents.app', 'agents.action', 'agents.data', 'agents.memory', 'agents.safety'];
 const allowedSurfaceRoles = new Set<GuiSurfaceSection['role']>(['identity', 'result', 'input', 'actions', 'detail', 'records', 'signals', 'views']);

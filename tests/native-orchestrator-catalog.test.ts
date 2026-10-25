@@ -27,7 +27,16 @@ test('wide real public catalog remains complete once with a legal short skeleton
  console.log(JSON.stringify({publicCatalogSha256:publicSha,capabilities:capabilities.length,selectedCapabilities:captured.requestedToolCapabilities.length,oldInputBytes:size(old),newInputBytes:size(captured),oldAgentSkeletonBytes:size(old.minimumValidAgents),newAgentSkeletonBytes:size(captured.minimumValidAgents),oldMinimalGraphBytes:size(oldMinimal),newMinimalGraphBytes:size(minimal),scope:'static JSON bytes, not tokens or observed model success'}));
 });
 test('related external choices remain available beyond the first eight global tools',async t=>{
- let selected='';const{plan,captured}=await run(t,(g,p)=>{selected=p.requestedToolCapabilities.filter((x:any)=>x.source==='appworld').at(-1).id;g.agents.find((a:any)=>a.id==='agents.action').tools=['llm.call',selected];});assert(captured.requestedToolCapabilities.findIndex((x:any)=>x.id===selected)>8);assert.deepEqual(plan.orchestration.agents.find((a:any)=>a.id==='agents.action')!.tools,['llm.call',selected]);
+ let selected='';const{plan,captured}=await run(t,(g,p)=>{selected=p.requestedToolCapabilities.filter((x:any)=>x.id.startsWith('tool.appworld.phone.')).at(-1).id;g.agents.find((a:any)=>a.id==='agents.action').tools=['llm.call',selected];});assert(captured.requestedToolCapabilities.findIndex((x:any)=>x.id===selected)>8);assert.deepEqual(plan.orchestration.agents.find((a:any)=>a.id==='agents.action')!.tools,['llm.call',selected]);
 });
 test('more than eight tool declarations reject instead of silently truncating choices',async t=>{await assert.rejects(run(t,(g,p)=>{g.agents[0].tools=p.allowedTools.slice(0,9);}),/at most 8 tools/);});
 test('unsafe tools remain rejected and cannot resolve through user-authored reference data',async t=>{await assert.rejects(run(t,g=>{g.agents[0].tools=['llm.call','evil'];}),/unsafe tools/);});
+
+test('undeclared AppWorld services, unknown same-service APIs and near-prefix spellings cannot survive graph validation',async t=>{
+ for(const id of ['tool.appworld.unselected_service.unlisted_operation','tool.appworld.spotify.search_songs_songs_get','tool.appworld.phone.operation_not_in_selected_catalog','tool.appworld.phone.fake.tool.appworld','tool.appworldx.phone.show_alarm']){
+  await t.test(id,async child=>{await assert.rejects(run(child,(g,p)=>{assert(!p.requestedToolCapabilities.some((c:any)=>c.id===id));g.agents.find((a:any)=>a.id==='agents.action').tools=['llm.call',id];}),/unsafe tools/);});
+ }
+});
+test('a spelling extension of a real selected AppWorld ID is rejected without pruning the global catalog',async t=>{
+ await assert.rejects(run(t,(g,p)=>{const selected=p.requestedToolCapabilities.find((c:any)=>c.source==='appworld').id;const forged=selected+'_not_the_same_operation';assert(!p.requestedToolCapabilities.some((c:any)=>c.id===forged));g.agents[0].tools=['llm.call',forged];}),/unsafe tools/);
+});
