@@ -1,0 +1,269 @@
+{
+  "scope": "Saved closed v6 actual business evidence for pure normalization regression only; no score/model/business replay",
+  "sourceCommit": "6fb628e8231da442f2be2ff3d0546ec0e598be4d",
+  "sourceDiagnosticSha256": "056f8efffaf581de87da42939305e88318021002c57d3a32d1bfc09e775003f8",
+  "payload": {
+    "prompt": "Tomorrow, and Tomorrow, and Tomorrow",
+    "context": "to_read",
+    "state": "Open",
+    "nextStep": "Continue",
+    "result": "No results yet",
+    "slot_1": "Tomorrow, and Tomorrow, and Tomorrow",
+    "slot_2": "to_read",
+    "slot_3": "2026-10-25",
+    "slot_4": "",
+    "sourceComponentId": "d_bAdd"
+  },
+  "businessFields": [
+    {
+      "name": "slot_1",
+      "label": "书名",
+      "type": "string",
+      "required": true,
+      "placeholder": "比如《百年孤独》",
+      "helpText": "Save as an editable field for Keep Reading Life In."
+    },
+    {
+      "name": "slot_2",
+      "label": "放到哪个书架",
+      "type": "select",
+      "required": true,
+      "helpText": "Save as an editable field for Keep Reading Life In.",
+      "options": [
+        {
+          "label": "待读",
+          "value": "to_read"
+        },
+        {
+          "label": "在读",
+          "value": "reading"
+        },
+        {
+          "label": "已读",
+          "value": "finished"
+        }
+      ]
+    },
+    {
+      "name": "slot_3",
+      "label": "读完日期",
+      "type": "date",
+      "required": false,
+      "placeholder": "Enter 读完日期",
+      "helpText": "Save as an editable field for Keep Reading Life In."
+    },
+    {
+      "name": "slot_4",
+      "label": "一句话评价",
+      "type": "string",
+      "required": false,
+      "placeholder": "比如：前半慢热，结尾很好",
+      "helpText": "Save as an editable field for Keep Reading Life In."
+    }
+  ],
+  "rawProposals": [
+    {
+      "round": 1,
+      "step": 5,
+      "done": true,
+      "summary": "已把《Tomorrow, and Tomorrow, and Tomorrow》加入「阅读日志 — 待读」书架，现在待读书架为《The Overstory》《Piranesi》《Tomorrow, and Tomorrow, and Tomorrow》三本，全部书架共 5 本。",
+      "entities": [
+        {
+          "name": "The Overstory",
+          "detail": "在待读书架上",
+          "group": "待读"
+        },
+        {
+          "name": "Piranesi",
+          "detail": "在待读书架上",
+          "group": "待读"
+        },
+        {
+          "name": "Tomorrow, and Tomorrow, and Tomorrow",
+          "detail": "新加入待读书架，暂无读完日期和一句话评价",
+          "group": "待读"
+        },
+        {
+          "name": "Klara and the Sun",
+          "detail": "正在阅读",
+          "group": "正在阅读"
+        },
+        {
+          "name": "Project Hail Mary",
+          "detail": "已读完 2026-06-20 — 一句话评价：很喜欢",
+          "group": "已读完"
+        }
+      ],
+      "stats": [
+        {
+          "label": "待读书架上的书",
+          "value": "3"
+        },
+        {
+          "label": "正在阅读的书",
+          "value": "1"
+        },
+        {
+          "label": "已读完的书",
+          "value": "1"
+        },
+        {
+          "label": "书架上的书总数",
+          "value": "5"
+        }
+      ],
+      "acceptedForEvaluation": true
+    },
+    {
+      "round": 2,
+      "step": 1,
+      "done": true,
+      "summary": "《Tomorrow, and Tomorrow, and Tomorrow》已加入“Reading log — To read”待读书架（simple_note 笔记），待读共 3 本、总计 5 本。",
+      "entities": [
+        {
+          "name": "The Overstory",
+          "detail": "在待读书架上等待阅读",
+          "group": "To read"
+        },
+        {
+          "name": "Piranesi",
+          "detail": "在待读书架上等待阅读",
+          "group": "To read"
+        },
+        {
+          "name": "Tomorrow, and Tomorrow, and Tomorrow",
+          "appRecordId": "reading-shelves-tomorrow-and-tomorrow-and-tomorrow",
+          "detail": "刚收进待读书架，等待阅读（尚未读完，无日期与评价）",
+          "group": "To read"
+        },
+        {
+          "name": "Klara and the Sun",
+          "detail": "正在阅读",
+          "group": "Currently reading"
+        },
+        {
+          "name": "Project Hail Mary",
+          "detail": "已于 2026-06-20 读完 — 一句话评价：很喜欢",
+          "group": "Finished"
+        }
+      ],
+      "stats": [
+        {
+          "label": "待读书架上的书",
+          "value": "3"
+        },
+        {
+          "label": "正在阅读的书",
+          "value": "1"
+        },
+        {
+          "label": "已读完的书",
+          "value": "1"
+        },
+        {
+          "label": "书架上的书合计",
+          "value": "5"
+        }
+      ],
+      "acceptedForEvaluation": true
+    }
+  ],
+  "appStateCalls": [
+    {
+      "source": "app-state",
+      "api": "app_state.list_records",
+      "order": 4,
+      "request": {},
+      "response": {
+        "source": "app-state",
+        "operation": "list",
+        "scope": "authenticated-current-owner-app",
+        "persisted": true,
+        "offset": 0,
+        "limit": 50,
+        "records": []
+      },
+      "ok": true,
+      "executionState": "succeeded",
+      "requestSource": "host-bound-app-state-dispatched-arguments"
+    },
+    {
+      "source": "app-state",
+      "api": "app_state.upsert_record",
+      "order": 10,
+      "request": {
+        "recordId": "reading-shelves-tomorrow-and-tomorrow-and-tomorrow",
+        "values": {
+          "slot_1": "Tomorrow, and Tomorrow, and Tomorrow",
+          "slot_2": "to_read"
+        }
+      },
+      "response": {
+        "source": "app-state",
+        "operation": "upsert-and-read-back",
+        "scope": "authenticated-current-owner-app",
+        "persisted": true,
+        "record": {
+          "recordId": "reading-shelves-tomorrow-and-tomorrow-and-tomorrow",
+          "values": {
+            "slot_1": "Tomorrow, and Tomorrow, and Tomorrow",
+            "slot_2": "to_read"
+          },
+          "revision": 1,
+          "updatedAt": "2026-10-25T12:52:32.002Z"
+        }
+      },
+      "ok": true,
+      "executionState": "succeeded",
+      "requestSource": "host-bound-app-state-dispatched-arguments"
+    },
+    {
+      "source": "app-state",
+      "api": "app_state.read_record",
+      "order": 11,
+      "request": {
+        "recordId": "reading-shelves-tomorrow-and-tomorrow-and-tomorrow"
+      },
+      "response": {
+        "source": "app-state",
+        "operation": "read",
+        "scope": "authenticated-current-owner-app",
+        "persisted": true,
+        "record": {
+          "recordId": "reading-shelves-tomorrow-and-tomorrow-and-tomorrow",
+          "values": {
+            "slot_1": "Tomorrow, and Tomorrow, and Tomorrow",
+            "slot_2": "to_read"
+          },
+          "revision": 1,
+          "updatedAt": "2026-10-25T12:52:32.002Z"
+        }
+      },
+      "ok": true,
+      "executionState": "succeeded",
+      "requestSource": "host-bound-app-state-dispatched-arguments"
+    }
+  ],
+  "oldNormalizedEntities": [
+    {
+      "name": "The Overstory",
+      "detail": "在待读书架上等待阅读",
+      "group": "To read"
+    },
+    {
+      "name": "Piranesi",
+      "detail": "在待读书架上等待阅读",
+      "group": "To read"
+    },
+    {
+      "name": "Klara and the Sun",
+      "detail": "正在阅读",
+      "group": "Currently reading"
+    },
+    {
+      "name": "Project Hail Mary",
+      "detail": "已于 2026-06-20 读完 — 一句话评价：很喜欢",
+      "group": "Finished"
+    }
+  ]
+}

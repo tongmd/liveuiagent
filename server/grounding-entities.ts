@@ -1,0 +1,39 @@
+import type {AppRecordField} from './native-app-records.js';
+
+export type GroundedEntity={name:string;id?:string;detail?:string;group?:string;appRecordId?:string};
+const compact=(input:string,max:number)=>{const text=input.replace(/\s+/g,' ').trim();return text.length<=max?text:`${text.slice(0,max-1)}…`;};
+
+/** Only current-turn host receipts from the owner/app-bound adapter are passed
+ * here. This proves a local name association, never external business success. */
+export function hasLocalReadNameBinding(entity:GroundedEntity,calls:Array<Record<string,any>>,fields:readonly AppRecordField[]):boolean{
+ if(!entity.appRecordId)return false;
+ const key=entity.appRecordId;
+ const latestWrite=calls.filter(call=>call.source==='app-state'&&call.api==='app_state.upsert_record'&&(call.request??call.attemptedArguments)?.recordId===key&&Number.isSafeInteger(call.order))
+  .reduce((order,call)=>Math.max(order,call.order),-1);
+ return calls.some(call=>{
+  const response=call.response;
+  if(call.source!=='app-state'||call.ok!==true||call.executionState!=='succeeded'||call.requestSource!=='host-bound-app-state-dispatched-arguments'
+   ||!Number.isSafeInteger(call.order)||call.order<=latestWrite||!response||response.source!=='app-state'||response.scope!=='authenticated-current-owner-app'||response.persisted!==true)return false;
+  const records=call.api==='app_state.read_record'&&response.operation==='read'&&call.request?.recordId===key?[response.record]
+   :call.api==='app_state.list_records'&&response.operation==='list'&&Array.isArray(response.records)?response.records:[];
+  return records.some((record:any)=>record?.recordId===key&&Number.isSafeInteger(record.revision)&&record.revision>0&&record.values&&typeof record.values==='object'&&!Array.isArray(record.values)
+   &&fields.some(field=>field.type==='string'&&typeof record.values[field.name]==='string'&&record.values[field.name].trim()===entity.name));
+ });
+}
+
+export function normalizeGroundingEntities(raw:unknown,formEchoes:ReadonlySet<string>,calls:Array<Record<string,any>>,fields:readonly AppRecordField[]):GroundedEntity[]{
+ return (Array.isArray(raw)?raw:[])
+  .filter((item:unknown)=>item&&typeof item==='object'&&String((item as Record<string,unknown>).name||'').trim())
+  .slice(0,20)
+  .map((item:Record<string,unknown>)=>({
+   name:compact(String(item.name),40),
+   ...(item.id!==undefined&&item.id!==null&&String(item.id).trim()?{id:compact(String(item.id),24)}:{}),
+   ...(typeof item.detail==='string'&&item.detail.trim()?{detail:compact(item.detail,80)}:{}),
+   ...(typeof item.group==='string'&&item.group.trim()?{group:compact(item.group,24)}:{}),
+   ...(typeof item.appRecordId==='string'&&item.appRecordId.trim()?{appRecordId:item.appRecordId}:{}),
+  }))
+  // Keep the existing API-id exception and echo rejection. An actual separately
+  // read local record can preserve a named row for the independent evaluator;
+  // it does not waive external writes/read-back, unknown outcomes or coverage.
+  .filter(entity=>Boolean(entity.id)||!formEchoes.has(entity.name)||hasLocalReadNameBinding(entity,calls,fields));
+}

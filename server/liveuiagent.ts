@@ -1,3 +1,4 @@
+import {normalizeGroundingEntities} from './grounding-entities.js';
 import {writeGuiPlanningDiagnostics} from './gui-planning-diagnostics.js';
 import { consumedGroundingFields, consumedSlotsFromIndices, requireConsumedSlots, rowActionSlotMap, assertExactRowBindings, assertRowActionPayload } from './native-action-slots.js';
 import { writeGroundingDiagnostics, type GroundingDiagnosticsReceipt } from './grounding-diagnostics.js';
@@ -6026,21 +6027,7 @@ export async function runAppWorldGrounding(input: {
           item !== null && typeof item === 'object' && !Array.isArray(item)
           && typeof (item as Record<string, unknown>).name === 'string'
           && Boolean(((item as Record<string, unknown>).name as string).trim()));
-        entities = (Array.isArray(decision?.entities) ? decision.entities : [])
-          .filter((item: unknown) => item && typeof item === 'object' && String((item as Record<string, unknown>).name || '').trim())
-          .slice(0, 20)
-          .map((item: Record<string, unknown>) => ({
-            name: compactText(String(item.name), 40),
-            ...(item.id !== undefined && item.id !== null && String(item.id).trim() ? { id: compactText(String(item.id), 24) } : {}),
-            ...(typeof item.detail === 'string' && item.detail.trim() ? { detail: compactText(item.detail, 80) } : {}),
-            ...(typeof item.group === 'string' && item.group.trim() ? { group: compactText(item.group, 24) } : {}),
-            ...(typeof item.appRecordId === 'string' && item.appRecordId.trim() ? {appRecordId:item.appRecordId} : {}),
-          }))
-          // 表单回显不是内容:agent 会把用户输入的槽位值(骑车通勤/30分钟)包装成
-          // "实体"充数,这类条目机械剔除 —— 实体必须是 API 响应里真实存在的对象。
-          // 但带 API id 的要保留:新建对象(联系人张通)天然同名于用户输入,
-          // 滤掉它会让 evaluator 判"实体缺失"→refine 轮重复写入(联系人加两遍)。
-          .filter((entity: { name: string; id?: string }) => Boolean(entity.id) || !formEchoes.has(entity.name));
+        entities = normalizeGroundingEntities(decision?.entities,formEchoes,appStateCalls,input.appState?.recordFields ?? []);
         stats = (Array.isArray(decision?.stats) ? decision.stats : [])
           .filter((item: unknown) => item && typeof item === 'object' && String((item as Record<string, unknown>).label || '').trim() && String((item as Record<string, unknown>).value ?? '').trim())
           .slice(0, 8)
