@@ -1,7 +1,7 @@
 import { appWorldCatalogLine } from './appworld-schema.js';
 import { MailReplyEvidence } from './mail-reply-evidence.js';
 import { NativeWorkflow } from './native-workflow.js';
-import { actionDeadlineAt, actionDeadlineError, remainingActionMs, actionRetryDelay } from './action-deadline.js';
+import { actionDeadlineAt, actionDeadlineError, remainingActionMs, actionRetryDelay, withActionDeadline } from './action-deadline.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
@@ -210,6 +210,8 @@ export type LlmRuntimeConfig = {
 };
 
 type LIVEUIAGENTRuntimeOptions = {
+  // Trusted host configuration only; application/request JSON never sets this.
+  nativeActionTimeoutMs?: number;
   registryRoot: string;
   projectRoot?: string;
 };
@@ -1708,12 +1710,14 @@ async function chatFetchWithRetry(url: string, init: RequestInit, timeoutMs: num
 
 async function nativeModelTransport(llm: LlmRuntimeConfig, url: string, init: RequestInit, timeoutMs: number) {
   if (!llm.chatCompletion) return chatFetchWithRetry(url, init, timeoutMs);
-  const budget = remainingActionMs(timeoutMs);
+  const actionBudget = remainingActionMs();
+  const budget = Math.min(timeoutMs, actionBudget);
+  const totalBudgetLimited = actionDeadlineAt() !== undefined && actionBudget <= timeoutMs;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
       llm.chatCompletion(JSON.parse(String(init.body)), { timeoutMs: budget }),
-      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('native inference adapter deadline exceeded')), budget); }),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(totalBudgetLimited ? actionDeadlineError() : new Error('native inference adapter deadline exceeded')), budget); }),
     ]);
     remainingActionMs();
     return { ok: true, status: 200, text: JSON.stringify(result) };
@@ -6458,6 +6462,7 @@ export async function runActionTools(action: Record<string, any>, payload: Recor
     }
   }
   for (const step of steps) {
+    remainingActionMs();
     if (String(step.capability) === 'tool.mcp.call' || String(step.capability).startsWith('tool.appworld.')) continue;
     // 公网工具预取失败 = 跳过这个预取,不杀整回合:表单里没有 URL/城市/币种是常态
     // ("标记已读"回合没有链接字段),回合的真正工作在 grounding/local agent。
@@ -6466,17 +6471,22 @@ export async function runActionTools(action: Record<string, any>, payload: Recor
       try {
         results[String(step.capability)] = await runToolStep(step, payload, appWorldBridge);
       } catch (error) {
+        remainingActionMs();
         console.warn(`[action-tools] web prefetch ${step.capability} skipped: ${(error as Error).message}`);
       }
+      remainingActionMs();
       continue;
     }
     const result = await runToolStep(step, payload, appWorldBridge);
+    remainingActionMs();
     results[String(step.capability)] = result;
   }
   return results;
 }
 
 export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTRuntimeOptions) {
+  const nativeActionTimeoutMs = options.nativeActionTimeoutMs ?? 16 * 60 * 1000;
+  if (!Number.isFinite(nativeActionTimeoutMs) || nativeActionTimeoutMs <= 0) throw Error('Native action timeout must be positive and finite');
   initStore(db);
   fs.mkdirSync(options.registryRoot, { recursive: true });
   const debugPolicy = loadLiveUIAgentConfig(options.projectRoot ?? process.cwd()).gui_debug_policy;
@@ -6862,12 +6872,14 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
     },
 
     async action(input: { appId: string; actionId: string; eventPayload?: unknown; clientState?: unknown; platform?: Platform; llm?: LlmRuntimeConfig; user?: string }) {
+      return withActionDeadline(Date.now() + nativeActionTimeoutMs, async () => {
       // 同应用写互斥:调度器只串行同 fairness 键,patch 经 run:<uuid> 键进来时
       // 会和本回合并行 —— 进程内锁保证同一应用的读-改-写不交叠。
       const releaseAppLock = await acquireAppLock(String(input.appId || ''));
       let nativeWorkflow: NativeWorkflow | undefined;
       let nativeExecutionStarted = false;
       try {
+      remainingActionMs();
       const stored = getOwnedApp(db, input.appId, String(input.user || '').trim().slice(0, 60));
       if (!stored) throw httpError(`app not found: ${input.appId}`, 404);
       const actionId = normalizeActionId(input.actionId);
@@ -6923,11 +6935,14 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       });
       // Worker instructions are consumed by the existing executor without granting
       // tools to the read-only workers or changing the original payload/permissions.
+      remainingActionMs();
       const executionLlm = input.llm ? { ...input.llm, personalContext: [input.llm.personalContext || '',
         'Native worker contracts (planning, not observed facts): ' + JSON.stringify(workerHandoffs)].join('\n') } : input.llm;
       nativeExecutionStarted = true;
       nativeWorkflow.record('execute', 'agents.executor', 'running', { originalRequest: rawPayload });
+      remainingActionMs();
       const toolResults = await runActionTools(action, rawPayload, appWorldBridge);
+      remainingActionMs();
       // 跨回合记忆:近 2 轮全量(输入+实体+统计)、更早压缩 —— "换一批"必须知道
       // 上一批推荐了什么,"继续"必须知道进行到哪(此前 agent_workflow_turns 只写不读)。
       const actionWorkflowId = String((stored.runtimeState.orchestration as AgentOrchestrationPlan | undefined)?.workflowId || '');
@@ -7011,6 +7026,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         if (local.stats.length) (rawPayload as Record<string, unknown>).entityStats = local.stats;
         trace(traceLog, 'App Agent', 'Execute this turn with the app-scoped agent (no external APIs for this domain)', { actionId, slots }, { result: local.result, entities: local.entities, stats: local.stats });
       }
+      remainingActionMs();
       const payload = {
         ...rawPayload,
         ...(Object.keys(toolResults).length ? { toolResults } : {}),
@@ -7026,6 +7042,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         proposedRuntimeState: stored.runtimeState, proposedRecords: agentResult.records,
         dbChanges: appWorldTraceSummary(toolResults), grounded,
         persistencePending: true });
+      remainingActionMs();
       const message = "Page updated";
       stored.runtimeState = {
         ...stored.runtimeState,
@@ -7037,7 +7054,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         ],
       };
       nativeWorkflow.record('commit', 'agents.memory', 'running');
+      remainingActionMs();
       db.transaction(() => {
+      remainingActionMs();
       saveStoredApp(db, options.registryRoot, stored);
       const workflow = stored.appPackage.ui?.meta?.a2ui as A2UISurfaceSpec | undefined;
       if (workflow) {
@@ -7093,6 +7112,12 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         trace: traceLog,
       };
       } catch (error) {
+        // A child transport/provider wrapper must not turn the exhausted host
+        // budget into a configuration error or a retryable inference failure.
+        try { remainingActionMs(); } catch (deadline) {
+          if (deadline && typeof deadline === 'object') Object.assign(deadline, { cause: error });
+          error = deadline;
+        }
         // External API writes cannot be rolled back with SQLite. Preserve a failed
         // causal record and never automatically rerun the business operation.
         nativeWorkflow?.fail(error, { externalEffectsMayHaveOccurred: nativeExecutionStarted });
@@ -7104,6 +7129,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       } finally {
         releaseAppLock();
       }
+      });
     },
 
     async queryState(query?: { user?: string }) {
