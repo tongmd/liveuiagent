@@ -28,7 +28,10 @@ export function createCommandRunner(config) {
         patch=path.join(home,'liveui-model.patch.yml');
         const sameProvider=Boolean(process.env.DEEPSEEK_BASE_URL)&&provider.apiBase.replace(/\/+$/,'')===process.env.DEEPSEEK_BASE_URL.replace(/\/+$/,'');
         await fs.writeFile(patch,providerPatch(model,sameProvider),{mode:0o600});
-        args.push('--patch',patch);
+        // Launcher overlays must precede headless flags such as --json.
+        // The first app-only flag ends DSH's launcher option parsing.
+        const appFlags = args.findIndex(arg => arg === '--json');
+        args.splice(appFlags < 0 ? args.length : appFlags, 0, '--patch', patch);
         env.LIVEUI_LLM_API_BASE=provider.apiBase;
         env.LIVEUI_LLM_API_KEY=provider.apiKey;
       }

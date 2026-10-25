@@ -90,3 +90,11 @@ test('abort kills a descendant holding stdout after the group leader exits', { s
   await assert.rejects(result, /cancel process tree/);
   assert.ok(descendantPid, 'descendant started and inherited the output pipe');
 });
+
+test('provider launcher overlay precedes headless JSON flag',async t=>{
+  const dirs=await paths();
+  const code=`console.log(JSON.stringify({type:'final',text:JSON.stringify(process.argv.slice(1))}));`;
+  const runner=createCommandRunner({command:process.execPath,args:['-e',code,'--','--profile','headless','--json']});t.after(()=>runner.dispose());
+  const argv=JSON.parse((await runner.run({...dirs,task:'',model:'fixture',provider:{apiKey:'private-fixture',apiBase:'http://provider.example/v1'},signal:new AbortController().signal,onEvent(){}})).answer);
+  assert.ok(argv.indexOf('--patch')>=0);assert.ok(argv.indexOf('--patch')<argv.indexOf('--json'));
+});

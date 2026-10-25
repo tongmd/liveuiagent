@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import { createDshNativeInference } from './dsh-native-inference.js';
+import { createNativeHarnessBindings } from './native-harness.js';
 import { createPersonalization } from './personalization.js';
 import { createCompleteApps } from './complete-apps.js';
 import { createRuntimeSettings } from './runtime-settings.js';
@@ -34,6 +36,15 @@ fs.mkdirSync(generatedAppsDir, { recursive: true });
 
 const db = openDb(dbPath);
 ensureLlmSettingsTable(db);
+const nativeHarnessBindings=createNativeHarnessBindings(db);
+const nativeDshCommand=process.env.LIVEUI_NATIVE_DSH_COMMAND?.trim();
+const nativeDsh=nativeDshCommand?createDshNativeInference({
+  root:path.resolve(process.env.LIVEUI_NATIVE_DSH_ROOT||path.join(path.dirname(dbPath),'native-dsh-workers')),
+  projectRoot:root,command:nativeDshCommand,
+  args:process.env.LIVEUI_NATIVE_DSH_ARGS?JSON.parse(process.env.LIVEUI_NATIVE_DSH_ARGS):undefined,
+  timeoutMs:Number(process.env.LIVEUI_NATIVE_DSH_TIMEOUT_MS||120000),
+  maxConcurrent:Number(process.env.LIVEUI_NATIVE_DSH_MAX_CONCURRENT||4),
+}):undefined;
 const liveuiagentRuntime = createLiveUIRuntime(db, { registryRoot: generatedAppsDir, projectRoot: root });
 const agentGateway = createScheduledAgentGateway(liveuiagentRuntime);
 const app = express();
@@ -58,14 +69,16 @@ const completeApps=createCompleteApps(db,personal,requestUser,llmConfigFromReque
 const runtimeSettings=createRuntimeSettings(db,{
   userOf:requestUser,
   defaultHarness:process.env.LIVEUI_DEFAULT_HARNESS==='dsh'?'dsh':'native',
+  appHarnessOf:(req,appId)=>nativeHarnessBindings.get(requestUser(req),appId),
   choicesOf:req=>[
     {id:'native',label:'LiveUIAgent',available:true},
-    {id:'dsh',label:'DeepSeek Harness',available:completeApps.configured&&Boolean(requestUser(req)),
-      ...(!completeApps.configured?{reason:'DSH service is not configured'}:!requestUser(req)?{reason:'Sign in to use DeepSeek Harness'}:{})},
+    {id:'dsh',label:'DeepSeek Harness',available:Boolean(nativeDsh||completeApps.configured)&&Boolean(requestUser(req)),
+      ...(!nativeDsh&&!completeApps.configured?{reason:'DSH service is not configured'}:!requestUser(req)?{reason:'Sign in to use DeepSeek Harness'}:{})},
   ],
   async modelOf(req,harness) {
     const view=llmSettingsView(db,requestUser(req));
     if(harness==='native')return {id:view.effective.model,source:view.effective.keySource,configurable:true};
+    if(nativeDsh)return {id:view.effective.model,source:view.effective.keySource,configurable:true,providerConfigurable:true,delivery:'native'};
     try {
       const capability=await completeApps.capabilities(req);
       return {id:view.effective.model||capability.model,source:view.effective.keySource,configurable:Boolean(capability.modelSelection),providerConfigurable:Boolean(capability.providerOverride),runnerDefault:capability.model};
@@ -89,6 +102,12 @@ function llmConfigFromRequest(req: express.Request): LlmRuntimeConfig | undefine
   const resolved = resolveLlm(db, requestUser(req), requested);
   for (const warning of resolved.warnings) console.warn(`[llm] ${requestUser(req) || 'shared'}: ${warning}`);
   if (resolved.llm) resolved.llm.personalContext = JSON.stringify(personal.context(requestUser(req), String(body.appId || body.selectedAppId || 'global')));
+  if(resolved.llm && runtimeSettings.forRequest(req,String(body.appId||body.selectedAppId||'')||undefined)==='dsh'
+    && !String(body.appId||body.selectedAppId||'').startsWith('dsh_') && body.delivery!=='html') {
+    if(!nativeDsh)throw Object.assign(new Error('Native DSH inference transport is not configured'),{code:'dsh_native_unavailable',status:503});
+    const provider=resolved.llm.apiBase&&resolved.llm.apiKey?{apiBase:resolved.llm.apiBase,apiKey:resolved.llm.apiKey}:undefined;
+    resolved.llm.chatCompletion=(request,options)=>nativeDsh.chatCompletion(request,{timeoutMs:options?.timeoutMs??120000,provider});
+  }
   return resolved.llm;
 }
 
@@ -122,6 +141,7 @@ function errorPayload(err: any) {
     ...(err?.scheduler ? { scheduler: err.scheduler } : {}),
     ...(err?.trace ? { trace: err.trace } : {}),
     ...(err?.artifactsDir ? { artifactsDir:err.artifactsDir } : {}),
+    ...(err?.workflowExecution ? { workflowExecution:err.workflowExecution } : {}),
   };
 }
 
@@ -142,7 +162,7 @@ async function respondWithProgress(
   const startedAt = Date.now();
   const llm = llmConfigFromRequest(req);
   const owner = requestUser(req);
-  const execute=async()=>{await personal.prepare(req,llm);const result=await exec(llm);return result&&typeof result==='object'?{...result,execution:{harness:'native',model:llm?.model||llmSettingsView(db,owner).effective.model},contextualMemory:personal.requestStatus(req)}:result;};
+  const execute=async()=>{await personal.prepare(req,llm);const result=await exec(llm);return result&&typeof result==='object'?{...result,execution:{harness:runtimeSettings.forRequest(req,req.body?.appId||req.body?.selectedAppId),delivery:'native',model:llm?.model||llmSettingsView(db,owner).effective.model},contextualMemory:personal.requestStatus(req)}:result;};
   const taskRowId = taskLabel ? recordTaskStart(owner, taskLabel) : 0;
   const finishTask = (status: 'done' | 'error', text: string, code?: string) => {
     if (!taskRowId) return;
@@ -213,6 +233,7 @@ app.post('/agent/run', async (req, res, next) => {
       llm,
     });
       if (result.type === 'app_created' && result.appSummary?.appId) {
+        nativeHarnessBindings.save(requestUser(req),result.appSummary.appId,runtimeSettings.forRequest(req));
         try { await personal.inheritAppearance(requestUser(req),result.appSummary.appId,prompt,llm); }
         catch { console.warn('[personal] New app created; appearance adaptation failed, saved preferences retained.'); }
       }
@@ -278,7 +299,7 @@ app.post('/agent/patch-app', async (req, res, next) => {
       user: requestUser(req),
       llm,
     });
-    res.json({...result,execution:{harness:'native',model:llm?.model||llmSettingsView(db,requestUser(req)).effective.model}});
+    res.json({...result,execution:{harness:runtimeSettings.forRequest(req,body.appId),delivery:'native',model:llm?.model||llmSettingsView(db,requestUser(req)).effective.model}});
   } catch (e) { next(e); }
 });
 

@@ -14,6 +14,7 @@ export function createRuntimeSettings(db: Database.Database, options: {
   choicesOf: (req: express.Request) => HarnessChoice[];
   modelOf: (req: express.Request, harness: HarnessId) => Promise<Record<string, unknown>>;
   defaultHarness?: HarnessId;
+  appHarnessOf?: (req: express.Request, appId: string) => HarnessId | undefined;
 }) {
   db.exec(`CREATE TABLE IF NOT EXISTS user_runtime_settings (
     owner TEXT PRIMARY KEY, harness TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -31,7 +32,7 @@ export function createRuntimeSettings(db: Database.Database, options: {
   function selected(req: express.Request): HarnessId { return saved(req)?.harness ?? options.defaultHarness ?? 'native'; }
   function forRequest(req: express.Request, appId?: string): HarnessId {
     const explicit = req.body?.harness;
-    const appHarness: HarnessId | undefined = appId ? (appId.startsWith('dsh_') ? 'dsh' : 'native') : undefined;
+    const appHarness: HarnessId | undefined = appId ? (options.appHarnessOf?.(req,appId) ?? (appId.startsWith('dsh_') ? 'dsh' : 'native')) : undefined;
     if (explicit !== undefined) {
       const harness = validate(req, explicit);
       if (appHarness && harness !== appHarness) {

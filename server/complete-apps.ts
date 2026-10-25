@@ -1,3 +1,4 @@
+import { usesHtmlDelivery } from './native-harness.js';
 import { withActionDeadline, remainingActionMs } from './action-deadline.js';
 import type express from 'express';
 import type Database from 'better-sqlite3';
@@ -320,7 +321,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       try {
         const appId = req.body?.selectedAppId;
         const harness = options.harnessFor ? options.harnessFor(req,appId) : (req.body?.completeApp===true ? 'dsh' : 'native');
-        if (harness === 'dsh') void run(req,res,next,appId); else next();
+        if (harness === 'dsh' && usesHtmlDelivery(req.body,appId)) void run(req,res,next,appId); else next();
       } catch(e) { next(e); }
     });
     app.post('/agent/patch-app',async(req,res,next)=>{
