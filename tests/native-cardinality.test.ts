@@ -29,3 +29,8 @@ test('actual persisted runtime renders and reopens bounded cardinalities with al
  }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
  }
 });
+
+test('legal five and six bound buttons have no obsolete four-button score penalty; seven remains overcrowded',()=>{
+ const base=evaluateRenderedGui({appPackage:pkg(1,4)});
+ for(const count of [5,6,7]){const p=pkg(1,4);const nodes=p.ui.meta.a2ui.messages[0].updateComponents.components;for(let i=4;i<count;i++){nodes[0].children.push(`button${i}`);nodes.push({id:`button${i}`,component:'Button',child:`label${i}`,action:{event:{name:'actions.save0',context:{entry:{path:'/draft/slots/entry_0'}}}}},{id:`label${i}`,component:'Text',text:'Save item'});}const result=evaluateRenderedGui({appPackage:p});assert.equal(result.checks.noOvercrowdedDefaultRender,count<=6);if(count>6)assert.equal(result.passed,false);assert.equal(result.scores.interactionNaturalness,base.scores.interactionNaturalness-(count>6?10:0));}
+});

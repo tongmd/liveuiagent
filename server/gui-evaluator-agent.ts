@@ -315,6 +315,7 @@ export function evaluateRenderedGui(input: { appPackage: AppPackage; appId?: str
   addFinding(checks.everyButtonHasContext, 'One or more visible buttons do not carry action context.', true);
   addFinding(checks.defaultRenderHasUsableFlow, 'Default render does not present input before action with visible result feedback.', true);
   addFinding(checks.noInternalCopyInDefaultRender, 'Default render leaks internal/debug/backend copy.', true);
+  addFinding(metrics.buttonCount <= 6, 'Rendered GUI exceeds the bound of four composer and two row buttons.', true);
   addFinding(checks.noOvercrowdedDefaultRender, 'Default render is likely overcrowded.', false);
   addFinding(checks.noOversizedPrimaryText, 'Primary/high-emphasis text is too long for a polished app surface.', false);
   addFinding(checks.fieldLabelsAreReadable, 'Input labels are generic or too long.', true);
@@ -340,7 +341,7 @@ export function evaluateRenderedGui(input: { appPackage: AppPackage; appId?: str
   const interactionNaturalness = clampScore(100
     - (checks.defaultRenderHasUsableFlow ? 0 : 25)
     - (metrics.textFieldCount > 6 ? 10 : 0)
-    - (metrics.buttonCount > 4 ? 10 : 0)
+    - (metrics.buttonCount > 6 ? 10 : 0)
     - (checks.everyButtonHasContext ? 0 : 15));
   const crossPlatformReadiness = clampScore(100
     - (surface.renderer === '@a2ui/react' ? 0 : 12)
