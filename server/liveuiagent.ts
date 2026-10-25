@@ -2970,7 +2970,7 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
         detail: compactText(typeof item.detail === 'string' && item.detail.trim() ? item.detail : "Created", 100),
         // 行级动作按钮的身份载体:entityName 是未折叠原名(display name 带 group 前缀
         // 且可能截断,不能当身份),id 供后端精确寻址。旧设计不绑这两个路径,惰性无害。
-        entityName: compactText(bareName, 64),
+        entityName: bareName.trim(),
         id: opaqueIdentity(item.id),
         // Badge 用的分组标签:grounding 已经写了 group,以前只被折进 name 前缀里。
         // 没有 group 的记录给空串 —— Hl 对 null/缺失会抛错,空串则安全地渲染为无徽章。
@@ -7210,9 +7210,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       if (action.perItem === true) {
         try {
           assertRowActionPayload(action, rawPayload, requiredArray<BusinessSlotSpec>((stored.runtimeState.interaction as InteractionModel)?.businessFields, 'perItem action needs declared business fields').map(field => field.name),
-            (Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : []).map((row: any) => ({ entityName: compactText(String(row.name || ''), 64), entityId: opaqueIdentity(row.id), appRecordId:appRecordIdentity(row.appRecordId) })),
+            (Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : []).map((row: any) => ({ entityName: String(row.name || '').trim(), entityId: opaqueIdentity(row.id), appRecordId:appRecordIdentity(row.appRecordId) })),
             (stored.appPackage.ui.meta as any)?.a2ui, actionId);
-          if(rawPayload.appRecordId){const row=(stored.runtimeState.entities as any[]).find(row=>appRecordIdentity(row.appRecordId)===rawPayload.appRecordId&&opaqueIdentity(row.id)===rawPayload.entityId&&compactText(String(row.name||''),64)===rawPayload.entityName);assertLocalRowRecordIdentity(db,{owner:stored.owner??'',appId:stored.appId,appRecordId:rawPayload.appRecordId,name:String(row?.name||''),fields:appRecordFields((stored.runtimeState.interaction as InteractionModel).businessFields)});}
+          if(rawPayload.appRecordId){const row=(stored.runtimeState.entities as any[]).find(row=>appRecordIdentity(row.appRecordId)===rawPayload.appRecordId&&opaqueIdentity(row.id)===rawPayload.entityId&&String(row.name||'').trim()===rawPayload.entityName);assertLocalRowRecordIdentity(db,{owner:stored.owner??'',appId:stored.appId,appRecordId:rawPayload.appRecordId,name:String(row?.name||''),fields:appRecordFields((stored.runtimeState.interaction as InteractionModel).businessFields)});}
         } catch (error) {
           // This is a pre-dispatch contract rejection, not an unknown write outcome.
           throw httpError((error as Error).message, 400);
@@ -7234,7 +7234,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       // 行内实体按钮携带的精确目标(名字+id):流向 grounding 契约与执行器,
       // 后端必须按 id 恰好操作这一个对象。
       const targetEntity = typeof rawPayload.entityName === 'string' && (rawPayload.entityName as string).trim()
-        ? { name: compactText(String(rawPayload.entityName), 64), id: opaqueIdentity(rawPayload.entityId),...(rawPayload.appRecordId?{appRecordId:appRecordIdentity(rawPayload.appRecordId)}:{}) }
+        ? { name: String(rawPayload.entityName).trim(), id: opaqueIdentity(rawPayload.entityId),...(rawPayload.appRecordId?{appRecordId:appRecordIdentity(rawPayload.appRecordId)}:{}) }
         : null;
       // Validate the entire graph before any external side effect, then run each
       // worker with its own role and the previous workers' structured handoffs.
