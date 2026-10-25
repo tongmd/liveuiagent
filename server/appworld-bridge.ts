@@ -65,6 +65,8 @@ export type AppWorldCallResult = {
   dbChanges: AppWorldDbChangeSummary | null;
 };
 
+export type AppWorldClock = {dateTime: string; timezone: 'UTC' | 'offset' | 'unspecified'; source: 'appworld:/date_time'};
+
 export type AppWorldBridge = {
   config: AppWorldConfig;
   // 桥自注册身份的邮箱(oracle@liveuiagent.dev):金钱归一化层需要知道"付款人=我"的地址。
@@ -74,6 +76,7 @@ export type AppWorldBridge = {
   findCapability(id: string): Promise<AppWorldToolCapability | undefined>;
   callTool(id: string, payload: Record<string, unknown>): Promise<AppWorldCallResult>;
   snapshotDb(label?: string): Promise<AppWorldDbSnapshot>;
+  getClock?(): Promise<AppWorldClock | null>;
 };
 
 function compactText(input: string, max = 120) {
@@ -571,6 +574,14 @@ export function createAppWorldBridge(projectRoot: string): AppWorldBridge | null
   return {
     config,
     identityEmail: oracleIdentity.email,
+    async getClock() {
+      try {
+        const value = await fetchJson(`${config.apiBase}/date_time`, {label: 'AppWorld current clock', timeoutMs: Math.min(config.timeoutMs, 3000)});
+        const dateTime = String((value as Record<string, unknown>)?.date_and_time || '');
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?$/.test(dateTime) || !Number.isFinite(Date.parse(dateTime))) return null;
+        return {dateTime, timezone: dateTime.endsWith('Z') ? 'UTC' : /[+-]\d{2}:\d{2}$/.test(dateTime) ? 'offset' : 'unspecified', source: 'appworld:/date_time'};
+      } catch { return null; } // A missing/unavailable service clock falls back to the real host clock.
+    },
     getCapabilities: discoverTools,
     getAppDescriptions,
     findCapability,

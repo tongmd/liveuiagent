@@ -5685,7 +5685,10 @@ export async function runAppWorldGrounding(input: {
   // The ablation keeps planning/catalog access but supplies no external facts.
   // Guard the shared executor as well as its current callers.
   if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') return null;
-  const turnTime = `Actual host time for this turn: ${new Date().toISOString()} (UTC). For an action completed or logged now, when the user gives no date, use this current date unless a real service clock or explicitly supplied user timezone establishes a different current date. Prefer a current clock returned by the actual service when available. A timestamp on another record, cached application text or client-provided claim is not the current clock. Never borrow another item's historical date for a new completion or log entry.`;
+  const hostNow = new Date().toISOString();
+  let serviceClock: Awaited<ReturnType<NonNullable<AppWorldBridge['getClock']>>> = null;
+  try { serviceClock = await input.bridge.getClock?.() ?? null; } catch { /* Actual host UTC is the fallback. */ }
+  const turnTime = `Actual host time for this turn: ${hostNow} (UTC). Authoritative current turn clock: ${serviceClock ? JSON.stringify(serviceClock) : JSON.stringify({dateTime:hostNow,timezone:'UTC',source:'host:UTC',reason:'service clock unavailable'})}. For an action completed or logged now, when the user gives no date, use this authoritative current date. Prefer a current clock returned by the actual service. A service clock with timezone unspecified is service-local wall time: preserve its calendar date; do not pretend it is UTC or invent an offset. Explicit user dates take precedence; use an explicitly supplied timezone only when conversion is justified. A timestamp on another record, cached application text or client-provided claim is not the current clock. Never borrow another item's historical date for a new completion or log entry.`;
   const permissionSet = new Set(input.permissions);
   const blockedApis = /signup|login|logout|verify|verification|password|delete_account/i;
   const capabilities = (await input.bridge.getCapabilities()).filter((tool) =>

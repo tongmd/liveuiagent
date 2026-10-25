@@ -12,7 +12,7 @@ function hostController() {
   const key = 'liveui.observed-service-result.v1';
   let busy = false, observed;
   const text = value => typeof value === 'string' ? value : String(value ?? '');
-  function render(value) {
+  function render(value, notify = true) {
     result.textContent = text(value.text);
     entities.replaceChildren(); stats.replaceChildren();
     for (const item of Array.isArray(value.data?.entities) ? value.data.entities : []) {
@@ -24,14 +24,8 @@ function hostController() {
       const term = document.createElement('dt'), detail = document.createElement('dd');
       term.textContent = text(item.label); detail.textContent = text(item.value); stats.append(term, detail);
     }
-    document.dispatchEvent(new CustomEvent('liveui:result', {detail: value}));
+    if (notify) document.dispatchEvent(new CustomEvent('liveui:result', {detail: value}));
   }
-  try {
-    const cached = JSON.parse(localStorage.getItem(key) || 'null');
-    if (cached?.schemaVersion === 1 && cached.result?.ok === true && typeof cached.result.text === 'string') {
-      observed = cached.result; render(observed);
-    }
-  } catch { /* An invalid cache is not evidence of a service outcome. */ }
   async function perform(task, context = {}) {
     if (busy) throw Error('Wait for the current task to finish');
     const request = text(task).trim();
@@ -57,6 +51,14 @@ function hostController() {
   }
   const api = {perform, getContext: () => ({}), get lastResult() { return observed; }};
   window.liveuiapp = api;
+  try {
+    const cached = JSON.parse(localStorage.getItem(key) || 'null');
+    if (cached?.schemaVersion === 1 && cached.result?.ok === true && typeof cached.result.text === 'string') {
+      observed = cached.result; render(observed, false);
+    }
+  } catch { /* An invalid cache is not evidence of a service outcome. */ }
+  const ready = () => { document.dispatchEvent(new CustomEvent('liveui:ready', {detail: api})); if (observed) document.dispatchEvent(new CustomEvent('liveui:result', {detail: observed})); };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', ready, {once: true}); else queueMicrotask(ready);
   form.addEventListener('submit', event => { event.preventDefault(); void perform(input.value, api.getContext()); });
 }
 
