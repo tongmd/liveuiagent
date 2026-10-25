@@ -6388,22 +6388,28 @@ export async function designAppPreview(input: {
   throw httpError(`Preview Designer Agent failed to produce a valid preview after ${designAttempts()} attempt(s)`, 502);
 }
 
-async function runActionTools(action: Record<string, any>, payload: Record<string, unknown>, appWorldBridge?: AppWorldBridge | null) {  const steps = actionToolSteps(action);
+export async function runActionTools(action: Record<string, any>, payload: Record<string, unknown>, appWorldBridge?: AppWorldBridge | null) {
+  const steps = actionToolSteps(action);
   const results: Record<string, unknown> = {};
   // These explicit AppWorld/MCP steps and web prefetches otherwise execute
   // before the action's grounding switch. Off means no external task facts.
   if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') return results;
+  const businessPermissions = (Array.isArray(action.permissions) ? action.permissions : [])
+    .map(String).filter(permission => permission.startsWith('tool.appworld.') && permission !== 'tool.appworld.db.snapshot');
+  // Validate the whole prefetch list before even a web prefetch. AppWorld and
+  // MCP declarations are not executable prefetches: the grounded executor is
+  // the only business-write owner for this UI turn.
   for (const step of steps) {
-    // Orchestrator 有时给动作声明一个不带 toolId 的裸 tool.mcp.call 步(意为
-    // "这轮会碰真实 API"),具体调用由 grounded turn 的 agent 决定 —— 这种声明步
-    // 直接跳过,否则整轮在 grounding 前就 400(iter18: Review tasks 三连死)。
-    if (String(step.capability) === 'tool.mcp.call'
-      && !String(step.toolId || step.tool || step.name || payload.toolId || payload.tool || payload.api || payload.apiName || '').trim()) {
-      continue;
+    const capability = String(step.capability || '');
+    if ((capability === 'tool.mcp.call' || capability.startsWith('tool.appworld.')) && !businessPermissions.length) {
+      throw httpError('explicit AppWorld tool steps require AppWorld permissions and the single grounded executor', 403);
     }
+  }
+  for (const step of steps) {
+    if (String(step.capability) === 'tool.mcp.call' || String(step.capability).startsWith('tool.appworld.')) continue;
     // 公网工具预取失败 = 跳过这个预取,不杀整回合:表单里没有 URL/城市/币种是常态
     // ("标记已读"回合没有链接字段),回合的真正工作在 grounding/local agent。
-    // AppWorld/mcp 步保持抛错语义(那是配置错误,必须暴露)。
+    // AppWorld/MCP已交给单点grounding执行器，不在这里执行。
     if (findWebTool(String(step.capability))) {
       try {
         results[String(step.capability)] = await runToolStep(step, payload, appWorldBridge);
