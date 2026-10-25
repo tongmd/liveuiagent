@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import http from 'node:http';import Database from 'better-sqlite3';
 import {groundingViewContext} from '../server/grounding-view.js';
 import {runAppWorldGrounding,createLiveUIRuntime} from '../server/liveuiagent.js';
@@ -51,7 +52,7 @@ test('actual runtime commits verified empty rows through reopen, but failed or o
    if(sys.includes('You are the backend workflow'))return reply(decision++===0?{calls:[{api:'read_items',args:{}}]}:{done:true,summary:'No current parcels',...(mode==='missing'?{}:{entities:malformed[mode]??[]}),stats:[]});
    return reply(sys.includes('independently verify')?{pass:mode!=='review_failed',reason:mode==='review_failed'?'Independent final review rejected this result':'Observed current empty parcel list'}:{proceed:true,instructions:'Read the current parcels only',constraints:[],expectedOutcome:'Verified current list'});
   };
-  const invoke=()=>f.runtime.action({appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{subject:'Refresh current parcels',scope:'All',filter:'All',entities:[],authoritativeEntities:true},llm:{model:'fixture-only',chatCompletion}}as any);
+  const invoke=()=>f.runtime.action({requestId:randomUUID(),appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{subject:'Refresh current parcels',scope:'All',filter:'All',entities:[],authoritativeEntities:true},llm:{model:'fixture-only',chatCompletion}}as any);
   if(mode==='verified')await invoke();else await assert.rejects(invoke(),/did not pass verification|native result review rejected/);
   const stored=JSON.parse(f.stored().runtime_state_json);assert.deepEqual(stored.entities,mode==='verified'?[]:[{id:'old-1',name:'Old parcel',detail:'Previously observed'}]);
   assert.deepEqual(stored.entityStats,mode==='verified'?[]:[{label:'Parcels',value:'1'}]);
@@ -72,7 +73,7 @@ test('repair round must explicitly return its own empty list before clearing per
    }
    return reply(sys.includes('independently verify')?{pass:true,reason:'Verified current empty list'}:{proceed:true,instructions:'Read current parcels only',constraints:[],expectedOutcome:'Verified current list'});
   };
-  const invoke=()=>f.runtime.action({appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{subject:'Refresh current parcels',scope:'All',filter:'All'},llm:{model:'fixture-only',chatCompletion}}as any);
+  const invoke=()=>f.runtime.action({requestId:randomUUID(),appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{subject:'Refresh current parcels',scope:'All',filter:'All'},llm:{model:'fixture-only',chatCompletion}}as any);
   if(secondRound==='explicit')await invoke();else await assert.rejects(invoke(),/explicit current primary entities array missing/);
   assert.equal(reviews,2,'first explicit [] is rejected; only the second round is approved by the mock evaluator');assert.equal(decisions,3,'one actual fixture read followed by exactly two done responses');
   const stored=JSON.parse(f.stored().runtime_state_json);assert.deepEqual(stored.entities,secondRound==='explicit'?[]:[{id:'old-1',name:'Old parcel',detail:'Previously observed'}]);

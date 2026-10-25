@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
@@ -22,7 +23,7 @@ function setup(t:any,timeoutMs:number|null=100){
  const state={sourcePrompt:'Create local records',subject:'Records',functionSignature:'fixture',interaction,orchestration,intentActionCount:0,recentActions:[]};
  db.prepare(`INSERT INTO agent_apps(app_id,name,description,package_json,data_json,runtime_state_json,version,owner) VALUES('a','Fixture','Fixture',?,?,?,'1.0.0','alice')`).run(JSON.stringify(pkg),JSON.stringify({records:[]}),JSON.stringify(state));
  const stored=()=>db.prepare('SELECT data_json,runtime_state_json FROM agent_apps WHERE app_id=?').get('a');
- const invoke=(chatCompletion:any,extra={})=>runtime.action({appId:'a',actionId:'record.run',user:'alice',eventPayload:{request:'Create one record',context:'Local fixture',notes:'One record',deadlineMs:99999999},llm:{model:'fixture',chatCompletion},...extra} as any);
+ const invoke=(chatCompletion:any,extra={})=>runtime.action({requestId:randomUUID(),appId:'a',actionId:'record.run',user:'alice',eventPayload:{request:'Create one record',context:'Local fixture',notes:'One record',deadlineMs:99999999},llm:{model:'fixture',chatCompletion},...extra} as any);
  return{runtime,db,stored,invoke};
 }
 function response(request:any){const system=request.messages[0].content;return {choices:[{message:{content:JSON.stringify(system.includes('independently verify')?{pass:true,reason:'Actual local record'}:system.includes('backend agent')?{result:'Created record',entities:[{name:'Actual record',detail:'Created locally'}],stats:[]}:{proceed:true,instructions:'Execute only this request',constraints:[],expectedOutcome:'One record'})}}]};}

@@ -1,3 +1,4 @@
+import {requireActionRequestId,installHostActionNonces} from './native-action-request.js';
 import {opaqueIdentity} from './opaque-identity.js';
 import {nativeViewBudget} from './native-view-budget.js';
 import {authorizedGroundingCapabilities,nativeActionContext,nativeActionContextPolicy} from './native-action-context.js';
@@ -4614,6 +4615,7 @@ function requiredInitialBusinessValue(field: BusinessSlotSpec) {
 function makePackage(appId: string, plan: AgentPlan): AppPackage {
   const ui = makeUi(plan);
   (ui.meta as Record<string,unknown>).hostCommand=hostCommandDescriptor();
+  (ui.meta as Record<string,unknown>).hostTransport={schemaVersion:2};
   const icon = makeIconAsset(plan);
   const draft: Omit<AppPackage, 'safetyReport'> = {
     manifest: makeManifest(appId, plan),
@@ -4634,6 +4636,7 @@ function makePackage(appId: string, plan: AgentPlan): AppPackage {
         functionSignature: plan.signature,
         intentActionCount: 0,
         hostCommandRequestId:randomUUID(),
+        hostTransportRequestId:randomUUID(),
         intentResult: plan.result,
         proposal: plan.proposal,
         orchestration: plan.orchestration,
@@ -6818,6 +6821,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
     };
     stored.runtimeState = {
       ...stored.runtimeState,
+      ...installHostActionNonces(nextPackage.memory?.defaultState,stored.runtimeState),
       sourcePrompt: nextPrompt,
       subject: plan.subject,
       functionSignature: plan.signature,
@@ -7049,6 +7053,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         data,
         owner: String(input.user || '').trim().slice(0, 60),
         runtimeState: {
+          ...installHostActionNonces(appPackage.memory?.defaultState),
           selectedRecordId: null,
           platform: requiredPlatform(input.platform),
           sourcePrompt: plan.sourcePrompt,
@@ -7150,7 +7155,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       return removeAgentApp(input);
     },
 
-    async action(input: { appId: string; actionId: string; eventPayload?: unknown; clientState?: unknown; platform?: Platform; llm?: LlmRuntimeConfig; user?: string }) {
+    async action(input: { appId: string; actionId: string; requestId:string; eventPayload?: unknown; clientState?: unknown; platform?: Platform; llm?: LlmRuntimeConfig; user?: string }) {
       return withActionDeadline(Date.now() + nativeActionTimeoutMs, async () => {
       // 同应用写互斥:调度器只串行同 fairness 键,patch 经 run:<uuid> 键进来时
       // 会和本回合并行 —— 进程内锁保证同一应用的读-改-写不交叠。
@@ -7163,13 +7168,19 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const stored = getOwnedApp(db, input.appId, String(input.user || '').trim().slice(0, 60));
       if (!stored) throw httpError(`app not found: ${input.appId}`, 404);
       const actionId = normalizeActionId(input.actionId);
+      const requestId=requireActionRequestId(input.requestId);
+      const priorReceipt=commandReceipts.prior({owner:String(input.user||'').trim(),appId:stored.appId,requestId,actionId,eventPayload:input.eventPayload});
+      if(priorReceipt){
+        if(priorReceipt.state==='completed')return priorReceipt.response;
+        throw Object.assign(httpError('This action has an unresolved or failed receipt; no operation was repeated.',409),{code:'action_request_unresolved'});
+      }
       if(actionId===HOST_COMMAND_PREPARE){
         businessSurfaceWithoutHostCommand(stored.appPackage.ui.meta.a2ui,(stored.appPackage.ui.meta as any).hostCommand);
         const event=parseHostCommandPrepareEvent(input.eventPayload),owner=String(input.user||'').trim();
         if(!owner)throw httpError('authenticated owner required',403);
         commandReceipts.assertAppResolved(owner,stored.appId);
         const prior=commandReceipts.lookup({owner,appId:stored.appId,requestId:event.previousRequestId});
-        if(prior?.state!=='failed'||stored.runtimeState.hostCommandPrepareAllowed!==true||event.previousRequestId!==stored.runtimeState.hostCommandRequestId)throw httpError('New request is available only after this command was proven not started.',409);
+        if(prior?.state!=='failed'||prior.action_id!==HOST_COMMAND_ACTION||typeof prior.event_payload_sha256!=='string'||!prior.execution_id||stored.runtimeState.hostCommandPrepareAllowed!==true||event.previousRequestId!==stored.runtimeState.hostCommandRequestId)throw httpError('New request is available only after this command was proven not started.',409);
         stored.runtimeState={...stored.runtimeState,hostCommandRequestId:randomUUID(),hostCommandPrepareAllowed:false,hostCommandRenewedFrom:event.previousRequestId};
         saveStoredApp(db,options.registryRoot,stored);
         return {appPackage:stored.appPackage,appData:stored.data,runtimeState:stored.runtimeState,messages:['New request ready. Review your draft and press Execute.'],trace:[]};
@@ -7180,23 +7191,21 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const hostRoute = isCommand ? hostCommandRoute(stored.appPackage.manifest.permissions) : undefined;
       const action = hostRoute?.action ?? requiredObject<Record<string, any>>((stored.appPackage.actions as any).actions, `app ${input.appId} missing actions`)[actionId];
       if (!action) throw httpError(`action not found: ${actionId}`, 404);
-      const rawPayload = commandEvent ? {...commandEvent} : extractPayload(input.eventPayload);
+      const rawPayload = commandEvent ? {...commandEvent} : structuredClone(extractPayload(input.eventPayload));
       const owner = String(input.user || '').trim();
       if(!owner) throw httpError('authenticated owner required for durable action admission',403);
-      // Only an already-completed duplicate returns its prior receipt. It never
-      // replays stale state patches over a later app revision or enters tools.
-      if(commandEvent){
-        const binding={owner,appId:stored.appId,requestId:commandEvent.requestId,command:commandEvent.command,eventPayload:input.eventPayload,actionId};
-        const existing=commandReceipts.lookup(binding);
-        if(!existing)commandReceipts.assertAppResolved(owner,stored.appId);
-        if(!existing && commandEvent.requestId!==(stored.appPackage.ui.meta.a2ui as any)?.initialData?.hostCommand?.requestId)throw httpError('command request nonce does not match the current host block',400);
-        const admission=commandReceipts.begin(binding);
-        if(!admission.admitted){
-          if(admission.state!=='completed')throw Object.assign(httpError('This command has an unresolved or failed receipt; no operation was repeated.',409),{commandReceipt:admission});
-          return {ok:true,replayed:true,commandReceipt:admission,messages:['This request previously completed. No operation was repeated; refresh to inspect current state.']};
-        }
-        receiptBinding=binding;
-      } else commandReceipts.assertAppResolved(owner,stored.appId);
+      // Identity belongs to the logical user click, not to each HTTP arrival.
+      // Command UUID is host-issued; ordinary clients carry their own stable UUID.
+      if(commandEvent&&requestId!==requireActionRequestId(commandEvent.requestId))throw httpError('top-level requestId must match the visible command nonce',400);
+      const binding={owner,appId:stored.appId,requestId,command:commandEvent?.command,eventPayload:input.eventPayload,actionId};
+      const existing=commandReceipts.lookup(binding);
+      if(commandEvent&&!existing&&commandEvent.requestId!==(stored.appPackage.ui.meta.a2ui as any)?.initialData?.hostCommand?.requestId){commandReceipts.assertAppResolved(owner,stored.appId);throw httpError('command request nonce does not match the current host block',400);}
+      const admission=commandReceipts.begin(binding);
+      if(!admission.admitted){
+        if(admission.state==='completed')return admission.response;
+        throw Object.assign(httpError('This action has an unresolved or failed receipt; no operation was repeated.',409),{code:'action_request_unresolved'});
+      }
+      receiptBinding=binding;
       if (action.perItem === true) {
         try {
           assertRowActionPayload(action, rawPayload, requiredArray<BusinessSlotSpec>((stored.runtimeState.interaction as InteractionModel)?.businessFields, 'perItem action needs declared business fields').map(field => field.name),
@@ -7232,10 +7241,6 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const entryAgent = requiredText(action.agent, `action ${actionId} missing entry agent`, 80);
       if (entryAgent !== route.agentChain[0]) throw httpError(`action ${actionId} entry agent does not match its graph`, 500);
       const agentSpecs = hostRoute?.specs ?? requiredObject<Record<string, any>>(stored.appPackage.agents?.agents, `app ${input.appId} missing agents`);
-      if(!receiptBinding){
-        receiptBinding={owner,appId:stored.appId,requestId:randomUUID(),command:JSON.stringify(input.eventPayload),eventPayload:input.eventPayload,actionId};
-        commandReceipts.begin(receiptBinding);
-      }
       nativeWorkflow = new NativeWorkflow({
         appId: stored.appId, owner: String(input.user || '').trim(), actionId,
         chain: route.agentChain, specs: Object.fromEntries(Object.entries(agentSpecs).map(([id, spec]) => [id, { ...spec, model: input.llm?.model || process.env.LIVEUIAGENT_ORCHESTRATOR_MODEL || '' }])), handoffEdges: route.handoffs,
@@ -7272,7 +7277,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       remainingActionMs();
       const executionLlm = input.llm ? { ...input.llm, personalContext: [input.llm.personalContext || '',
         'Native worker contracts (planning, not observed facts): ' + JSON.stringify(workerHandoffs)].join('\n') } : input.llm;
-      commandReceipts.enterExecutor(receiptBinding);
+      commandReceipts.enterExecutor(receiptBinding,nativeWorkflow.executionId);
       nativeExecutionStarted = true;
       nativeWorkflow.record('execute', 'agents.executor', 'running', { originalRequest: rawPayload });
       remainingActionMs();
@@ -7408,6 +7413,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       remainingActionMs();
       db.transaction(() => {
       remainingActionMs();
+      stored.runtimeState.hostTransportRequestId=randomUUID();
       saveStoredApp(db, options.registryRoot, stored);
       const workflow = stored.appPackage.ui?.meta?.a2ui as A2UISurfaceSpec | undefined;
       if (workflow) {
@@ -7435,6 +7441,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         toolResults,
         dbChanges: appWorldTraceSummary(toolResults),
       });
+      commandReceipts.complete(receiptBinding!);
       })();
       trace(traceLog, 'Memory Agent', 'Record app turn in context memory', { actionId }, stored.runtimeState);
       nativeWorkflow.record('commit', 'agents.data', 'ok', undefined, { collection: agentResult.collection, records: agentResult.records.length });
@@ -7462,7 +7469,6 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         messages: [message],
         trace: traceLog,
       };
-      commandReceipts.complete(receiptBinding, {executionId:nativeWorkflow.executionId,status:'completed'});
       return actionResponse;
       } catch (error) {
         // A child transport/provider wrapper must not turn the exhausted host
@@ -7482,6 +7488,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         if(receiptBinding){
           if(!nativeExecutionStarted&&!hostNativeActionNotStartedProof(error))markNativeActionNotStarted(error,{executionId:nativeWorkflow?.executionId??randomUUID(),appId:input.appId,actionId:input.actionId,eventPayload:input.eventPayload});
           const receiptState=commandReceipts.fail(receiptBinding,error);
+          if(receiptState==='failed'&&receiptBinding.actionId!==HOST_COMMAND_ACTION)db.prepare("UPDATE agent_apps SET runtime_state_json=json_set(runtime_state_json,'$.hostTransportRequestId',?) WHERE app_id=? AND owner=? AND json_extract(package_json,'$.ui.meta.hostTransport.schemaVersion')=2").run(randomUUID(),input.appId,receiptBinding.owner);
           if(receiptState==='unknown')db.prepare("UPDATE agent_apps SET runtime_state_json=json_set(runtime_state_json,'$.hostCommandPrepareAllowed',json('false')) WHERE app_id=? AND owner=? AND json_type(package_json,'$.ui.meta.hostCommand')='object'").run(input.appId,receiptBinding.owner);
           if(receiptState==='failed'&&receiptBinding.actionId===HOST_COMMAND_ACTION){
             // Only the WeakMap-proof-derived failed receipt enables this read-only

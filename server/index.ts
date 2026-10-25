@@ -1,3 +1,4 @@
+import {requireActionRequestId} from './native-action-request.js';
 import {hostNativeActionNotStartedProof} from './native-action-not-started.js';
 import 'dotenv/config';
 import { createDshNativeInference } from './dsh-native-inference.js';
@@ -263,11 +264,13 @@ app.post('/agent/action', async (req, res, next) => {
     const body = requireBody(req);
     const appId = requireText(body.appId, 'appId required');
     const actionId = requireText(body.actionId, 'actionId required');
+    const requestId=requireActionRequestId(body.requestId);
     const windowId = body.windowId;  // optional: enables per-window parallelism
     console.log(`[action] start ${appId} ${actionId}${windowId ? ` window=${windowId}` : ''}`);
     await respondWithProgress(req, res, next, 'action', (llm) => agentGateway.action({
       appId,
       actionId,
+      requestId,
       windowId,
       eventPayload: requireRecord(body.eventPayload, 'eventPayload required'),
       clientState: body.clientState,

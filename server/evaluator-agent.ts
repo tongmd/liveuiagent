@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import fs from 'node:fs/promises';
 import fsSync from 'node:fs';
 import path from 'node:path';
@@ -823,6 +824,7 @@ async function executeBehaviorAction(input: {
       // 行按钮的 context(/entityName、/id)绑在行对象上 —— 与真实客户端同一条派发路径。
       const payload = resolveA2uiActionContext(rowData ?? data, event.context);
       const actionResult = await input.runtime.action({
+        requestId:rawActionId.replace(/^actions\./,'')==='host.app.command'?payload.requestId:randomUUID(),
         appId: requireText(app.appId, 'app missing appId', 120),
         actionId: rawActionId.replace(/^actions\./, ''),
         eventPayload: { ...payload, sourceComponentId: component.id },

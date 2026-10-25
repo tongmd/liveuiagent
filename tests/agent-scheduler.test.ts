@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import { AgentScheduler, createScheduledAgentGateway, planAgentRequest } from '../server/agent-scheduler.ts';
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -128,7 +129,7 @@ async function testGatewayIntegration() {
   const gateway = createScheduledAgentGateway(runtime as any, new AgentScheduler({ maxConcurrent: 2 }));
   const [state, action, created, patched, moved] = await Promise.all([
     gateway.queryState({ deadlineMs: 100 }),
-    gateway.action({ appId: 'agent_app', actionId: 'agent_turn_1.run' }),
+    gateway.action({ requestId:randomUUID(),appId: 'agent_app', actionId: 'agent_turn_1.run' }),
     gateway.run({ prompt: '生成一个可以反复输入内容的小应用' }),
     gateway.patchApp({ appId: 'agent_app', prompt: '把交互重点改成收集限制条件' }),
     gateway.patchCanvas({ canvasId: 'home', nodeId: 'node_agent_app', position: { x: 1, y: 2 } }),

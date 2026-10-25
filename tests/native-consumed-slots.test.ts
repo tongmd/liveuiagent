@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto';
 import test from 'node:test';import assert from 'node:assert/strict';
 import {consumedSlotsFromIndices,requireConsumedSlots,rowActionSlotMap,assertRowActionPayload} from '../server/native-action-slots.js';
 import {makeBusinessFields,makeFunctions,validateDesignedOverview,designAppSurface} from '../server/liveuiagent.js';
@@ -47,8 +48,8 @@ test('real runtime owner/app route rejects forged row payload before model, tool
  db.prepare('INSERT INTO agent_apps(app_id,name,description,package_json,data_json,runtime_state_json,version,owner) VALUES(?,?,?,?,?,?,?,?)').run('rows','Rows','Update rows',JSON.stringify(pkg),'{}',JSON.stringify(state),'1','alice');
  let modelCalls=0;const llm={model:'fixture',chatCompletion:async()=>{modelCalls++;throw Error('must not reach model');}};
  const payload={entityName:'Second',entityId:'two',sourceComponentId:'d_edit',new_time:'05:45',alarm_label:'Gym',amount:0,enabled:false};
- for(const bad of [{...payload,extra:'stale'},{...payload,sourceComponentId:'d_done'},{...payload,entityId:'one'},Object.fromEntries(Object.entries(payload).filter(([k])=>k!=='alarm_label'))])await assert.rejects(runtime.action({user:'alice',appId:'rows',actionId:'edit',eventPayload:bad,llm}),/Row action|Row target/);
- await assert.rejects(runtime.action({user:'bob',appId:'rows',actionId:'edit',eventPayload:payload,llm}),/app not found/);assert.equal(modelCalls,0);
+ for(const bad of [{...payload,extra:'stale'},{...payload,sourceComponentId:'d_done'},{...payload,entityId:'one'},Object.fromEntries(Object.entries(payload).filter(([k])=>k!=='alarm_label'))])await assert.rejects(runtime.action({requestId:randomUUID(),user:'alice',appId:'rows',actionId:'edit',eventPayload:bad,llm}),/Row action|Row target/);
+ await assert.rejects(runtime.action({requestId:randomUUID(),user:'bob',appId:'rows',actionId:'edit',eventPayload:payload,llm}),/app not found/);assert.equal(modelCalls,0);
  assert.deepEqual(JSON.parse((db.prepare('SELECT runtime_state_json AS state FROM agent_apps').get()as any).state),state,'rejected direct calls do not alter persisted projection');
  }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

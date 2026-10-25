@@ -1,3 +1,4 @@
+import {requireActionRequestId} from './native-action-request.js';
 import { randomUUID } from 'node:crypto';
 
 export type AgentOperation = 'run' | 'action' | 'patch_app' | 'remove_app' | 'query_state' | 'patch_canvas';
@@ -488,6 +489,7 @@ export function createScheduledAgentGateway(runtime: LIVEUIAGENTRuntime, schedul
     },
 
     action(input: any) {
+      requireActionRequestId(input?.requestId);
       return scheduler.schedule({
         operation: 'action',
         payload: input,

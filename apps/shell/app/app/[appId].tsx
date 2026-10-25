@@ -38,13 +38,21 @@ export default function GeneratedAppScreen() {
     if (!app) throw new Error(`app not found: ${appId}`);
     setBusy(true);
     try {
+      const event=eventPayload as Record<string,unknown>;
+      const requestId=actionId==='host.app.command'?event.requestId:app.runtimeState?.hostTransportRequestId;
+      if(typeof requestId!=='string'||!requestId)throw Error('Action transport nonce unavailable; reopen the app. No operation was started.');
       const data = await agentPost<any>('/agent/action', {
         appId: app.appId,
         actionId,
+        requestId,
         eventPayload,
         clientState: {},
         platform: Platform.OS,
       });
+      if(data.type==='action_receipt'){
+        if(data.schema!=='native-action-receipt-v2'||data.state!=='completed'||data.requestId!==requestId||data.appId!==app.appId||data.actionId!==actionId.replace(/^actions\./,'').trim()||data.replayed!==true||data.redispatched!==false||data.automaticRetry!==false||typeof data.executionId!=='string'||!data.executionId||!/^[a-f0-9]{64}$/.test(data.eventPayloadSha256))throw Error('Invalid action receipt; inspect current state before another operation.');
+        setMessage('Earlier request completed. No operation was repeated.');await refresh();return;
+      }
       const messages = requiredArray<string>(data.messages, 'action response missing messages');
       setMessage(requiredText(messages[0], 'action response missing first message'));
       await refresh();
