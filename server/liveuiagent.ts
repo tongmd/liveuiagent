@@ -5760,7 +5760,7 @@ async function runToolStep(step: Record<string, unknown>, payload: Record<string
 // The turn runs as analyze → propose (real API calls) → independent evaluate →
 // self-improve: a requirement agent derives a goal contract, the executor
 // grounds it one call at a time, an independent evaluator judges the evidence,
-// and the executor gets one bounded round to fix the deficiencies it found.
+// and the executor gets bounded rounds to fix the deficiencies it found.
 export async function runAppWorldGrounding(input: {
   bridge: AppWorldBridge;
   permissions: string[];
@@ -5777,7 +5777,7 @@ export async function runAppWorldGrounding(input: {
   // 语义的回合知道上一批产出了什么。
   recentTurns?: Array<Record<string, unknown>>;
   llm?: LlmRuntimeConfig;
-}): Promise<{ calls: AppWorldCallResult[]; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; deadlineExceeded?: boolean } | null> {
+}): Promise<{ calls: AppWorldCallResult[]; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; deadlineExceeded?: boolean; executionEvidence?: { attemptedApiCalls: number; successfulApiCalls: number; unknownDispatchOutcomes: number; totalApiAttemptLimit: number; zeroSuccessfulCallCause?: string } } | null> {
   // The ablation keeps planning/catalog access but supplies no external facts.
   // Guard the shared executor as well as its current callers.
   if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') return null;
@@ -5809,7 +5809,7 @@ export async function runAppWorldGrounding(input: {
   const userRequest = uniqueStrings([
     ...(input.actionLabel ? [compactText(`Tapped action: ${input.actionLabel}${input.actionDescription ? ` — ${input.actionDescription}` : ''}`, 200)] : []),
     ...(input.fields?.length
-      ? input.fields.map((field) => compactText(`${field.label}: ${field.value}`, 160))
+      ? input.fields.map((field) => `${field.label}: ${field.value}`)
       : Object.entries(input.payload)
           .filter(([key, value]) => typeof value === 'string' && !['entityName', 'entityId', 'sourceComponentId'].includes(key))
           .map(([, value]) => String(value).trim())
@@ -5861,6 +5861,15 @@ export async function runAppWorldGrounding(input: {
   // ② propose(真实执行)→ ③ 独立 evaluator 评审 → ④ 按缺口驱动的多轮修复:
   // goal 数得出缺几件,轮数跟缺口走(上限 4);一轮零新增成功调用即停(防旋转)。
   let callsAtRoundStart = 0;
+  // Count dispatch attempts, not only successful responses: failed/unknown
+  // writes also consume the hard turn bound and are never automatically replayed.
+  const totalApiAttemptLimit = 64;
+  let apiAttemptCount = 0;
+  let unknownDispatchOutcomes = 0;
+  const zeroSuccessfulCallCause = () => apiAttemptCount ? 'dispatch_without_successful_response'
+    : historyLog.some(item => item.api === '(write-verifier)') ? 'write_verifier_rejected'
+    : historyLog.some(item => item.api === '(decision)') ? 'decision_failed' : 'no_dispatch_proposed';
+  const executionEvidence = () => ({ ...(!calls.length && !webCallCount ? { zeroSuccessfulCallCause: zeroSuccessfulCallCause() } : {}), attemptedApiCalls: apiAttemptCount, successfulApiCalls: calls.length + webCallCount, unknownDispatchOutcomes, totalApiAttemptLimit });
   // Read-back 门的机械依据:实体列表必须来自"最后一次写之后"的读调用。
   // prompt 只劝不拦(联系人删除后 done 仍回旧列表,张三永远删不掉),这里硬拦。
   let lastWriteAt = -1;
@@ -5871,11 +5880,13 @@ export async function runAppWorldGrounding(input: {
   try {
   for (let round = 1; round <= 4; round++) {
     remainingActionMs();
-    callsAtRoundStart = calls.length;
+    callsAtRoundStart = calls.length + webCallCount;
+    const roundSuccessLimit = round === 1 ? 24 : 16;
     const stepBudget = round === 1 ? 6 : 4;
     for (let step = 1; step <= stepBudget; step++) {
       remainingActionMs();
-      const mustFinish = step >= stepBudget - 1 || calls.length >= 16;
+      const roundSuccesses = calls.length + webCallCount - callsAtRoundStart;
+      const mustFinish = step >= stepBudget - 1 || roundSuccesses >= roundSuccessLimit || apiAttemptCount >= totalApiAttemptLimit;
       // 单次决策调用的 provider 尖刺(180s 超时/断连)只烧一步,不杀整轮
       // (与 designer attempt 环同策略;iter21 实锤单次超时可致整例死亡)。
       let decision: Record<string, any>;
@@ -5923,7 +5934,7 @@ export async function runAppWorldGrounding(input: {
           ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}),
           previousCalls: compactHistoryLog(historyLog),
           ...(input.recentTurns?.length ? { previousTurns: input.recentTurns } : {}),
-          ...(feedback.length ? { evaluatorDeficiencies: feedback, instruction: 'An independent evaluator found these deficiencies. Fix each one with additional API calls, then finish with an updated summary and the FULL entities list for the whole turn.' } : {}),
+          ...(feedback.length ? { evaluatorDeficiencies: feedback, instruction: 'An independent evaluator found these deficiencies. Fix only the remaining gaps, reusing ids and confirmed successful writes in previousCalls. Do not replay successful creates or retry an unknown write outcome. Missing required real values must be reported, never invented. Then finish with an updated summary and the FULL entities list for the whole turn.' } : {}),
           ...(mustFinish ? { instruction: 'You must finish NOW with {"done": true, "summary": ..., "entities": [...]} naming the concrete entities.' } : {}),
         }),
       }) as Record<string, any>;
@@ -5966,7 +5977,12 @@ export async function runAppWorldGrounding(input: {
         break;
       }
       // 一次决策可以带多条独立调用(先建歌单+逐首添加),显著减少 LLM 往返。
-      const rawCalls = (Array.isArray(decision?.calls) ? decision.calls : [decision?.call]).filter(Boolean).slice(0, 10);
+      const dispatchAllowance = Math.min(10, totalApiAttemptLimit - apiAttemptCount, roundSuccessLimit - roundSuccesses);
+      if (dispatchAllowance <= 0) {
+        historyLog.push({ ok: false, api: '(dispatch-budget)', error: 'Bounded API budget reached; completion still requires evidence.' });
+        break;
+      }
+      const rawCalls = (Array.isArray(decision?.calls) ? decision.calls : [decision?.call]).filter(Boolean).slice(0, dispatchAllowance);
       if (!rawCalls.length) {
         historyLog.push({ ok: false, error: 'decision had neither calls nor done' });
         continue;
@@ -6040,6 +6056,7 @@ export async function runAppWorldGrounding(input: {
         if (webTool) {
           try {
             input.llm?.onProgress?.(`Calling web tool: ${webTool.apiName}`);
+            apiAttemptCount += 1;
             const response = await webTool.invoke(args);
             webCallCount += 1;
             historyLog.push({ api: webTool.apiName, ok: true, response: compactText(JSON.stringify(response), 800) });
@@ -6060,6 +6077,7 @@ export async function runAppWorldGrounding(input: {
           input.llm?.onProgress?.(`Calling API: ${capability.apiName}`);
           replyRecipients = mailEvidence.before(capability, args);
           bridgeAttempted = true;
+          apiAttemptCount += 1;
           const result = await input.bridge.callTool(capability.id, args);
           calls.push(result);
           mailEvidence.observe(result, calls.length, replyRecipients);
@@ -6068,15 +6086,10 @@ export async function runAppWorldGrounding(input: {
           historyLog.push({ api: capability.apiName, ok: true, response: compactText(JSON.stringify(result.response ?? ''), 400) });
         } catch (error) {
           if (bridgeAttempted && replyRecipients) mailEvidence.failedAttempt(capability, args, replyRecipients, error);
-          historyLog.push({ api: capability.apiName, ok: false, error: compactText((error as Error).message, 240) });
+          if (bridgeAttempted) unknownDispatchOutcomes += 1;
+          historyLog.push({ api: capability.apiName, ok: false, ...(bridgeAttempted ? { dispatchOutcome: 'unknown', automaticRetry: false } : {}), error: compactText((error as Error).message, 240) });
         }
       }
-    }
-    if (!calls.length && !(webCallCount > 0 && (summary || entities.length))) {
-      // 零成功调用:把最后几条尝试(含被门拦的原因)打进日志,否则 null 路径无迹可查。
-      // 纯 web 回合例外:agent 只用公网工具就完成了工作(带 summary/entities)也算真实。
-      console.warn(`[grounding] zero successful calls for ${input.appName}/${input.actionLabel}; tail: ${compactText(JSON.stringify(historyLog.slice(-4)), 500)}`);
-      return null;
     }
     if (!summary) {
       // 兜底摘要也必须是消费者语言:API 调用明细只进 trace,不上界面。
@@ -6102,16 +6115,18 @@ export async function runAppWorldGrounding(input: {
       user: JSON.stringify({ userRequest, goal, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: compactHistoryLog(historyLog), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities }),
     }) as Record<string, any>;
     evaluation = {
-      pass: verdictRaw?.pass === true && lastWriteAt <= lastReadAt,
+      pass: verdictRaw?.pass === true && lastWriteAt <= lastReadAt && calls.length + webCallCount > 0,
       deficiencies: (Array.isArray(verdictRaw?.deficiencies) ? verdictRaw.deficiencies : []).map((item: unknown) => compactText(String(item), 160)).filter(Boolean).slice(0, 5),
     };
+    if (!calls.length && !webCallCount) evaluation.deficiencies.unshift(`No successful API evidence: ${apiAttemptCount} dispatch attempts, ${unknownDispatchOutcomes} unknown dispatch outcomes; cause=${zeroSuccessfulCallCause()}. No completion is verified; do not automatically repeat writes. Planning, gate rejection and no proposed calls are different causes; inspect attempts.`);
     if(lastWriteAt > lastReadAt) evaluation.deficiencies.unshift('not_verified: no successful read-back after the last write');
     const mailGaps = mailEvidence.deficiencies();
     if (mailGaps.length) { evaluation.pass = false; evaluation.deficiencies.unshift(...mailGaps); }
     if (evaluation.pass || !evaluation.deficiencies.length) break;
-    if (round > 1 && calls.length === callsAtRoundStart) break; // 上一轮零进展,再来一轮只会重复
+    if (apiAttemptCount >= totalApiAttemptLimit) break;
+    if (round > 1 && calls.length + webCallCount === callsAtRoundStart) break; // 上一轮零进展,再来一轮只会重复
     // ④ 自我提升:带着评审缺陷再执行一轮(最后一轮失败则保留 best-effort 结果返回)。
-    if (round < 2) {
+    if (round < 4) {
       feedback = evaluation.deficiencies;
       summary = '';
     }
@@ -6120,9 +6135,9 @@ export async function runAppWorldGrounding(input: {
     if ((error as {code?:string}).code !== 'action_deadline_exceeded') throw error;
     historyLog.push({ok:false,api:'(action-deadline)',error:(error as Error).message});
     evaluation={pass:false,deficiencies:[(error as Error).message,...(lastWriteAt>lastReadAt?['not_verified: no successful read-back after the last write']:[])]};
-    return {calls,summary,entities,stats,goal,evaluation,attempts:historyLog,deadlineExceeded:true};
+    return {calls,summary,entities,stats,goal,evaluation,attempts:historyLog,deadlineExceeded:true,executionEvidence:executionEvidence()};
   }
-  return { calls, summary, entities, stats, goal, evaluation, attempts: historyLog };
+  return { calls, summary, entities, stats, goal, evaluation, attempts: historyLog, executionEvidence: executionEvidence() };
 }
 
 // 没有命中 AppWorld API 的领域(比如"每天吃什么"),后端 agent 直接完成这轮工作
@@ -7004,7 +7019,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             if (grounding.entities.length) (rawPayload as Record<string, unknown>).entities = grounding.entities;
             if (grounding.stats.length) (rawPayload as Record<string, unknown>).entityStats = grounding.stats;
             trace(traceLog, 'Grounding Requirement Agent', 'Analyze this GUI turn into an executable goal contract', { actionId }, grounding.goal);
-            trace(traceLog, 'AppWorld Grounding Agent', 'Ground this GUI turn in real AppWorld API calls', { actionId, goal: grounding.goal, apis: grounding.calls.map((call) => call.tool.apiName) }, { summary: grounding.summary, entities: grounding.entities, attempts: grounding.attempts, dbChanges: grounding.calls.map((call) => call.dbChanges?.changedApps ?? []) });
+            trace(traceLog, 'AppWorld Grounding Agent', 'Ground this GUI turn in real AppWorld API calls', { actionId, goal: grounding.goal, apis: grounding.calls.map((call) => call.tool.apiName) }, { summary: grounding.summary, entities: grounding.entities, attempts: grounding.attempts, executionEvidence: grounding.executionEvidence, dbChanges: grounding.calls.map((call) => call.dbChanges?.changedApps ?? []) });
             trace(traceLog, 'Grounding Evaluator Agent', 'Independently judge whether the grounded result fulfills the goal contract', { actionId, goal: grounding.goal }, grounding.evaluation ?? { pass: false, deficiencies: ['evaluator did not run'] }, grounding.evaluation?.pass === false ? 'rejected' : 'ok');
             if (grounding.evaluation?.pass !== true) {
               throw httpError(`grounded action did not pass verification: ${(grounding.evaluation?.deficiencies || ['evaluator did not run']).join('; ')}. External effects may already have occurred; do not automatically repeat this action.`, grounding.deadlineExceeded ? 504 : 502);
@@ -7017,7 +7032,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       // 时诚实失败 —— iter34 实锤本地兜底把"标记结清"编成了成功,世界里什么都没发生。
       if (!grounded && appWorldBridge && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off'
         && permissions.some((permission) => permission.startsWith('tool.appworld.') && permission !== 'tool.appworld.db.snapshot')) {
-        throw httpError('this turn produced no real API calls (the write gates rejected every attempt) — nothing was changed; try again or use a different action', 502);
+        throw httpError('this turn has no verified API evidence; the cause and any external effects are unknown. Inspect execution evidence before another action; do not automatically retry writes', 502);
       }
       if (!grounded) {
         const interaction = stored.runtimeState.interaction as InteractionModel | undefined;
