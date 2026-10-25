@@ -19,7 +19,7 @@ test('refinement rejects any attempted service/name/permission widening instead 
  assert.equal(design.slots.length,3);
 });
 test('same strict normalization rejects invalid refinements including required/type/collisions/row indices/cardinality',async()=>{
- const design=await initial();const mutations=[(d:any)=>d.slots[3].required='false',(d:any)=>d.slots[3].type='duration',(d:any)=>d.slots[3].label=d.slots[0].label,(d:any)=>delete d.actions[1].consumedSlotIndices,(d:any)=>d.actions[1].consumedSlotIndices=[0,0],(d:any)=>d.actions[1].consumedSlotIndices=[4],(d:any)=>d.actions[1].permissions=['*'],(d:any)=>d.slots.push(...Array.from({length:3},(_,i)=>({label:'Extra '+i,type:'string',required:false}))), (d:any)=>d.actions.push({...d.actions[1],label:'Archive'},{...d.actions[1],label:'Finish'})];
+ const design=await initial();const mutations=[(d:any)=>d.slots[3].required='false',(d:any)=>d.slots[3].type='duration',(d:any)=>d.slots[3].label=d.slots[0].label,(d:any)=>delete d.actions[1].consumedSlotIndices,(d:any)=>d.actions[1].consumedSlotIndices=[0,0],(d:any)=>d.actions[1].consumedSlotIndices=[4],(d:any)=>d.actions[1].permissions=['*'],(d:any)=>d.slots.push(...Array.from({length:3},(_,i)=>({label:'Extra '+i,type:'string',required:false}))), (d:any)=>{d.actions[0]={...d.actions[1],label:'First item'};d.actions.push({...d.actions[1],label:'Archive'},{...d.actions[1],label:'Finish'});}];
  for(const mutate of mutations){const d=refinement();mutate(d);await assert.rejects(refineBusinessFieldsWithSchemas({prompt:need,subject:'Entries',design,capabilities,llm:{model:'fixture',chatCompletion:async()=>reply(d)}}));}
 });
 test('actual Native planning locks original service choice and rejects a bad schema refinement before any UI or execution',async()=>{
