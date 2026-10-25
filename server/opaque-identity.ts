@@ -8,3 +8,10 @@ export function opaqueIdentity(value:unknown):string {
  if(!result.trim())return '';
  return result;
 }
+
+/** Local owner/app record keys are a separate typed namespace, never an external id fallback. */
+export function appRecordIdentity(value:unknown):string {
+ if(value===undefined||value===null)return '';
+ if(typeof value!=='string'||value.length>160||/[\u0000-\u001f]/.test(value)||value!==''&&!value.trim())throw Error('Invalid app record identity');
+ return value;
+}

@@ -9,7 +9,7 @@ export function authorizedGroundingCapabilities(capabilities:AppWorldToolCapabil
  return capabilities.filter(tool=>tool.appName!=='__meta__'&&allowed.has(tool.permission)&&!/signup|login|logout|verify|verification|password|delete_account/i.test(tool.apiName));
 }
 type Field={name:string;label:string;type?:string;required?:boolean;options?:Array<{label:string;value:string}>};
-export function nativeActionContext(input:{originalAppNeed:string;action:{id:string;label?:string;description?:string;perItem?:boolean;consumedSlots?:unknown};fields:Field[];eventPayload:unknown;requestPayload:Record<string,unknown>;targetEntity?:{name:string;id:string}|null;primaryFieldName?:string;secondaryFieldName?:string;permissions:string[];capabilities:AppWorldToolCapability[]}){
+export function nativeActionContext(input:{originalAppNeed:string;action:{id:string;label?:string;description?:string;perItem?:boolean;consumedSlots?:unknown};fields:Field[];eventPayload:unknown;requestPayload:Record<string,unknown>;targetEntity?:{name:string;id:string;appRecordId?:string}|null;primaryFieldName?:string;secondaryFieldName?:string;permissions:string[];capabilities:AppWorldToolCapability[]}){
  const eventPayload=input.eventPayload&&typeof input.eventPayload==='object'&&!Array.isArray(input.eventPayload)?input.eventPayload as Record<string,unknown>:{};
  const names=input.fields.map(field=>field.name);
  if(new Set(names).size!==names.length)throw Error('Action context has duplicate declared fields');

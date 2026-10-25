@@ -120,7 +120,7 @@ function resolveActionContext(data: Record<string, any>, context: unknown, rootD
     const binding = value && typeof value === 'object' ? (value as any).path : undefined;
     if (data !== rootData && typeof binding === 'string' && binding.startsWith('/draft/slots/')) {
       if (binding !== `/draft/slots/${key}` || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)
-        || ['__proto__', 'prototype', 'constructor', 'entityName', 'entityId', 'sourceComponentId'].includes(key)
+        || ['__proto__', 'prototype', 'constructor', 'entityName', 'entityId', 'appRecordId', 'sourceComponentId'].includes(key)
         || !Object.hasOwn(rootData.draft?.slots || {}, key)) throw new Error('Invalid row slot binding');
       return [key, resolvePath(rootData, value)];
     }

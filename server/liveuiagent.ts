@@ -1,5 +1,6 @@
+import {assertLocalRowRecordIdentity} from './native-row-identity.js';
 import {requireActionRequestId,installHostActionNonces} from './native-action-request.js';
-import {opaqueIdentity} from './opaque-identity.js';
+import {opaqueIdentity,appRecordIdentity} from './opaque-identity.js';
 import {nativeViewBudget} from './native-view-budget.js';
 import {authorizedGroundingCapabilities,nativeActionContext,nativeActionContextPolicy} from './native-action-context.js';
 import {NativeCommandReceipts,type CommandReceiptBinding} from './native-command-receipts.js';
@@ -2976,7 +2977,7 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
         tag: informativeGroup ? compactText(informativeGroup, 18) : '',
         // 未带 group 前缀的裸名字:Row 里既要 badge 又要标题时,name 会重复显示分组。
         title: compactText(bareName, 60),
-        ...(typeof item.appRecordId === 'string' ? {appRecordId:item.appRecordId} : {}),
+        appRecordId:appRecordIdentity(item.appRecordId),
         appState: stateDisplayValues(plan.interaction.businessFields, localRecord?.values),
       };
     });
@@ -3380,7 +3381,7 @@ export function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ na
         if (itemButtonActions.has(actionName)) return bad('two row Buttons bound to the SAME action — each row Button must trigger a different action');
         itemButtonActions.add(actionName);
         if (itemButtonCount > 3) return bad('at most THREE Buttons inside the /entities item subtree');
-        out.push({ id: `d_${id}`, component: 'Button', child: ref(node.child), variant: 'default', action: { event: { name: `actions.${actionName}`, context: { ...slotContext, entityName: { path: '/entityName' }, entityId: { path: '/id' } } } }, checks: [] });
+        out.push({ id: `d_${id}`, component: 'Button', child: ref(node.child), variant: 'default', action: { event: { name: `actions.${actionName}`, context: { ...slotContext, entityName: { path: '/entityName' }, entityId: { path: '/id' }, appRecordId: {path:'/appRecordId'} } } }, checks: [] });
         return done(true);
       }
       if(Object.hasOwn(rowActions,actionName))return bad('perItem action requires an entity-bound row Button, not a targetless composer duplicate');
@@ -5920,7 +5921,7 @@ export async function runAppWorldGrounding(input: {
   projectionCapacity?: (proposal:{entities:unknown[];stats:Array<{label:string;value:string}>;summary:string;appStateCalls:Array<Record<string,any>>})=>string[];
   actionLabel?: string;
   actionDescription?: string;
-  targetEntity?: { name: string; id: string } | null;
+  targetEntity?: { name: string; id: string; appRecordId?:string } | null;
   // 该动作声明的公网工具权限(tool.web.search 等),这些工具进 grounding 目录供 agent 主动调用。
   webPermissions?: string[];
   // 跨回合记忆(recentTurnContext 产出):近 2 轮全量、更早压缩,让"换一批/继续"
@@ -6408,7 +6409,7 @@ async function runLocalAgentTurn(input: {
   actionLabel: string;
   actionDescription: string;
   slots: Record<string, string>;
-  targetEntity?: { name: string; id: string } | null;
+  targetEntity?: { name: string; id: string; appRecordId?:string } | null;
   currentEntities?: Array<{ name: string; detail?: string }>;
   // 公网工具预取结果(真实搜索/天气/汇率响应),作为本回合的事实依据。
   toolFacts?: Array<Record<string, unknown>>;
@@ -7209,8 +7210,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       if (action.perItem === true) {
         try {
           assertRowActionPayload(action, rawPayload, requiredArray<BusinessSlotSpec>((stored.runtimeState.interaction as InteractionModel)?.businessFields, 'perItem action needs declared business fields').map(field => field.name),
-            (Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : []).map((row: any) => ({ entityName: compactText(String(row.name || ''), 64), entityId: opaqueIdentity(row.id) })),
+            (Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : []).map((row: any) => ({ entityName: compactText(String(row.name || ''), 64), entityId: opaqueIdentity(row.id), appRecordId:appRecordIdentity(row.appRecordId) })),
             (stored.appPackage.ui.meta as any)?.a2ui, actionId);
+          if(rawPayload.appRecordId){const row=(stored.runtimeState.entities as any[]).find(row=>appRecordIdentity(row.appRecordId)===rawPayload.appRecordId&&opaqueIdentity(row.id)===rawPayload.entityId&&compactText(String(row.name||''),64)===rawPayload.entityName);assertLocalRowRecordIdentity(db,{owner:stored.owner??'',appId:stored.appId,appRecordId:rawPayload.appRecordId,name:String(row?.name||''),fields:appRecordFields((stored.runtimeState.interaction as InteractionModel).businessFields)});}
         } catch (error) {
           // This is a pre-dispatch contract rejection, not an unknown write outcome.
           throw httpError((error as Error).message, 400);
@@ -7232,7 +7234,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       // 行内实体按钮携带的精确目标(名字+id):流向 grounding 契约与执行器,
       // 后端必须按 id 恰好操作这一个对象。
       const targetEntity = typeof rawPayload.entityName === 'string' && (rawPayload.entityName as string).trim()
-        ? { name: compactText(String(rawPayload.entityName), 64), id: opaqueIdentity(rawPayload.entityId) }
+        ? { name: compactText(String(rawPayload.entityName), 64), id: opaqueIdentity(rawPayload.entityId),...(rawPayload.appRecordId?{appRecordId:appRecordIdentity(rawPayload.appRecordId)}:{}) }
         : null;
       // Validate the entire graph before any external side effect, then run each
       // worker with its own role and the previous workers' structured handoffs.
@@ -7308,7 +7310,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             // 带标签的业务字段:agent 必须能分辨 36 是账单、12 是份额。
             // 目标实体置于首位:行内按钮回合的唯一业务输入就是"对这一个对象做该动作"。
             fields: [
-              ...(targetEntity ? [{ label: "Target item", value: `${targetEntity.name}${targetEntity.id ? ` (id ${targetEntity.id})` : ''}` }] : []),
+              ...(targetEntity ? [{ label: "Target item", value: `${targetEntity.name}${targetEntity.id ? ` (external id ${targetEntity.id})` : ''}${targetEntity.appRecordId ? ` (owner/app local record id ${targetEntity.appRecordId})` : ''}` }] : []),
               ...(commandEvent ? [{label:'Current visible command',value:commandEvent.command}] : action.perItem===true
                 ? consumedGroundingFields(action.consumedSlots,rawPayload,interactionModel?.businessFields ?? [])
                 : (interactionModel?.businessFields ?? [])

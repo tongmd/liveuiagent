@@ -1,4 +1,4 @@
-const forbidden = new Set(['__proto__', 'prototype', 'constructor', 'entityName', 'entityId', 'sourceComponentId']);
+const forbidden = new Set(['__proto__', 'prototype', 'constructor', 'entityName', 'entityId', 'appRecordId', 'sourceComponentId']);
 
 // Designer-authored row inputs are explicit references to existing composer slots.
 // Entity identity is issued separately by the host and cannot be overridden here.

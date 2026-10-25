@@ -1,5 +1,5 @@
-import {opaqueIdentity} from './opaque-identity.js';
-const reserved = new Set(['entityName', 'entityId', 'sourceComponentId', '__proto__', 'prototype', 'constructor']);
+import {opaqueIdentity,appRecordIdentity} from './opaque-identity.js';
+const reserved = new Set(['entityName', 'entityId', 'appRecordId', 'sourceComponentId', '__proto__', 'prototype', 'constructor']);
 
 export function requireConsumedSlots(raw: unknown, known?: Iterable<string>): string[] {
   if (!Array.isArray(raw)) throw Error('perItem action consumedSlots must be an explicit array');
@@ -56,21 +56,21 @@ export function assertExactRowBindings(bindings: Record<string, unknown>, consum
 // Targets and surface must come from the already owner/app-authorized stored app.
 export function assertRowActionPayload(
   action: {perItem?: boolean; consumedSlots?: unknown}, payload: Record<string, unknown>, known: string[],
-  targets: Array<{entityName: string; entityId: string}>, surface: any, actionId: string,
+  targets: Array<{entityName: string; entityId: string; appRecordId?:string}>, surface: any, actionId: string,
 ) {
   if (action.perItem !== true) return;
   const consumed = requireConsumedSlots(action.consumedSlots, known);
-  const expected = ['entityName', 'entityId', 'sourceComponentId', ...consumed];
+  const expected = ['entityName', 'entityId', 'appRecordId', 'sourceComponentId', ...consumed];
   if (Object.keys(payload).length !== expected.length || expected.some(key => !Object.hasOwn(payload, key))
     || Object.keys(payload).some(key => !expected.includes(key))) {
     throw Error('Row action payload must contain exactly identity, sourceComponentId and declared consumedSlots');
   }
   if (typeof payload.entityName !== 'string' || !payload.entityName
-    || typeof payload.entityId !== 'string' || typeof payload.sourceComponentId !== 'string') {
+    || typeof payload.entityId !== 'string' || typeof payload.appRecordId !== 'string' || typeof payload.sourceComponentId !== 'string') {
     throw Error('Row action needs explicit current entity identity and source');
   }
-  opaqueIdentity(payload.entityId);
-  for (const target of targets) opaqueIdentity(target.entityId);
+  opaqueIdentity(payload.entityId);appRecordIdentity(payload.appRecordId);
+  for (const target of targets) {opaqueIdentity(target.entityId);appRecordIdentity(target.appRecordId);}
   for (const name of consumed) {
     const value = payload[name];
     if ((value !== null && !['string', 'number', 'boolean'].includes(typeof value))
@@ -78,7 +78,7 @@ export function assertRowActionPayload(
       throw Error('Row slot value must be a scalar or null');
     }
   }
-  if (targets.filter(row => row.entityName === payload.entityName && row.entityId === payload.entityId).length !== 1) {
+  if (targets.filter(row => row.entityName === payload.entityName && row.entityId === payload.entityId && appRecordIdentity(row.appRecordId)===payload.appRecordId).length !== 1) {
     throw Error('Row target is not a unique current owner/app entity');
   }
   const components = new Map<string, any>((surface?.messages ?? [])
@@ -101,8 +101,8 @@ export function assertRowActionPayload(
     throw Error('Row action source does not match its current entity-bound action');
   }
   const context = event.context;
-  if (!context || Object.keys(context).length !== consumed.length + 2
-    || context.entityName?.path !== '/entityName' || context.entityId?.path !== '/id'
+  if (!context || Object.keys(context).length !== consumed.length + 3
+    || context.entityName?.path !== '/entityName' || context.entityId?.path !== '/id' || context.appRecordId?.path !== '/appRecordId'
     || consumed.some(name => context[name]?.path !== `/draft/slots/${name}`)) {
     throw Error('Row action source bindings disagree with consumedSlots');
   }

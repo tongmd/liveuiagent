@@ -691,9 +691,16 @@ function matchButton(model: BehaviorSurfaceModel, data: Record<string, any>, tar
   return { component, summary: found, rowData };
 }
 
-function resolveA2uiActionContext(data: Record<string, any>, context: unknown): Record<string, unknown> {
+export function resolveA2uiActionContext(data: Record<string, any>, context: unknown, rootData=data): Record<string, unknown> {
   const record = requiredObject<Record<string, unknown>>(context, 'A2UI action missing context');
-  return Object.fromEntries(Object.entries(record).map(([key, value]) => [key, resolveA2uiPath(data, value)]));
+  return Object.fromEntries(Object.entries(record).map(([key, value]) => {
+    const binding=value&&typeof value==='object'?(value as any).path:undefined;
+    if(data!==rootData&&typeof binding==='string'&&binding.startsWith('/draft/slots/')){
+      if(binding!==`/draft/slots/${key}`||!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)||['__proto__','prototype','constructor','entityName','entityId','appRecordId','sourceComponentId'].includes(key)||!Object.hasOwn(rootData.draft?.slots||{},key))throw Error('Invalid row slot binding');
+      return [key,resolveA2uiPath(rootData,value)];
+    }
+    return [key,resolveA2uiPath(data,value)];
+  }));
 }
 
 function normalizeDecision(raw: unknown): EvaluatorDecision {
@@ -822,7 +829,7 @@ async function executeBehaviorAction(input: {
       const event = requiredObject<Record<string, any>>(actionSpec.event, `Button ${component.id} missing action event`);
       const rawActionId = requireText(event.name, `Button ${component.id} missing action name`, 160);
       // 行按钮的 context(/entityName、/id)绑在行对象上 —— 与真实客户端同一条派发路径。
-      const payload = resolveA2uiActionContext(rowData ?? data, event.context);
+      const payload = resolveA2uiActionContext(rowData ?? data, event.context, data);
       const actionResult = await input.runtime.action({
         requestId:rawActionId.replace(/^actions\./,'')==='host.app.command'?payload.requestId:randomUUID(),
         appId: requireText(app.appId, 'app missing appId', 120),

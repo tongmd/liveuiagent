@@ -32,11 +32,11 @@ test('designer requires exact per-action optional bindings and both row entries,
  for(const mode of ['missing','extra','missingButton','topLevel'] as const){const nodes=components();const edit=nodes.find(n=>n.id==='edit');if(mode==='missing')delete edit.action.event.context.alarm_label;if(mode==='extra')nodes.find(n=>n.id==='done').action.event.context.amount={path:'/draft/slots/amount'};if(mode==='missingButton')nodes.find(n=>n.id==='row').children=['title','detail','edit'];if(mode==='topLevel'){nodes[0].children.push('done');nodes.find(n=>n.id==='row').children=['title','detail','edit'];}assert.equal(validateDesignedOverview(nodes,opts),null,mode);}
 });
 test('host accepts exact optional scalar values on current owner/app row and rejects missing/extra/source/target before dispatch',()=>{
- const ui=surface();const action={perItem:true,consumedSlots:names};const targets=[{entityName:'First',entityId:'one'},{entityName:'Second',entityId:'two'}];const payload={entityName:'Second',entityId:'two',sourceComponentId:'d_edit',new_time:'05:45',alarm_label:'Gym',amount:0,enabled:false};
+ const ui=surface();const action={perItem:true,consumedSlots:names};const targets=[{entityName:'First',entityId:'one',appRecordId:''},{entityName:'Second',entityId:'two',appRecordId:''}];const payload={entityName:'Second',entityId:'two',appRecordId:'',sourceComponentId:'d_edit',new_time:'05:45',alarm_label:'Gym',amount:0,enabled:false};
  assert.doesNotThrow(()=>assertRowActionPayload(action,payload,names,targets,ui,'edit'));assert.equal(payload.amount,0);assert.equal(payload.enabled,false);
- for(const value of [{...payload,alarm_label:undefined},Object.fromEntries(Object.entries(payload).filter(([k])=>k!=='alarm_label')),{...payload,stale:'old'},{...payload,entityId:'other-app'},{...payload,sourceComponentId:'d_done'},{...payload,sourceComponentId:'d_refresh'},{...payload,amount:{value:0}}])assert.throws(()=>assertRowActionPayload(action,value,names,targets,ui,'edit'));
+ for(const value of [{...payload,alarm_label:undefined},Object.fromEntries(Object.entries(payload).filter(([k])=>k!=='alarm_label')),{...payload,stale:'old'},{...payload,entityId:'other-app',appRecordId:''},{...payload,sourceComponentId:'d_done'},{...payload,sourceComponentId:'d_refresh'},{...payload,amount:{value:0}}])assert.throws(()=>assertRowActionPayload(action,value,names,targets,ui,'edit'));
  assert.throws(()=>assertRowActionPayload(action,payload,names,[],ui,'edit'),/owner\/app/);
- const done={entityName:'First',entityId:'one',sourceComponentId:'d_done'};assert.doesNotThrow(()=>assertRowActionPayload({perItem:true,consumedSlots:[]},done,names,targets,ui,'done'));assert.throws(()=>assertRowActionPayload({perItem:true,consumedSlots:[]},{...done,amount:99},names,targets,ui,'done'));
+ const done={entityName:'First',entityId:'one',appRecordId:'',sourceComponentId:'d_done'};assert.doesNotThrow(()=>assertRowActionPayload({perItem:true,consumedSlots:[]},done,names,targets,ui,'done'));assert.throws(()=>assertRowActionPayload({perItem:true,consumedSlots:[]},{...done,amount:99},names,targets,ui,'done'));
  for(const slots of [undefined,['constructor'],['new_time','new_time'],['unknown']])assert.throws(()=>assertRowActionPayload({perItem:true,consumedSlots:slots},payload,names,targets,ui,'edit'));
 });
 test('real runtime owner/app route rejects forged row payload before model, tool authorization or local write',async()=>{
@@ -47,8 +47,8 @@ test('real runtime owner/app route rejects forged row payload before model, tool
  const pkg={actions:{actions:{edit:{perItem:true,consumedSlots:names}}},ui:{meta:{a2ui:surface()}}};const state={interaction:{businessFields:fields},entities:[{name:'Second',id:'two'}]};
  db.prepare('INSERT INTO agent_apps(app_id,name,description,package_json,data_json,runtime_state_json,version,owner) VALUES(?,?,?,?,?,?,?,?)').run('rows','Rows','Update rows',JSON.stringify(pkg),'{}',JSON.stringify(state),'1','alice');
  let modelCalls=0;const llm={model:'fixture',chatCompletion:async()=>{modelCalls++;throw Error('must not reach model');}};
- const payload={entityName:'Second',entityId:'two',sourceComponentId:'d_edit',new_time:'05:45',alarm_label:'Gym',amount:0,enabled:false};
- for(const bad of [{...payload,extra:'stale'},{...payload,sourceComponentId:'d_done'},{...payload,entityId:'one'},Object.fromEntries(Object.entries(payload).filter(([k])=>k!=='alarm_label'))])await assert.rejects(runtime.action({requestId:randomUUID(),user:'alice',appId:'rows',actionId:'edit',eventPayload:bad,llm}),/Row action|Row target/);
+ const payload={entityName:'Second',entityId:'two',appRecordId:'',sourceComponentId:'d_edit',new_time:'05:45',alarm_label:'Gym',amount:0,enabled:false};
+ for(const bad of [{...payload,extra:'stale'},{...payload,sourceComponentId:'d_done'},{...payload,entityId:'one',appRecordId:''},Object.fromEntries(Object.entries(payload).filter(([k])=>k!=='alarm_label'))])await assert.rejects(runtime.action({requestId:randomUUID(),user:'alice',appId:'rows',actionId:'edit',eventPayload:bad,llm}),/Row action|Row target/);
  await assert.rejects(runtime.action({requestId:randomUUID(),user:'bob',appId:'rows',actionId:'edit',eventPayload:payload,llm}),/app not found/);assert.equal(modelCalls,0);
  assert.deepEqual(JSON.parse((db.prepare('SELECT runtime_state_json AS state FROM agent_apps').get()as any).state),state,'rejected direct calls do not alter persisted projection');
  }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
@@ -70,9 +70,9 @@ test('explicit maintained-list lifecycle supports Add plus three exact row actio
  const contract={...opts,actionIds:[...opts.actionIds,'actions.service'],rowActionSlots:{...opts.rowActionSlots,service:[]}};
  assert.ok(validateDesignedOverview(nodes,contract));
  const pkg={messages:[{updateComponents:{components:validateDesignedOverview(nodes,contract)}}]};
- const payload={entityName:'One',entityId:'one',sourceComponentId:'d_service'};
- assert.doesNotThrow(()=>assertRowActionPayload({perItem:true,consumedSlots:[]},payload,names,[{entityName:'One',entityId:'one'}],pkg,'service'));
- assert.throws(()=>assertRowActionPayload({perItem:true,consumedSlots:[]},{...payload,entityId:'other'},names,[{entityName:'One',entityId:'one'}],pkg,'service'),/owner\/app/);
+ const payload={entityName:'One',entityId:'one',appRecordId:'',sourceComponentId:'d_service'};
+ assert.doesNotThrow(()=>assertRowActionPayload({perItem:true,consumedSlots:[]},payload,names,[{entityName:'One',entityId:'one',appRecordId:''}],pkg,'service'));
+ assert.throws(()=>assertRowActionPayload({perItem:true,consumedSlots:[]},{...payload,entityId:'other',appRecordId:''},names,[{entityName:'One',entityId:'one',appRecordId:''}],pkg,'service'),/owner\/app/);
  const duplicate=structuredClone(nodes);duplicate.find(n=>n.id==='service').action.event.name='actions.done';assert.equal(validateDesignedOverview(duplicate,contract),null);
  const fourth=[...result.actions.map(a=>({...a,verb:a.label,target:'Entry'}))];fourth[0]={...fourth[1],label:'Fourth'};assert.throws(()=>makeFunctions(fourth,'too-many-rows'),/At most three/);
  assert.throws(()=>makeFunctions([...functions.map(f=>({verb:'Act',target:'Entry',label:f.label,description:'Act'})),{verb:'Act',target:'Entry',label:'Fifth',description:'Act'}],'five'),/1-4/);

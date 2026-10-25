@@ -57,11 +57,11 @@ test('compiler removes the four actual defect classes: graph, unique slots, all 
   assert.equal(components.find(node => node.id === 'item_body')!.children.filter((id: string) => id.startsWith('action_')).length, 3);
   const duplicate=structuredClone(components);duplicate.find(node=>node.id==='composer')!.children.push('duplicate_add');duplicate.push({id:'duplicate_add',component:'Button',child:'duplicate_add_label',action:{event:{name:'actions.add.run'}}},{id:'duplicate_add_label',component:'Text',text:'Add session'});
   assert.equal(validateDesignedOverview(duplicate,{slots:fields,actionIds:actions.map(action=>action.actionId),rowActionSlots:rowActionSlotMap(actions,fields.map(field=>field.name)),requireWidgets:true}),null,'a second composer entry for the same action is rejected');
-  const target = {entityName: 'Second session', entityId: 'second'};
+  const target = {entityName: 'Second session', entityId: 'second',appRecordId:''};
   const payload = {...target, sourceComponentId: 'd_action_1', minutes: 0, enabled: false};
   assert.doesNotThrow(() => assertRowActionPayload(actions[1], payload, fields.map(field => field.name), [target], {messages: [{updateComponents: {components: nodes}}]}, 'edit.run'));
   assert.equal(payload.minutes, 0); assert.equal(payload.enabled, false);
-  assert.throws(() => assertRowActionPayload(actions[1], {...payload, entityId: 'other'}, fields.map(field => field.name), [target], {messages: [{updateComponents: {components: nodes}}]}, 'edit.run'), /unique current/);
+  assert.throws(() => assertRowActionPayload(actions[1], {...payload, entityId: 'other',appRecordId:''}, fields.map(field => field.name), [target], {messages: [{updateComponents: {components: nodes}}]}, 'edit.run'), /unique current/);
 });
 
 test('all cardinalities and semantic layout choices compile complete trees; no model omission removes controls', () => {
@@ -104,7 +104,7 @@ test('legitimate all-row apps compile two or three exact row actions without inv
     assert.equal(components.find(node=>node.id==='composer')!.children.some((id:string)=>id.startsWith('action_')),false);
     const missing=structuredClone(components).filter(node=>!['action_0','action_0_label'].includes(node.id));missing.find(node=>node.id==='item_body')!.children=missing.find(node=>node.id==='item_body')!.children.filter((id:string)=>id!=='action_0');
     assert.equal(validateDesignedOverview(missing,{slots:fields,actionIds:input.actions.map(action=>action.actionId),rowActionSlots:rowActionSlotMap(input.actions,fields.map(field=>field.name)),requireWidgets:true}),null,'all-row support does not admit a missing action');
-    const target={entityName:'Selected session',entityId:'selected'};
+    const target={entityName:'Selected session',entityId:'selected',appRecordId:''};
     assert.doesNotThrow(()=>assertRowActionPayload(input.actions[0],{...target,sourceComponentId:'d_action_0',minutes:0,enabled:false},fields.map(field=>field.name),[target],{messages:[{updateComponents:{components:nodes}}]},'edit.run'));
     let calls=0;
     const result=await designAppSurface({name:'Sessions',description:'Edit selected sessions',sourcePrompt:'Edit selected sessions',businessFields:fields,actions:input.actions,llm:{model:'fixture',chatCompletion:async()=>{calls++;return reply(design());}}});

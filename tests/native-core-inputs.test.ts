@@ -74,7 +74,7 @@ test('persisted Native surface exposes editable core bindings and uses row ident
  db.prepare('INSERT INTO agent_apps(app_id,name,description,package_json,data_json,runtime_state_json,version,owner) VALUES(?,?,?,?,?,?,?,?)').run('parts','Parts','Track repair parts',JSON.stringify(pkg),JSON.stringify(data),JSON.stringify(state),'1','fixture-owner');
  const query=await runtime.queryState({user:'fixture-owner'});const app=query.apps[0];const surface=app.appPackage.ui.meta.a2ui;const nodes=surface.messages.flatMap((m:any)=>m.updateComponents?.components||[]);
  assert.deepEqual(nodes.filter((n:any)=>n.component==='TextField').map((n:any)=>n.value.path).sort(),['/draft/slots/alert_enabled','/draft/slots/extra_details','/draft/slots/needed_date','/draft/slots/target_cost']);
- const row=nodes.find((n:any)=>n.id==='d_action_1');assert.equal(row.action.event.name,'actions.remove.run');assert.deepEqual(row.action.event.context,{entityName:{path:'/entityName'},entityId:{path:'/id'}});assert.equal(surface.initialData.entities[0].id,'part-42');
+ const row=nodes.find((n:any)=>n.id==='d_action_1');assert.equal(row.action.event.name,'actions.remove.run');assert.deepEqual(row.action.event.context,{entityName:{path:'/entityName'},entityId:{path:'/id'},appRecordId:{path:'/appRecordId'}});assert.equal(surface.initialData.entities[0].id,'part-42');
  const composer=nodes.find((n:any)=>n.id==='d_action_0');assert.deepEqual(composer.action.event.context.target_cost,{path:'/draft/slots/target_cost'});
  const reopened=await runtime.queryState({user:'fixture-owner'});assert.deepEqual(reopened.apps[0].appPackage.ui.meta.a2ui,surface);
  if(process.env.NATIVE_CORE_INPUT_FIXTURE_OUT)fs.writeFileSync(process.env.NATIVE_CORE_INPUT_FIXTURE_OUT,JSON.stringify(query));
