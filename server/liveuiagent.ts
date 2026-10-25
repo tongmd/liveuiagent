@@ -962,7 +962,12 @@ function deriveBusinessSlotLabels(prompt: string, subject: string, tokens: strin
 
 // Read-only GUI planning uses the same configured Native/DSH inference adapter.
 export async function planNativeGuiInteractionStep(system: string, input: unknown, llm: LlmRuntimeConfig) {
+  // This role only selects one visible GUI operation. DeepSeek's default
+  // thinking can spend the entire completion cap before emitting that JSON.
+  // Keep business reasoning and all other models' configured policy intact.
+  const conciseDeepSeek = /(^|\/)deepseek(?:[-_.]|$)/i.test(String(llm.model||''));
   return openAIChatJson({label: 'Native GUI Step Planner', llm: {...llm, personalContext: undefined}, system,
+    ...(conciseDeepSeek ? {thinking: {type: 'disabled' as const}, reasoningEffort: 'none' as const} : {}),
     // Completion caps include model reasoning, not only the small final step JSON.
     // Match the existing Native role budget while keeping the planner/action deadlines.
     user: JSON.stringify(input), temperature: 0, maxTokens: 8192});
@@ -1749,6 +1754,8 @@ async function openAIChatJson(request: {
   user: string;
   temperature?: number;
   maxTokens?: number;
+  thinking?: {type: 'disabled'};
+  reasoningEffort?: 'none';
 }) {
   const llm = request.llm;
   if (!llm) throw llmConfigRequired(`${request.label} requires llm config`);
@@ -1770,6 +1777,8 @@ async function openAIChatJson(request: {
       },
       body: JSON.stringify({
         ...llmExtraBody(),
+        ...(request.thinking ? {thinking: request.thinking} : {}),
+        ...(request.reasoningEffort ? {reasoning_effort: request.reasoningEffort} : {}),
         model,
         temperature: request.temperature ?? 0.2,
         ...(request.maxTokens ? { max_tokens: request.maxTokens } : {}),
