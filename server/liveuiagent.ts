@@ -4791,6 +4791,22 @@ function loadCanvas(db: Database.Database): CanvasState {
   return normalizeCanvasState(parsed);
 }
 
+// The stored whiteboard is global, but a response must expose only the
+// request owner's apps and intentionally shared (empty-owner) apps. Never save
+// this filtered projection over the global board: other owners keep their tiles.
+function canvasForUser(db: Database.Database, canvas: CanvasState, user?: string): CanvasState {
+  const owner = String(user || '').trim().slice(0, 60);
+  const visible = new Set((db.prepare("SELECT app_id FROM agent_apps WHERE owner IN ('', ?)").all(owner) as Array<{ app_id: string }>).map(row => row.app_id));
+  const nodes = canvas.nodes.filter(node => visible.has(node.appId));
+  const nodeIds = new Set(nodes.map(node => node.id));
+  return {
+    ...canvas,
+    nodes,
+    edges: canvas.edges.filter(edge => visible.has(edge.sourceAppId) && visible.has(edge.targetAppId)),
+    selectedNodeId: canvas.selectedNodeId && nodeIds.has(canvas.selectedNodeId) ? canvas.selectedNodeId : undefined,
+  };
+}
+
 function normalizeCanvasState(value: unknown): CanvasState {
   const canvas = requiredObject<CanvasState>(value, 'canvas state must be an object');
   const viewport = requiredObject<{ x: unknown; y: unknown; zoom: unknown }>(canvas.viewport, 'canvas viewport missing');
@@ -6565,7 +6581,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       fs.rmSync(path.join(options.registryRoot, input.appId), { recursive: true, force: true });
       const name = String(stored.appPackage.manifest.name);
       trace(traceLog, 'Shell Agent', 'Remove app from registry, workflow store and whiteboard', { appId: input.appId, name }, { removed: true });
-      return { type: 'app_removed', appId: input.appId, name, canvasState: canvas, trace: traceLog };
+      return { type: 'app_removed', appId: input.appId, name, canvasState: canvasForUser(db, canvas, input.user), trace: traceLog };
     } finally {
       releaseAppLock();
     }
@@ -6650,7 +6666,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         return {
           type: 'app_created' as const,
           appPackage: stored.appPackage, appData: stored.data, runtimeState: stored.runtimeState,
-          canvasPatch: { op: 'add_node' as const, node }, canvasState: canvas,
+          canvasPatch: { op: 'add_node' as const, node }, canvasState: canvasForUser(db, canvas, input.user),
           appSummary, trace: traceLog,
         };
       } finally {
@@ -6794,7 +6810,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         saveWorkflowState(db, plan.orchestration.workflowId, stored.appId, workflow.surfaceId, buildWorkflowState(stored));
       }
       const canvas = loadCanvas(db);
-      const node = trace(traceLog, 'Layout Agent', 'Place app icon on whiteboard', { existingNodes: canvas.nodes.length, appId }, layoutNode(canvas, appId));
+      const node = trace(traceLog, 'Layout Agent', 'Place app icon on whiteboard', { existingNodes: canvasForUser(db, canvas, requestUser).nodes.length, appId }, layoutNode(canvas, appId));
       canvas.nodes = [...canvas.nodes.filter((item) => item.appId !== appId), node];
       canvas.selectedNodeId = node.id;
       saveCanvas(db, canvas);
@@ -6804,7 +6820,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         appData: stored.data,
         runtimeState: stored.runtimeState,
         canvasPatch: { op: 'add_node', node },
-        canvasState: canvas,
+        canvasState: canvasForUser(db, canvas, requestUser),
         appSummary: summarizeApp(stored),
         trace: traceLog,
       };
@@ -6814,7 +6830,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       }
     },
 
-    async patchCanvas(input: { canvasId?: string; nodeId: string; position: { x: unknown; y: unknown } }) {
+    async patchCanvas(input: { canvasId?: string; nodeId: string; position: { x: unknown; y: unknown }; user?: string }) {
       const canvasId = requiredText(input.canvasId, 'canvasId required', 80);
       const nodeId = requiredText(input.nodeId, 'nodeId required', 120);
       if (!nodeId) throw httpError('nodeId required');
@@ -6823,13 +6839,13 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const canvas = loadCanvas(db);
       if (canvas.canvasId !== canvasId) throw httpError(`canvas not found: ${canvasId}`, 404);
       const node = canvas.nodes.find((candidate) => candidate.id === nodeId);
-      if (!node) throw httpError(`node not found: ${nodeId}`, 404);
+      if (!node || !getOwnedApp(db, node.appId, String(input.user || '').trim().slice(0, 60))) throw httpError(`node not found: ${nodeId}`, 404);
       node.position = position;
       canvas.selectedNodeId = nodeId;
       saveCanvas(db, canvas);
       const canvasPatch: CanvasPatch = { op: 'move_node', canvasId, nodeId, position };
       trace(traceLog, 'Layout Agent', 'Persist whiteboard icon position', { canvasId, nodeId, position }, canvasPatch);
-      return { canvasState: canvas, canvasPatch, message: 'node moved', trace: traceLog };
+      return { canvasState: canvasForUser(db, canvas, input.user), canvasPatch, message: 'node moved', trace: traceLog };
     },
 
     async patchApp(input: { appId: string; prompt: string; llm?: LlmRuntimeConfig; user?: string }) {
@@ -7093,7 +7109,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         saveStoredApp(db, options.registryRoot, enriched);
         return enriched;
       });
-      const canvasState = loadCanvas(db);
+      const canvasState = canvasForUser(db, loadCanvas(db), user);
       return {
         canvasState,
         summary: summarizeWhiteboard(canvasState, apps),
