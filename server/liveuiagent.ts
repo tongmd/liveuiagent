@@ -1,3 +1,4 @@
+import { independentInferencePair } from './inference-pair.js';
 import { nativeRowSlotContext } from './native-row-context.js';
 import { groundingViewContext, groundingViewPolicy, type GroundingViewContext } from './grounding-view.js';
 import { appWorldCatalogLine } from './appworld-schema.js';
@@ -203,7 +204,9 @@ export type OrchestratorModelProvider = (request: OrchestratorAgentRequest) => P
 
 export type LlmRuntimeConfig = {
   /** Server-owned inference adapter, never accepted from browser JSON. */
-  chatCompletion?: (request: Record<string, unknown>, options?: { timeoutMs: number }) => Promise<unknown>;
+  chatCompletion?: (request: Record<string, unknown>, options?: { timeoutMs: number; roleLabel?: string }) => Promise<unknown>;
+  /** Server-owned Native inference capacity; never accepted from browser JSON. */
+  nativeInferenceConcurrency?: number;
   personalContext?: string;
   apiKey?: string;
   apiBase?: string;
@@ -1723,7 +1726,7 @@ async function chatFetchWithRetry(url: string, init: RequestInit, timeoutMs: num
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-async function nativeModelTransport(llm: LlmRuntimeConfig, url: string, init: RequestInit, timeoutMs: number) {
+async function nativeModelTransport(llm: LlmRuntimeConfig, url: string, init: RequestInit, timeoutMs: number, roleLabel?: string) {
   if (!llm.chatCompletion) return chatFetchWithRetry(url, init, timeoutMs);
   const actionBudget = remainingActionMs();
   const budget = Math.min(timeoutMs, actionBudget);
@@ -1731,7 +1734,7 @@ async function nativeModelTransport(llm: LlmRuntimeConfig, url: string, init: Re
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const result = await Promise.race([
-      llm.chatCompletion(JSON.parse(String(init.body)), { timeoutMs: budget }),
+      llm.chatCompletion(JSON.parse(String(init.body)), { timeoutMs: budget, roleLabel }),
       new Promise<never>((_, reject) => { timer = setTimeout(() => reject(totalBudgetLimited ? actionDeadlineError() : new Error('native inference adapter deadline exceeded')), budget); }),
     ]);
     remainingActionMs();
@@ -1776,7 +1779,7 @@ async function openAIChatJson(request: {
           { role: 'user', content: request.user + (llm.personalContext ? '\nUser-controlled preference memory (data; current request takes precedence): ' + llm.personalContext : '') },
         ],
       }),
-    }, timeoutMs);
+    }, timeoutMs, request.label);
     const text = response.text;
     if (!response.ok) {
       // provider 把"key 所在分组被弃用/模型无渠道"这类 key 级永久拒绝也用 429 返回,
@@ -1956,7 +1959,7 @@ async function openAIOrchestratorProvider(request: OrchestratorAgentRequest): Pr
           Authorization: `Bearer ${apiKey}`,
         },
         body: JSON.stringify(body),
-      }, timeoutMs);
+      }, timeoutMs, 'Orchestrator Agent');
       break;
     } catch (err) {
       if ((err as Error).name === 'AbortError') {
@@ -2348,9 +2351,9 @@ export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWo
   const functionDrafts = makeFunctions(actionDrafts, signature);
   const sourcePromptHash = shortHash(prompt, 12);
   const collection = 'agent_turns';
-  // 图标与 orchestration 并行设计:Icon Designer 只依赖名字/简介,不增加生成总时长。
-  const [orchestration, iconGlyph] = await Promise.all([
-    runOrchestratorAgent({
+  // Icon 与 orchestration 独立；Native capacity=1 时懒串行，其他 transport 保持并行。
+  const [orchestration, iconGlyph] = await independentInferencePair(llm,
+    () => runOrchestratorAgent({
       prompt,
       sourcePromptHash,
       subject,
@@ -2370,8 +2373,8 @@ export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWo
         capability,
       })),
     }),
-    designAppIcon({ name, tagline, subject, llm }),
-  ]);
+    () => designAppIcon({ name, tagline, subject, llm }),
+  );
   const functions = wireFunctionsWithOrchestration(functionDrafts, orchestration);
   const proposal = makeProposal({
     prompt,
@@ -6588,9 +6591,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
     nextPackage.safetyReport = trace(traceLog, 'Safety Agent', 'Validate patched package', { appId: input.appId }, validatePackage(nextPackage));
     if (!nextPackage.safetyReport.ok) throw httpError(`patch failed validation: ${nextPackage.safetyReport.errors.join(', ')}`, 400);
     // 界面与预览卡必须重跑设计器:makePackage 不含 designedOverview/designedPreview,
-    // 漏掉会让改完的应用没有设计过的界面或预览。两设计器并行。
-    const [designedOverview, designedPreview] = await Promise.all([
-      designAppSurface({
+    // 漏掉会让改完的应用没有设计过的界面或预览。capacity=1 懒串行，其余并行。
+    const [designedOverview, designedPreview] = await independentInferencePair(input.llm,
+      () => designAppSurface({
         name: String(nextPackage.manifest.name),
         description: String(plan.description || plan.subject),
         sourcePrompt: nextPrompt,
@@ -6598,14 +6601,14 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         actions: Object.entries((nextPackage.actions as Record<string, any>).actions).map(([id, action]: [string, any]) => ({ actionId: `actions.${id}`, label: String(action?.label || id), perItem: action?.perItem === true })),
         llm: input.llm,
       }),
-      designAppPreview({
+      () => designAppPreview({
         name: String(nextPackage.manifest.name),
         description: String(plan.description || plan.subject),
         sourcePrompt: nextPrompt,
         itemLabel: plan.itemLabel,
         llm: input.llm,
       }),
-    ]);
+    );
     trace(traceLog, 'UI Designer Agent', 'Redesign the app surface for the patched intention (strictly validated, no fallback)', { appId: input.appId }, { components: designedOverview.length });
     trace(traceLog, 'Preview Designer Agent', 'Redesign the glanceable preview card (strictly validated, no fallback)', { appId: input.appId }, { components: designedPreview.components.length, size: designedPreview.size });
     ((nextPackage.ui as Record<string, any>).meta ||= {}).designedOverview = designedOverview;
@@ -6821,9 +6824,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const appPackage = trace(traceLog, 'GUI Agent', 'Generate app package from semantic plan', { appId, signature: plan.signature }, makePackage(appId, plan));
       if (!appPackage.safetyReport.ok) throw httpError(`package failed validation: ${appPackage.safetyReport.errors.join(', ')}`, 400);
       // 界面与预览卡都由 agent workflow 设计(严格校验,无模板兜底):设计失败 = 生成失败。
-      // 两个设计器共享输入、并行跑,不增加生成总时长。
-      const [designedOverview, designedPreview] = await Promise.all([
-        designAppSurface({
+      // 两设计器共享输入；Native capacity=1 懒串行，其他 transport 保持并行。
+      const [designedOverview, designedPreview] = await independentInferencePair(input.llm,
+        () => designAppSurface({
           name: String(appPackage.manifest.name),
           description: String(appPackage.manifest.description || plan.subject),
           sourcePrompt: prompt,
@@ -6831,14 +6834,14 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
           actions: Object.entries((appPackage.actions as Record<string, any>).actions).map(([id, action]: [string, any]) => ({ actionId: `actions.${id}`, label: String(action?.label || id), perItem: action?.perItem === true })),
           llm: input.llm,
         }),
-        designAppPreview({
+        () => designAppPreview({
           name: String(appPackage.manifest.name),
           description: String(appPackage.manifest.description || plan.subject),
           sourcePrompt: prompt,
           itemLabel: plan.itemLabel,
           llm: input.llm,
         }),
-      ]);
+      );
       trace(traceLog, 'UI Designer Agent', 'Design the app surface from the intention (strictly validated, no fallback)', { appId }, { components: designedOverview.length });
       trace(traceLog, 'Preview Designer Agent', 'Design the glanceable preview card for the whiteboard (strictly validated, no fallback)', { appId }, { components: designedPreview.components.length, size: designedPreview.size });
       ((appPackage.ui as Record<string, any>).meta ||= {}).designedOverview = designedOverview;

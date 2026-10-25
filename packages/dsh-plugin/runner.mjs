@@ -17,7 +17,7 @@ export function createCommandRunner(config) {
     modelSelection: true,
     providerOverride: true,
     modelOnly: false,
-    async run({ work, home, task, signal, onEvent, model, provider }) {
+    async run({ work, home, task, signal, onEvent, onDiagnostic, model, provider }) {
       if (closed) throw new Error('DSH runner is closed');
       signal.throwIfAborted();
       const started = Date.now();
@@ -42,8 +42,13 @@ export function createCommandRunner(config) {
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,
       });
+      let stdoutBytes=0,stderrBytes=0,terminationRequested=false,forcedKillRequested=false;
+      const diagnostic = event => { try { onDiagnostic?.(event); } catch { /* diagnostics cannot control execution */ } };
+      diagnostic({phase:'spawn_requested',pid:child.pid??null,startedAt:started});
+      child.once('spawn',()=>diagnostic({phase:'spawned',pid:child.pid??null,startedAt:started}));
       let escalation;
       const kill = force => {
+        if(force)forcedKillRequested=true;else terminationRequested=true;
         if (!child.pid) return;
         // Descendants may retain stdout after the group leader has exited.
         if (process.platform === 'win32' && (child.exitCode !== null || child.signalCode !== null)) return;
@@ -72,6 +77,7 @@ export function createCommandRunner(config) {
       };
       const completion = new Promise((resolve, reject) => {
         child.stdout.on('data', chunk => {
+          stdoutBytes+=Buffer.byteLength(chunk);
           buffer += chunk;
           if (buffer.length > 4 * 1024 * 1024) { failure = new Error('DSH emitted an oversized event'); abort(); return; }
           let end;
@@ -79,10 +85,11 @@ export function createCommandRunner(config) {
             while ((end = buffer.indexOf('\n')) !== -1) { line(buffer.slice(0, end)); buffer = buffer.slice(end + 1); }
           } catch (error) { failure = error; abort(); }
         });
-        child.stderr.on('data', chunk => { diagnostics = (diagnostics + chunk).slice(-10000); });
+        child.stderr.on('data', chunk => { stderrBytes+=Buffer.byteLength(chunk); diagnostics = (diagnostics + chunk).slice(-10000); });
         child.stdin.on('error', error => { if (error.code !== 'EPIPE') failure = error; });
         child.on('error', reject);
-        child.on('close', code => {
+        child.on('close', (code,signalCode) => {
+          diagnostic({phase:'settled',pid:child.pid??null,exitCode:code,signalCode,elapsedMs:Date.now()-started,stdoutBytes,stderrBytes,terminationRequested,forcedKillRequested});
           try {
             if (buffer.trim()) line(buffer);
             if (signal.aborted) throw signal.reason ?? new Error('DSH task cancelled');
@@ -103,6 +110,7 @@ export function createCommandRunner(config) {
         kill(true);
         signal.removeEventListener('abort', abort);
         active.delete(entry);
+        diagnostic({phase:'cleanup',pid:child.pid??null,elapsedMs:Date.now()-started,stdoutBytes,stderrBytes,terminationRequested,forcedKillRequested});
         if(patch)await fs.rm(patch,{force:true});
       }
     },

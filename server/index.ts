@@ -43,6 +43,7 @@ const nativeDshCommand=process.env.LIVEUI_NATIVE_DSH_COMMAND?.trim();
 const nativeDsh=nativeDshCommand?createDshNativeInference({
   root:path.resolve(process.env.LIVEUI_NATIVE_DSH_ROOT||path.join(path.dirname(dbPath),'native-dsh-workers')),
   projectRoot:root,command:nativeDshCommand,
+  diagnosticRoot:path.join(path.dirname(path.resolve(process.env.LIVEUI_NATIVE_DSH_ROOT||path.join(path.dirname(dbPath),'native-dsh-workers'))),'native-inference-diagnostics'),
   args:process.env.LIVEUI_NATIVE_DSH_ARGS?JSON.parse(process.env.LIVEUI_NATIVE_DSH_ARGS):undefined,
   timeoutMs:Number(process.env.LIVEUI_NATIVE_DSH_TIMEOUT_MS||120000),
   maxConcurrent:Number(process.env.LIVEUI_NATIVE_DSH_MAX_CONCURRENT||4),
@@ -114,7 +115,8 @@ function llmConfigFromRequest(req: express.Request): LlmRuntimeConfig | undefine
     && !String(body.appId||body.selectedAppId||'').startsWith('dsh_') && body.delivery!=='html') {
     if(!nativeDsh)throw Object.assign(new Error('Native DSH inference transport is not configured'),{code:'dsh_native_unavailable',status:503});
     const provider=resolved.llm.apiBase&&resolved.llm.apiKey?{apiBase:resolved.llm.apiBase,apiKey:resolved.llm.apiKey}:undefined;
-    resolved.llm.chatCompletion=(request,options)=>nativeDsh.chatCompletion(request,{timeoutMs:options?.timeoutMs??120000,provider});
+    resolved.llm.nativeInferenceConcurrency=nativeDsh.maxConcurrent;
+    resolved.llm.chatCompletion=(request,options)=>nativeDsh.chatCompletion(request,{timeoutMs:options?.timeoutMs??120000,roleLabel:options?.roleLabel,provider});
   }
   return resolved.llm;
 }

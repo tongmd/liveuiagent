@@ -1,3 +1,4 @@
+import {persistNativeInferenceDiagnostic} from './native-inference-diagnostics.js';
 import fs from 'node:fs/promises';
 import { createNativeDshRelay } from './dsh-native-relay.js';
 import path from 'node:path';
@@ -30,12 +31,13 @@ export function nativeDshProfilePatch(guardPath?:string) {
 }
 
 type Runner = {
-  run(input: {work:string;home:string;task:string;model:string;provider?:{apiBase:string;apiKey:string};signal:AbortSignal;onEvent:(event:any)=>void}): Promise<{answer:string}>;
+  run(input: {work:string;home:string;task:string;model:string;provider?:{apiBase:string;apiKey:string};signal:AbortSignal;onEvent:(event:any)=>void;onDiagnostic?:(event:any)=>void}): Promise<{answer:string}>;
   dispose(): Promise<void>;
 };
 type Config = {
   root: string;
   projectRoot: string;
+  diagnosticRoot?: string;
   command: string;
   args?: string[];
   provider?: {apiBase:string;apiKey:string};
@@ -68,6 +70,7 @@ export function parseNativeDshAnswer(answer:string) {
 
 export function createDshNativeInference(config:Config) {
   if(!path.isAbsolute(config.root)||!path.isAbsolute(config.projectRoot))throw new Error('Native DSH paths must be absolute');
+  if(config.diagnosticRoot&&!path.isAbsolute(config.diagnosticRoot))throw new Error('Native diagnostics path must be absolute');
   if(!config.command.trim())throw new Error('Native DSH command required');
   const maxConcurrent=config.maxConcurrent??4;
   if(!Number.isInteger(maxConcurrent)||maxConcurrent<1||maxConcurrent>8)throw new Error('Native DSH maxConcurrent must be 1–8');
@@ -87,11 +90,14 @@ export function createDshNativeInference(config:Config) {
   }
   function release(){active--;const entry=waiting.shift();if(entry)entry.resolve();}
   return {
-    async chatCompletion(request:Record<string,unknown>,options?:{timeoutMs:number;provider?:{apiBase:string;apiKey:string}}) {
+    maxConcurrent,
+    async chatCompletion(request:Record<string,unknown>,options?:{timeoutMs:number;roleLabel?:string;provider?:{apiBase:string;apiKey:string}}) {
       if(closed)throw transportError('Native DSH transport is closed','dsh_native_closed');
       const task=nativeDshTask(request,config.maxRequestBytes);
       const budget=Math.min(options?.timeoutMs??config.timeoutMs??120000,config.timeoutMs??120000);
       if(!Number.isFinite(budget)||budget<=0)throw transportError('Native DSH deadline expired','dsh_native_timeout');
+      const id=randomUUID(),startedAt=Date.now();
+      const diagnostic:Record<string,any>={schemaVersion:1,id,roleLabel:String(options?.roleLabel||'Unspecified role').replace(/[^A-Za-z0-9 _-]/g,'').slice(0,80),model:String(request.model).slice(0,160),requestBytes:Buffer.byteLength(JSON.stringify(request)),taskBytes:Buffer.byteLength(task),messageCount:Array.isArray(request.messages)?request.messages.length:0,budgetMs:budget,maxConcurrent,startedAt,queueWaitMs:null,acquiredAt:null,executionMs:null,outcome:'pending',runnerEvents:[],modelEventCounts:{},relay:{providerRequests:0,responseBytes:0}};
       const controller=new AbortController();
       const timer=setTimeout(()=>controller.abort(transportError('Native DSH inference timed out','dsh_native_timeout')),budget);
       running.add(controller);
@@ -103,7 +109,7 @@ export function createDshNativeInference(config:Config) {
       let runner:Runner|undefined;
       let relay:Awaited<ReturnType<typeof createNativeDshRelay>>|undefined;
       try {
-        await acquire(controller.signal);acquired=true;
+        await acquire(controller.signal);acquired=true;diagnostic.acquiredAt=Date.now();diagnostic.queueWaitMs=Date.now()-startedAt;
         if(closed)throw transportError('Native DSH transport is closed','dsh_native_closed');
         await fs.mkdir(config.root,{recursive:true,mode:0o700});
         dir=await fs.mkdtemp(path.join(config.root,'native-agent-'));
@@ -128,24 +134,38 @@ export function createDshNativeInference(config:Config) {
         const provider=options?.provider??config.provider;
         if(provider)relay=await createNativeDshRelay({provider,request,signal:controller.signal});
         controller.signal.throwIfAborted();
-        const result=await runner!.run({work,home,task,model:String(request.model),provider:relay?.provider,signal:controller.signal,onEvent(event){
+        const result=await runner!.run({work,home,task,model:String(request.model),provider:relay?.provider,signal:controller.signal,onDiagnostic(event){
+          const safe:Record<string,unknown>={};
+          for(const key of ['phase','pid','startedAt','elapsedMs','exitCode','signalCode','stdoutBytes','stderrBytes','terminationRequested','forcedKillRequested']){const value=event?.[key];if(typeof value==='number'||typeof value==='boolean'||value===null)safe[key]=value;else if(typeof value==='string'&&['phase','signalCode'].includes(key))safe[key]=value.replace(/[^A-Za-z0-9_-]/g,'').slice(0,40);}
+          if(diagnostic.runnerEvents.length<8)diagnostic.runnerEvents.push(safe);
+        },onEvent(event){
+          const kind=['status','final','error','tool_call','tool','tool_start','message','delta','assistant_delta'].includes(event?.type)?event.type:'other';diagnostic.modelEventCounts[kind]=(diagnostic.modelEventCounts[kind]||0)+1;
           if(event?.type==='tool_call'||event?.type==='tool'||event?.type==='tool_start'){
             controller.abort(transportError('Native DSH attempted a forbidden local tool','dsh_native_tool_forbidden'));
           }
         }});
         controller.signal.throwIfAborted();
-        const parsed=parseNativeDshAnswer(result.answer);
+        diagnostic.answerCharacters=result.answer.length;
+        const parsed=parseNativeDshAnswer(result.answer);diagnostic.outcome='succeeded';
         return {id:'dsh-native-'+randomUUID(),object:'chat.completion',model:request.model,
           choices:[{index:0,message:{role:'assistant',content:JSON.stringify(parsed)},finish_reason:'stop'}],
           execution:{harness:'dsh',delivery:'native',toolsExecutedBy:'host'}};
       } catch(error) {
+        diagnostic.outcome=controller.signal.aborted?'aborted':'failed';diagnostic.errorCode=String((error as any)?.code||'native_inference_failed').replace(/[^A-Za-z0-9_-]/g,'').slice(0,80);
         const details=relay?.diagnostics();
         if(details?.code&&!controller.signal.aborted)throw Object.assign(new Error(String(details.message)),{code:details.code,nativeInference:details});
         if(error&&typeof error==='object'&&details)Object.assign(error,{nativeInference:details});
         throw error;
       } finally {
         clearTimeout(timer);running.delete(controller);
-        try {await runner?.dispose();} finally {try {await relay?.close();} finally {try {if(dir)await fs.rm(dir,{recursive:true,force:true});} finally {if(acquired)release();completions.delete(completion);markComplete();}}}
+        diagnostic.runnerCreated=Boolean(runner);diagnostic.runnerDisposed=false;diagnostic.workspaceRemoved=!dir;
+        try {await runner?.dispose();diagnostic.runnerDisposed=Boolean(runner);} catch(error){diagnostic.outcome='cleanup_failed';diagnostic.cleanupErrorPhase='runner_dispose';throw error;} finally {try {await relay?.close();} catch(error){diagnostic.outcome='cleanup_failed';diagnostic.cleanupErrorPhase='relay_close';throw error;} finally {try {if(dir)await fs.rm(dir,{recursive:true,force:true});diagnostic.workspaceRemoved=true;} catch(error){diagnostic.outcome='cleanup_failed';diagnostic.cleanupErrorPhase='workspace_remove';throw error;} finally {
+          if(acquired)release();
+          diagnostic.finishedAt=Date.now();diagnostic.queueWaitMs??=Date.now()-startedAt;diagnostic.executionMs=diagnostic.acquiredAt===null?null:Date.now()-diagnostic.acquiredAt;
+          const relayMetadata=relay?.diagnostics();if(relayMetadata){const safe:Record<string,unknown>={};for(const key of ['providerRequests','upstreamStatus','responseBytes','prompt_tokens','completion_tokens','total_tokens','reasoning_tokens','contentCharacters','reasoningCharacters'])if(typeof relayMetadata[key]==='number')safe[key]=relayMetadata[key];for(const key of ['finish_reason','code'])if(typeof relayMetadata[key]==='string')safe[key]=String(relayMetadata[key]).replace(/[^A-Za-z0-9_-]/g,'').slice(0,80);diagnostic.relay=safe;}
+          await persistNativeInferenceDiagnostic(config.diagnosticRoot,id,diagnostic);
+          completions.delete(completion);markComplete();
+        }}}
       }
     },
     async dispose(){closed=true;for(const controller of running)controller.abort(transportError('Native DSH transport closed','dsh_native_closed'));for(const entry of waiting.splice(0)){entry.signal.removeEventListener('abort',entry.abort);entry.reject(transportError('Native DSH transport closed','dsh_native_closed'));}await Promise.allSettled([...completions]);},
