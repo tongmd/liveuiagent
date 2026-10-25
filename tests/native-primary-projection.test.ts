@@ -87,3 +87,11 @@ test('bare id never substitutes for explicit local binding even if actual record
  const explicit=await flow(t,'app_local',[{name:'Chosen member',id:'external-id',appRecordId:'member-one'}],{seed:true});assert.equal(explicit.output?.evaluation?.pass,true,'explicit separately-read membership proof remains distinct from external id');
  const decorated=await flow(t,'app_local',[{name:'Chosen member (decorated status)',appRecordId:'member-one'}],{seed:true});assert.equal(decorated.output?.evaluation?.pass,false,'presentation text cannot silently become identity evidence');
 });
+
+test('four actual role prompts scope local-kind proof to app_local without weakening service collection or external readback',async t=>{
+ // Explicit local write in this controlled fixture only exercises the Write
+ // Verifier prompt; it is not a requirement imposed on service collections.
+ // Stub verdicts test only host local-kind scoping, not service ownership truth.
+ const result=await flow(t,'service_collection',catalog,{writeFirst:true});assert.equal(result.output?.evaluation?.pass,true);const roles=['Grounding Requirement Agent','AppWorld Grounding Agent','Write Verifier Agent','Grounding Evaluator Agent'];for(const label of roles){const prompt=result.inputs.find(x=>x.label===label);assert.ok(prompt,label);assert.match(prompt.system,/Only primaryMembership=app_local requires actual primary_member record receipts/);assert.match(prompt.system,/primaryMembership=service_collection, discovery or none does not acquire a local record-kind requirement/);assert.match(prompt.system,/service_collection still requires actual service-owned collection reads and every external mutation\/read-back proof/);assert.match(prompt.system,/For primaryMembership=app_local only, to verify an empty primary collection/);assert(!prompt.system.includes('. Primary membership requires actual primary_member record receipts.'));}
+ const pureService=await flow(t,'service_collection',catalog);assert.equal(pureService.output?.evaluation?.pass,true);assert.equal(pureService.output?.appStateCalls.filter(c=>c.api==='app_state.upsert_record').length,0);assert.deepEqual(primaryProjectionDeficiencies('service_collection',catalog,[],fields),[]);assert(primaryProjectionDeficiencies('app_local',catalog,[],fields).length>0,'unchanged host local read/kind proof cannot be skipped');
+});
