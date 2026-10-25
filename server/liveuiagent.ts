@@ -1948,7 +1948,14 @@ async function openAIOrchestratorProvider(request: OrchestratorAgentRequest): Pr
         if (attempt < 2) continue;
         throw new Error(`orchestrator model request timed out after ${timeoutMs}ms`);
       }
-      throw llmConfigRequired(`Orchestrator Agent could not reach API base: ${(err as Error).message}`);
+      // Only an observed provider authentication/configuration rejection warrants
+      // asking for credentials. Native token limits, cancellation and deadlines
+      // carry their own diagnosis and must not become an invented network error.
+      const providerStatus = (err as { nativeInference?: { upstreamStatus?: number } })?.nativeInference?.upstreamStatus;
+      if (providerStatus !== undefined && [400, 401, 403, 404, 405].includes(providerStatus)) {
+        throw llmConfigRequired(`Orchestrator Agent LLM config was rejected by the provider (HTTP ${providerStatus})`);
+      }
+      throw err;
     }
   }
   const text = response.text;
