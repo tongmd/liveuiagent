@@ -22,6 +22,7 @@ const variants=[
  {name:'malformed rejection field',verdict:{approved:true,reject:'false'},expected:0},
  {name:'contradictory true and reject',verdict:{approved:true,reject:true,reason:'Do not execute'},expected:0},
  {name:'two actual verifier request timeouts',verdict:{approved:true},timeout:true,expected:0},
+ {name:'prefix-resolved write still needs verification',prefixWrite:true,verdict:{approved:false},expected:0},
  {name:'readonly does not need write approval',verdict:{approved:false},readonly:true,expected:0},
 ];
 for(const variant of variants)test('write verifier fails closed: '+variant.name,async t=>{
@@ -30,7 +31,7 @@ for(const variant of variants)test('write verifier fails closed: '+variant.name,
  if(system.includes('You analyze a GUI'))value={objective:'Update the actual records',deliverables:['Actual notes'],expectedNumbers:[]};
  else if(system.includes('You are the Write Verifier')){verifierRequests++;if(variant.timeout)await new Promise(r=>setTimeout(r,160));value=variant.verdict;}
  else if(system.includes('You are an INDEPENDENT evaluator'))value={pass:true,deficiencies:[]};
- else {executorInputs.push(JSON.parse(body.messages[1].content));step++;value=step===1?{calls:variant.readonly?[{api:'read_notes',args:{}}]:variant.mixedApis?[batch[0],{...batch[1],api:'create_note'}]:batch}:step===2?{calls:[{api:'read_notes',args:{}}]}:{done:true,summary:'Actual notes read back',entities:[{name:'Actual note',id:'one'}],stats:[]};}
+ else {executorInputs.push(JSON.parse(body.messages[1].content));step++;value=step===1?{calls:variant.readonly?[{api:'read_notes',args:{}}]:variant.mixedApis?[batch[0],{...batch[1],api:'create_note'}]:variant.prefixWrite?batch.map(call=>({...call,api:'update_no'})):batch}:step===2?{calls:[{api:'read_notes',args:{}}]}:{done:true,summary:'Actual notes read back',entities:[{name:'Actual note',id:'one'}],stats:[]};}
  if(!res.destroyed){res.writeHead(200,{'Content-Type':'application/json'});res.end(JSON.stringify({choices:[{message:{content:JSON.stringify(value)}}]}));}});
  await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();return new Promise<void>(r=>server.close(()=>r()))});
  const old=process.env.LIVEUIAGENT_ORCHESTRATOR_TIMEOUT_MS;t.after(()=>old===undefined?delete process.env.LIVEUIAGENT_ORCHESTRATOR_TIMEOUT_MS:process.env.LIVEUIAGENT_ORCHESTRATOR_TIMEOUT_MS=old);

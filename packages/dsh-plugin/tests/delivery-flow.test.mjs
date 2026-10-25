@@ -125,6 +125,7 @@ test('connected-service contract failures enter one focused repair before public
       // Check the guidance actually delivered to the repair runner, alongside
       // the real browser acceptance of its corrected connected app below.
       const guidance=task.slice(task.lastIndexOf('CONNECTED SERVICE REPAIR:'));
+      assert.match(guidance,/Read \.liveui-host-reference\.html.*merge the necessary implementation.*without replacing the existing app/);
       assert.match(guidance,/window\.liveuiapp\.perform\(currentRequest, currentFields\)/);
       assert.match(guidance,/entities:\[\{name,id\?,detail\?,group\?\}\]/);
       assert.match(guidance,/every returned entity name\/detail\/group.*data-liveui-view="records"/);

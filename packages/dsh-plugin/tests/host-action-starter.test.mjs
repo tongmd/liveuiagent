@@ -16,7 +16,16 @@ test('new connected starter passes the real trusted-click SDK/error contract',as
 test('seeding does not overwrite an existing app or claim checks that have not run',async t=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'liveui-starter-'));t.after(()=>fs.rm(dir,{recursive:true,force:true}));
  assert.equal(await seedConnectedApp(dir),true);const first=await fs.readFile(path.join(dir,'index.html'),'utf8');assert.match(first,/data-liveui-action="agent.invoke"/);assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir,'app.json'),'utf8')).checks,[]);
- await fs.writeFile(path.join(dir,'index.html'),'existing user app');assert.equal(await seedConnectedApp(dir),false);assert.equal(await fs.readFile(path.join(dir,'index.html'),'utf8'),'existing user app');
+ const reference=path.join(dir,'.liveui-host-reference.html');
+ assert.equal(await fs.readFile(reference,'utf8'),connectedStarterHtml());assert.equal((await fs.stat(reference)).mode & 0o222,0);
+ await fs.writeFile(path.join(dir,'index.html'),'existing user app');
+ const metadata='{"name":"Existing user app","custom":"preserve me"}',store='{"verified":"actual cached observation","draft":"unfinished"}';
+ await fs.writeFile(path.join(dir,'app.json'),metadata);await fs.writeFile(path.join(dir,'store.json'),store);
+ const stale=path.join(dir,'stale-reference');await fs.writeFile(stale,'obsolete controller',{mode:0o444});await fs.rename(stale,reference);
+ assert.equal(await seedConnectedApp(dir),false);
+ assert.equal(await fs.readFile(path.join(dir,'index.html'),'utf8'),'existing user app');
+ assert.equal(await fs.readFile(path.join(dir,'app.json'),'utf8'),metadata);assert.equal(await fs.readFile(path.join(dir,'store.json'),'utf8'),store);
+ assert.equal(await fs.readFile(reference,'utf8'),connectedStarterHtml());assert.equal((await fs.stat(reference)).mode & 0o222,0);
 });
 test('observed successful results and entities remain visible after reopen; failed results preserve draft/cache and provide context',async t=>{
  const server=http.createServer((_q,r)=>{r.writeHead(200,{'Content-Type':'text/html; charset=utf-8'});r.end(connectedStarterHtml())});await new Promise(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();return new Promise(r=>server.close(r))});

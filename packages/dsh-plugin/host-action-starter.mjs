@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 function hostController() {
   const form = document.getElementById('liveui-task-form');
@@ -82,7 +83,17 @@ export function connectedStarterHtml() {
 
 export async function seedConnectedApp(work) {
   await fs.mkdir(work, {recursive: true});
-  try { await fs.writeFile(path.join(work, 'index.html'), connectedStarterHtml(), {flag: 'wx', mode: 0o600}); }
+  const starter = connectedStarterHtml();
+  // Refresh an immutable reference even when an older revision owns index.html.
+  // Rename a new file so refreshing a prior read-only reference never follows
+  // a model-created symlink or requires making the old reference writable.
+  const reference = path.join(work, '.liveui-host-reference.html');
+  const temporary = path.join(work, `.liveui-host-reference-${randomUUID()}.tmp`);
+  try {
+    await fs.writeFile(temporary, starter, {flag: 'wx', mode: 0o444});
+    await fs.rename(temporary, reference);
+  } finally { await fs.rm(temporary, {force: true}); }
+  try { await fs.writeFile(path.join(work, 'index.html'), starter, {flag: 'wx', mode: 0o600}); }
   catch (error) { if (error.code === 'EEXIST') return false; throw error; }
   try { await fs.writeFile(path.join(work, 'app.json'), JSON.stringify({name: 'Workspace', description: 'Run and review your tasks', features: [], checks: []}, null, 2), {flag: 'wx', mode: 0o600}); }
   catch (error) { if (error.code !== 'EEXIST') throw error; }
