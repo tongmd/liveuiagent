@@ -17,6 +17,7 @@ information hierarchy and useful controls. Do not make every app the same dashbo
 Avoid generic purple gradients, decorative KPI blocks and a large hero that hides the actual task.
 Use English UI by default; follow another language only when the user explicitly requests it. Adapt to mobile widths; provide visible focus, labels and empty states.
 Prioritize the actual task. Keep the implementation focused; do not expand into unrequested features.
+Keep developer contracts, service wiring and implementation explanations out of the interface. Do not add decorative taglines or explanatory fine print; use task-relevant controls, actual results and actionable status.
 Every visible action must work; no dummy buttons or fake AI responses.
 Implement persistent create/edit/delete, filtering, calculations, import/export or history when
 appropriate to the request. Provide useful real sample data, clearly identified as examples.
