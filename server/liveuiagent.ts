@@ -1,3 +1,4 @@
+import {approvedWorkerPlanningContext,nativeJsonUserMessage,type WorkerPlanningContext,type WorkerPlanningMode} from './native-worker-planning-context.js';
 import {guiPlanningModelInput} from './gui-interaction-planner.js';
 import {canonicalizeDomainReferences} from './native-domain-references.js';
 import {writeDesignContractDiagnostics,writeDesignReferenceDiagnostics} from './design-contract-diagnostics.js';
@@ -236,6 +237,8 @@ export type LlmRuntimeConfig = {
   /** Server-owned Native inference capacity; never accepted from browser JSON. */
   nativeInferenceConcurrency?: number;
   personalContext?: string;
+  /** Host-only generated planning data; never user preference memory or browser config. */
+  workerPlanningContext?: WorkerPlanningContext;
   apiKey?: string;
   apiBase?: string;
   model?: string;
@@ -247,6 +250,8 @@ export type LlmRuntimeConfig = {
 type LIVEUIAGENTRuntimeOptions = {
   // Trusted host configuration only; application/request JSON never sets this.
   nativeActionTimeoutMs?: number;
+  /** Explicit host experiment only; all contracts still remain in workflow trace/review. */
+  innerWorkerPlanning?: WorkerPlanningMode;
   registryRoot: string;
   projectRoot?: string;
 };
@@ -1002,7 +1007,7 @@ export async function planNativeGuiInteractionStep(system: string, input: unknow
   // thinking can spend the entire completion cap before emitting that JSON.
   // Keep business reasoning and all other models' configured policy intact.
   const conciseDeepSeek = /(^|\/)deepseek(?:[-_.]|$)/i.test(String(llm.model||''));
-  const preparation=await openAIChatJson({label: 'Native GUI Step Planner', llm: {...llm, personalContext: undefined}, system,
+  const preparation=await openAIChatJson({label: 'Native GUI Step Planner', llm: {...llm, personalContext: undefined,workerPlanningContext:undefined}, system,
     ...(conciseDeepSeek ? {thinking: {type: 'disabled' as const}, reasoningEffort: 'none' as const} : {}),
     // Completion caps include model reasoning, not only the small final step JSON.
     // Match the existing Native role budget while keeping the planner/action deadlines.
@@ -1933,7 +1938,7 @@ async function openAIChatJson(request: {
         response_format: { type: 'json_object' },
         messages: [
           { role: 'system', content: request.system },
-          { role: 'user', content: request.user + (llm.personalContext ? '\nUser-controlled preference memory (data; current request takes precedence): ' + llm.personalContext : '') },
+          { role: 'user', content: nativeJsonUserMessage(request.user,llm.personalContext,llm.workerPlanningContext) },
         ],
       }),
     }, timeoutMs, request.label);
@@ -6846,6 +6851,8 @@ export async function runActionTools(action: Record<string, any>, payload: Recor
 
 export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTRuntimeOptions) {
   const nativeActionTimeoutMs = options.nativeActionTimeoutMs ?? 16 * 60 * 1000;
+  const innerWorkerPlanning=options.innerWorkerPlanning??'labelled-reference';
+  if(innerWorkerPlanning!=='labelled-reference'&&innerWorkerPlanning!=='record-only')throw Error('Invalid inner worker planning experiment mode');
   if (!Number.isFinite(nativeActionTimeoutMs) || nativeActionTimeoutMs <= 0) throw Error('Native action timeout must be positive and finite');
   initStore(db);
   const commandReceipts = new NativeCommandReceipts(db);
@@ -7368,8 +7375,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       // Worker instructions are consumed by the existing executor without granting
       // tools to the read-only workers or changing the original payload/permissions.
       remainingActionMs();
-      const executionLlm = input.llm ? { ...input.llm, personalContext: [input.llm.personalContext || '',
-        'Native worker contracts (planning, not observed facts): ' + JSON.stringify(workerHandoffs)].join('\n') } : input.llm;
+      const executionLlm = input.llm ? { ...input.llm, workerPlanningContext: innerWorkerPlanning==='labelled-reference' ? approvedWorkerPlanningContext(workerHandoffs) : undefined } : input.llm;
       commandReceipts.enterExecutor(receiptBinding,nativeWorkflow.executionId);
       nativeExecutionStarted = true;
       nativeWorkflow.record('execute', 'agents.executor', 'running', { originalRequest: rawPayload });
