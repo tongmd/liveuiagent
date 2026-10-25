@@ -1,3 +1,4 @@
+import {opaqueIdentity} from './opaque-identity.js';
 const reserved = new Set(['entityName', 'entityId', 'sourceComponentId', '__proto__', 'prototype', 'constructor']);
 
 export function requireConsumedSlots(raw: unknown, known?: Iterable<string>): string[] {
@@ -68,6 +69,8 @@ export function assertRowActionPayload(
     || typeof payload.entityId !== 'string' || typeof payload.sourceComponentId !== 'string') {
     throw Error('Row action needs explicit current entity identity and source');
   }
+  opaqueIdentity(payload.entityId);
+  for (const target of targets) opaqueIdentity(target.entityId);
   for (const name of consumed) {
     const value = payload[name];
     if ((value !== null && !['string', 'number', 'boolean'].includes(typeof value))

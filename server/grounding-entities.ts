@@ -1,3 +1,4 @@
+import {opaqueIdentity} from './opaque-identity.js';
 import type {AppRecordField} from './native-app-records.js';
 
 export type GroundedEntity={name:string;id?:string;detail?:string;group?:string;appRecordId?:string};
@@ -25,10 +26,10 @@ export function normalizeGroundingEntities(raw:unknown,formEchoes:ReadonlySet<st
  return (Array.isArray(raw)?raw:[])
   .filter((item:unknown)=>item&&typeof item==='object'&&String((item as Record<string,unknown>).name||'').trim())
   // Proof uses the full submitted name before presentation compaction.
-  .filter((item:Record<string,unknown>)=>Boolean(item.id!==undefined&&item.id!==null&&String(item.id).trim())||!formEchoes.has(String(item.name).trim())||hasLocalReadNameBinding({name:String(item.name).trim(),...(typeof item.appRecordId==='string'?{appRecordId:item.appRecordId}:{})},calls,fields))
+  .filter((item:Record<string,unknown>)=>Boolean(opaqueIdentity(item.id))||!formEchoes.has(String(item.name).trim())||hasLocalReadNameBinding({name:String(item.name).trim(),...(typeof item.appRecordId==='string'?{appRecordId:item.appRecordId}:{})},calls,fields))
   .map((item:Record<string,unknown>)=>({
    name:compact(String(item.name),40),
-   ...(item.id!==undefined&&item.id!==null&&String(item.id).trim()?{id:compact(String(item.id),24)}:{}),
+   ...(opaqueIdentity(item.id)!==''?{id:opaqueIdentity(item.id)}:{}),
    ...(typeof item.detail==='string'&&item.detail.trim()?{detail:compact(item.detail,80)}:{}),
    ...(typeof item.group==='string'&&item.group.trim()?{group:compact(item.group,24)}:{}),
    ...(typeof item.appRecordId==='string'&&item.appRecordId.trim()?{appRecordId:item.appRecordId}:{}),

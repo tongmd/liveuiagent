@@ -1,3 +1,4 @@
+import {opaqueIdentity} from './opaque-identity.js';
 import {authorizedGroundingCapabilities,nativeActionContext,nativeActionContextPolicy} from './native-action-context.js';
 import {NativeCommandReceipts,type CommandReceiptBinding} from './native-command-receipts.js';
 import {HOST_COMMAND_ACTION,parseHostCommandEvent,businessSurfaceWithoutHostCommand,appendHostCommand,assertHostCommandDescriptor,hostCommandDescriptor} from './native-host-command.js';
@@ -2967,7 +2968,7 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
         // 行级动作按钮的身份载体:entityName 是未折叠原名(display name 带 group 前缀
         // 且可能截断,不能当身份),id 供后端精确寻址。旧设计不绑这两个路径,惰性无害。
         entityName: compactText(bareName, 64),
-        id: item.id === undefined || item.id === null ? '' : compactText(String(item.id), 24),
+        id: opaqueIdentity(item.id),
         // Badge 用的分组标签:grounding 已经写了 group,以前只被折进 name 前缀里。
         // 没有 group 的记录给空串 —— Hl 对 null/缺失会抛错,空串则安全地渲染为无徽章。
         tag: informativeGroup ? compactText(informativeGroup, 18) : '',
@@ -5239,7 +5240,7 @@ export function buildPreviewWidget(stored: StoredApp) {
     .filter((item) => item && typeof item === 'object' && String(item.name || '').trim())
     .slice(0, 6)
     .map((item) => ({
-      id: item.id === undefined || item.id === null ? '' : compactText(String(item.id), 24),
+      id: opaqueIdentity(item.id),
       name: compactText(String(item.name), 60),
       detail: compactText(typeof item.detail === 'string' ? item.detail : '', 80),
       group: typeof item.group === 'string' && item.group ? compactText(item.group, 30) : undefined,
@@ -7153,7 +7154,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       if (action.perItem === true) {
         try {
           assertRowActionPayload(action, rawPayload, requiredArray<BusinessSlotSpec>((stored.runtimeState.interaction as InteractionModel)?.businessFields, 'perItem action needs declared business fields').map(field => field.name),
-            (Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : []).map((row: any) => ({ entityName: compactText(String(row.name || ''), 64), entityId: row.id === undefined || row.id === null ? '' : compactText(String(row.id), 24) })),
+            (Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities : []).map((row: any) => ({ entityName: compactText(String(row.name || ''), 64), entityId: opaqueIdentity(row.id) })),
             (stored.appPackage.ui.meta as any)?.a2ui, actionId);
         } catch (error) {
           // This is a pre-dispatch contract rejection, not an unknown write outcome.
@@ -7176,7 +7177,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       // 行内实体按钮携带的精确目标(名字+id):流向 grounding 契约与执行器,
       // 后端必须按 id 恰好操作这一个对象。
       const targetEntity = typeof rawPayload.entityName === 'string' && (rawPayload.entityName as string).trim()
-        ? { name: compactText(String(rawPayload.entityName), 64), id: compactText(String(rawPayload.entityId ?? ''), 24) }
+        ? { name: compactText(String(rawPayload.entityName), 64), id: opaqueIdentity(rawPayload.entityId) }
         : null;
       // Validate the entire graph before any external side effect, then run each
       // worker with its own role and the previous workers' structured handoffs.
