@@ -14,6 +14,7 @@ test('real plan installation preserves descriptions through ordinary, per-item a
  const saveDescription='Save the explicitly entered entry value and independently read its current saved record.';
  const inspectDescription='Inspect only the selected existing saved entry without changing any of its stored values.';
  assert(saveDescription.length<=90&&inspectDescription.length<=90);
+ const transportHandoff={proceed:true,instructions:'Read original scoped entries without repeating writes.',constraints:['A'.repeat(105),'B'.repeat(116)],expectedOutcome:'O'.repeat(207)};
  let phase='generation',step=0,expected='';const observed:Array<{phase:string;role:string;description:string}>=[];
  const llm={model:'offline-fixture',chatCompletion:async(req:any)=>{
   const sys=req.messages[0].content;const input=JSON.parse(req.messages[1].content.split('\n')[0]);
@@ -35,7 +36,7 @@ test('real plan installation preserves descriptions through ordinary, per-item a
    const call=calls[step++];return reply(call?{calls:[call]}:{done:true,summary:'Current verified entries',entities:phase==='generation'?[]:[{name:'Entry Alpha',appRecordId:'entry-one'}],stats:[{label:'Entries',value:phase==='generation'?'0':'1'}]});
   }
   if(sys.includes('independently verify'))return reply({pass:true,reason:'Actual scoped record read-back checked'});
-  if(sys.includes('Return JSON {proceed:boolean'))return reply({proceed:true,instructions:'Use actual local record reads for this operation',constraints:[],expectedOutcome:'Verified saved entries'});
+  if(sys.includes('Return JSON {proceed:boolean')){assert.match(sys,/together at most 4096 Unicode characters/);return reply(transportHandoff);}
   return reply({glyph:'<path d="M20 18h56v60H20z" fill="#fff"/>'});
  }};
  const created:any=await runtime.run({prompt:'Keep a persistent journal where I save entered modes and inspect an existing saved entry.',platform:'web',user:'alice',llm}as any);
@@ -49,4 +50,9 @@ test('real plan installation preserves descriptions through ordinary, per-item a
  await runtime.action({requestId:state.hostCommandRequestId,appId:row.app_id,user:'alice',actionId:HOST_COMMAND_ACTION,eventPayload:{command:'Read my saved entries without changing them.',requestId:state.hostCommandRequestId,sourceComponentId:hostCommandDescriptor().buttonId},llm}as any);
  for(const name of ['global','row','command']){assert(observed.some(o=>o.phase===name&&o.role==='native-action-context'));assert(observed.some(o=>o.phase===name&&o.role==='grounding-requirement'));}
  assert.equal(JSON.parse(getRow().runtime_state_json).entities[0].name,'Entry Alpha');
+ const persistedPlans=db.prepare("SELECT output_json FROM agent_workflow_execution_steps WHERE app_id=? AND owner=? AND stage='plan' AND status='ok'").all(row.app_id,'alice')as any[];
+ assert.equal(persistedPlans.length,13,'ordinary and row graphs plus host command graph execute once, without repair');
+ for(const stored of persistedPlans){const output=JSON.parse(stored.output_json);assert.deepEqual(output.constraints,transportHandoff.constraints);assert.equal(output.expectedOutcome,transportHandoff.expectedOutcome);assert.equal(output.instructions,transportHandoff.instructions);}
+ assert.equal((db.prepare("SELECT COUNT(*) AS n FROM agent_workflow_execution_steps WHERE app_id=? AND stage='plan_repair'").get(row.app_id)as any).n,0);
+ const local=db.prepare('SELECT values_json FROM native_app_records WHERE owner=? AND app_id=? AND record_id=?').get('alice',row.app_id,'entry-one')as any;assert.equal(JSON.parse(local.values_json).mode,'Entry Alpha','real SQLite effect/read-back is distinct from a worker plan approval');
 });

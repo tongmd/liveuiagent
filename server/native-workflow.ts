@@ -5,6 +5,8 @@ export type WorkflowNode = { id: string; role?: string; name?: string; purpose?:
 export type WorkflowRecord = { executionId: string; appId: string; owner: string; actionId: string; stage: string; nodeId: string; status: 'running' | 'ok' | 'failed'; input?: unknown; output?: unknown; at: string; startedAt?: string; finishedAt?: string };
 /** Host implementation budget, not user intent or an authorization limit. */
 export const NATIVE_INSTRUCTIONS_UNICODE_LIMIT = 2048;
+export const NATIVE_ROLE_TRANSPORT_LIMITS = Object.freeze({instructionsUnicodeCharacters:NATIVE_INSTRUCTIONS_UNICODE_LIMIT,constraintsCount:4,totalHandoffUnicodeCharacters:4096});
+export const nativeRoleTransportPolicy = `Your handoff is a concise role-specific increment for the single host executor: instructions at most ${NATIVE_ROLE_TRANSPORT_LIMITS.instructionsUnicodeCharacters} Unicode characters, at most ${NATIVE_ROLE_TRANSPORT_LIMITS.constraintsCount} constraints, and instructions plus all constraints plus expectedOutcome together at most ${NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters} Unicode characters. These are transport limits, not business authorization. Do not copy the original request, upstream contracts, entity lists or entire state into your answer; refer to supplied fields and contribute only what your role adds. The host rejects oversized contracts without truncation.`;
 
 type ModelCall = (node: WorkflowNode, input: Record<string, unknown>, mode: 'plan' | 'review') => Promise<Record<string, unknown>>;
 
@@ -31,15 +33,16 @@ function validateRoleContract(output: Record<string, unknown>) {
   if (typeof output.instructions !== 'string' || !output.instructions.trim()) errors.push('instructions must be a non-empty string');
   else if (Array.from(output.instructions).length > NATIVE_INSTRUCTIONS_UNICODE_LIMIT) errors.push(`instructions exceeds ${NATIVE_INSTRUCTIONS_UNICODE_LIMIT} Unicode characters (received ${Array.from(output.instructions).length})`);
   if (typeof output.expectedOutcome !== 'string' || !output.expectedOutcome.trim()) errors.push('expectedOutcome must be a non-empty string');
-  else if (Array.from(output.expectedOutcome).length > 200) errors.push(`expectedOutcome exceeds 200 Unicode characters (received ${Array.from(output.expectedOutcome).length})`);
   if (!Array.isArray(output.constraints)) errors.push('constraints must be an array');
   else {
-    if (output.constraints.length > 4) errors.push(`constraints exceeds 4 entries (received ${output.constraints.length})`);
+    if (output.constraints.length > NATIVE_ROLE_TRANSPORT_LIMITS.constraintsCount) errors.push(`constraints exceeds ${NATIVE_ROLE_TRANSPORT_LIMITS.constraintsCount} entries (received ${output.constraints.length})`);
     output.constraints.forEach((value, index) => {
       if (typeof value !== 'string') errors.push(`constraints[${index}] must be a string`);
-      else if (Array.from(value).length > 100) errors.push(`constraints[${index}] exceeds 100 Unicode characters (received ${Array.from(value).length})`);
     });
   }
+  const strings = [output.instructions, ...(Array.isArray(output.constraints)?output.constraints:[]), output.expectedOutcome];
+  const total = strings.reduce<number>((sum,value)=>sum+(typeof value==='string'?Array.from(value).length:0),0);
+  if(total>NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters)errors.push(`handoff strings exceed ${NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters} aggregate Unicode characters (received ${total})`);
   return errors;
 }
 
@@ -97,8 +100,8 @@ export class NativeWorkflow {
           this.record('contract_validation', node.id, 'failed', undefined, { error: originalError.message, validationErrors: errors, invalidOutput: output });
           const repairInput = { ...input, modelInvocationId: randomUUID(), contractRepair: {
             attempt: 1, maxAttempts: 1, validationErrors: errors, previousInvalidOutput: output,
-            constraints: { instructionsUnicodeCharacters: NATIVE_INSTRUCTIONS_UNICODE_LIMIT, constraintsCount: 4, constraintUnicodeCharacters: 100, expectedOutcomeUnicodeCharacters: 200 },
-            instruction: 'Repair only this same role contract schema/length. Use the complete unchanged original request, permissions, context, role and upstream below. Return concise role-specific incremental instructions, not a copy of upstream. Preserve every safety constraint; do not claim execution, change permissions, erase a refusal or fabricate evidence. If the role should refuse, return proceed:false. This is the only repair attempt; oversized output fails rather than being truncated.',
+            constraints: { ...NATIVE_ROLE_TRANSPORT_LIMITS },
+            instruction: nativeRoleTransportPolicy+' Repair only this same role contract schema/length. Use the complete unchanged original request, permissions, context, role and upstream below. Return concise role-specific incremental instructions, not a copy of upstream. Preserve every safety constraint; do not claim execution, change permissions, erase a refusal or fabricate evidence. If the role should refuse, return proceed:false. This is the only repair attempt; oversized output fails rather than being truncated.',
           } };
           this.record('plan_repair', node.id, 'running', repairInput);
           let repairResponseReceived = false;

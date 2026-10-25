@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { NativeWorkflow, NATIVE_INSTRUCTIONS_UNICODE_LIMIT, type WorkflowRecord } from '../server/native-workflow.js';
+import { NativeWorkflow, NATIVE_INSTRUCTIONS_UNICODE_LIMIT, NATIVE_ROLE_TRANSPORT_LIMITS, type WorkflowRecord } from '../server/native-workflow.js';
 
 const chain = ['agents.orchestrator', 'agents.action', 'agents.app', 'agents.data', 'agents.memory'];
 const specs = Object.fromEntries(chain.map(id => [id, { id, role: id.split('.')[1], purpose: `Execute ${id}` }]));
@@ -106,14 +106,14 @@ test('role projection omits only duplicate static graph and preserves full reque
 });
 
 test('compact role contracts are validated in Unicode characters and never silently truncated', async () => {
-  for (const invalid of [ { instructions: '文'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1) }, { constraints: Array(5).fill('one') }, { constraints: ['文'.repeat(101)] }, { expectedOutcome: '文'.repeat(201) } ]) {
+  for (const invalid of [ { instructions: '文'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1) }, { constraints: Array(5).fill('one') }, { constraints: ['文'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters)] }, { expectedOutcome: '文'.repeat(NATIVE_ROLE_TRANSPORT_LIMITS.totalHandoffUnicodeCharacters) } ]) {
     let calls = 0;
     const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {},
       call: async () => { calls++; return { proceed: true, instructions: 'Act', constraints: [], expectedOutcome: 'Verified', ...invalid }; } });
     await assert.rejects(workflow.plan({ originalRequest: 'untouched' }), /exceeded handoff limits; contract was not truncated/);
     assert.equal(workflow.handoffs.length, 0); assert.equal(calls, 2, 'one bounded schema repair then fail without truncation');
   }
-  const exact = { proceed: true, instructions: '💧'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT), constraints: Array(4).fill('字'.repeat(100)), expectedOutcome: '字'.repeat(200) };
+  const exact = { proceed: true, instructions: '💧'.repeat(NATIVE_INSTRUCTIONS_UNICODE_LIMIT), constraints: Array(4).fill('字'.repeat(500)), expectedOutcome: '字'.repeat(48) };
   const workflow = new NativeWorkflow({ appId: 'a', owner: 'one', actionId: 'save', chain, specs, handoffEdges: edges, record: () => {}, call: async () => exact });
   const result = await workflow.plan({ originalRequest: 'untouched' });
   assert.equal(result[0].instructions, exact.instructions); assert.deepEqual(result[0].constraints, exact.constraints); assert.equal(result[0].expectedOutcome, exact.expectedOutcome);
@@ -175,7 +175,7 @@ test('one real HTTP contract repair preserves the full original context and orig
     assert.deepEqual(requests[1].input.upstream, requests[0].input.upstream);
     assert.deepEqual(requests[1].input.contractRepair.previousInvalidOutput, invalidOutput);
     assert.notEqual(requests[1].input.modelInvocationId, requests[0].input.modelInvocationId);
-    assert.deepEqual(requests[1].input.contractRepair.constraints, { instructionsUnicodeCharacters: NATIVE_INSTRUCTIONS_UNICODE_LIMIT, constraintsCount: 4, constraintUnicodeCharacters: 100, expectedOutcomeUnicodeCharacters: 200 });
+    assert.deepEqual(requests[1].input.contractRepair.constraints, { ...NATIVE_ROLE_TRANSPORT_LIMITS });
     assert.ok(requests[1].input.contractRepair.validationErrors.join(';').includes(`received ${NATIVE_INSTRUCTIONS_UNICODE_LIMIT + 1}`));
     const invalidAudit = records.find(r => r.stage === 'contract_validation' && r.status === 'failed')!;
     assert.deepEqual((invalidAudit.output as any).invalidOutput, invalidOutput);
