@@ -5887,7 +5887,9 @@ export async function runAppWorldGrounding(input: {
       // 顽症 —— 在参数层加一道核准:目标契约+表单提交+拟发调用,批准或只纠正 args 后才执行。
       let verifiedCalls = rawCalls;
       const hasWrite = rawCalls.some((call: any) => {
-        const cap = capabilities.find((tool) => tool.apiName === String(call?.api || '').trim());
+        const apiName=String(call?.api || '').trim();
+        const cap = capabilities.find((tool) => tool.apiName === apiName)
+          || capabilities.find((tool) => tool.apiName.startsWith(apiName) || apiName.startsWith(tool.apiName));
         return cap && String(cap.method || '').toUpperCase() !== 'GET';
       });
       if (hasWrite) {
