@@ -1,3 +1,4 @@
+import { stateDisplayPaths, stateDisplayFields, stateDisplayValues } from './native-state-display.js';
 import { createAppStateAdapter, appRecordFields, hydrateAppState, type AppStateAdapter } from './native-app-state.js';
 import { independentInferencePair } from './inference-pair.js';
 import { nativeRowSlotContext } from './native-row-context.js';
@@ -2901,6 +2902,8 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
       // (歌单里每首歌都挂一个"通勤旋律"徽章),所以只在 group 带来新信息时才保留。
       const rawGroup = typeof item.group === 'string' ? item.group.trim() : '';
       const informativeGroup = rawGroup && rawGroup !== bareName.trim() && rawGroup !== plan.name.trim() ? rawGroup : '';
+      const localRecord = typeof item.appRecordId === 'string' && Array.isArray(stored.runtimeState.appRecords)
+        ? stored.runtimeState.appRecords.find((record: any) => record.recordId === item.appRecordId) : undefined;
       return {
         // group 以可见前缀呈现(Produce · Bananas):无渲染器手术的诚实分组显示。
         name: compactText([informativeGroup, bareName].filter(Boolean).join(' · '), 60),
@@ -2916,7 +2919,8 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
         tag: informativeGroup ? compactText(informativeGroup, 18) : '',
         // 未带 group 前缀的裸名字:Row 里既要 badge 又要标题时,name 会重复显示分组。
         title: compactText(bareName, 60),
-        ...(typeof item.appRecordId === 'string' ? {appRecordId:item.appRecordId, appState:item.appState ?? {}} : {}),
+        ...(typeof item.appRecordId === 'string' ? {appRecordId:item.appRecordId} : {}),
+        appState: stateDisplayValues(plan.interaction.businessFields, localRecord?.values),
       };
     });
   const entityStats = (Array.isArray(stored.runtimeState.entityStats) ? stored.runtimeState.entityStats as Array<Record<string, unknown>> : [])
@@ -3082,7 +3086,7 @@ function validateDesignedOverview(raw: unknown, opts: { slots: Array<{ name: str
   // Widget 绑定白名单:与 Text 同一条纪律 —— 只能绑真实 grounding 数据或字面文本。
   // 行内(/entities item)作用域额外开放 title/detail/tag,它们都是 makeA2uiState 从
   // grounding 的 name/detail/group 直接投影出来的字段。
-  const itemPaths = new Set(['name', 'title', 'detail', 'tag']);
+  const itemPaths = new Set(['name', 'title', 'detail', 'tag', ...stateDisplayPaths(opts.slots)]);
   // Collect ids living inside /entities list items — only there may Texts bind name/detail.
   const itemScoped = new Set<string>();
   const collectScope = (id: string) => {
@@ -6364,6 +6368,7 @@ export async function designAppSurface(input: {
     'Widget bindings obey the SAME whitelist as Text: literal string, or one of /entitiesTitle, /entitiesEmptyHint, /draft/result, /draft/state, /draft/stats, /draft/statLabel, /draft/statValue — plus name, title, detail, tag inside the /entities item subtree. Any other path is rejected. Never put a hard-coded number, price, count, date or percentage in a literal — the only honest numbers come from bindings.',
     'Every component object is {"id": "...", "component": "<Kind>", ...} — the kind key is "component", never "type". The tree is strict: every component except the root "overview" must be referenced exactly once (a Button\'s child Text must NOT also appear in any children array; no unused components).',
     'Bindable paths: /entitiesTitle (content-list header), /entitiesEmptyHint (empty-state hint), /draft/result (latest outcome sentence), /draft/state (short workflow status — Badge only, NEVER the StatBlock hero), /draft/statLabel + /draft/statValue (the app\'s first REAL computed aggregate: the StatBlock hero pair), /draft/stats (the aggregate-summary line: cumulative totals / remaining counts / countdowns), /stats (StatGrid only: the REMAINING aggregates after the first — the hero one is not repeated here), /draft/slots/<slot>. Inside the /entities item subtree, Texts and widgets may bind {"path":"name"} (group-prefixed display name), {"path":"title"} (the bare name, use this one when the row also carries a Badge on {"path":"tag"}), {"path":"detail"} and {"path":"tag"} — the item must be a small Card showing BOTH a name/title and detail.',
+    'Inside the /entities item subtree, Text, Badge and widget bindings may also use appState/<declaredField> from the supplied persistedStateFields whitelist. These are owner/app-local SQLite preferences or targets attached to that exact real entity by appRecordId; they are NOT external service results. Use a short literal label next to the bound value. Missing/unassociated/null values display Not set, never invent zero, a date or success. Do not bind record IDs, owner, revision, credentials, arbitrary nested paths or /appRecords indices, and never create a shadow entity list.',
     'Layout rules: group shortText, date and stepper inputs two per Row so the composer stays compact; longText, choice and toggle inputs each take a full row (pills and switches need the width). Put composer action Buttons together in one Row at the end of the composer.',
     'Per-entity row button: when an action below is marked perItem: true, the /entities item Card MUST additionally contain a Button (variant default, never primary) bound to THAT action, with its own short child Text label (1-18 chars, e.g. 标记完成) — it acts on the row it sits in. At most TWO row Buttons per item, each bound to a DIFFERENT action; row buttons are DUPLICATE entry points — the same actions must still appear as composer Buttons. When no action is perItem, OMIT row buttons entirely.',
     'A row Button that needs a NEW input value (for example a destination or amount) MUST explicitly declare ONLY those required known business slots in action.event.context: {slot_name:{path:"/draft/slots/slot_name"}}. Read that value from the existing composer TextField; do not duplicate inputs inside rows or attach business actions to onchange. Do not pass unrelated or stale fields to actions that only need entity identity (for example mark done). Identity is injected by the host: never declare entityName, entityId, sourceComponentId or arbitrary context keys. Each declared key must equal its exact known slot name and path; no literals, nested objects or other paths.',
@@ -6386,6 +6391,7 @@ export async function designAppSurface(input: {
           appName: input.name,
           description: input.description,
           intention: input.sourcePrompt,
+          persistedStateFields: stateDisplayFields(input.businessFields).map(field => ({name:field.name,type:field.type || 'string',path:`appState/${field.name}`,source:'owner/app SQLite, explicit real entity association only'})),
           slots: input.businessFields.map((field) => {
             const type = field.type || 'string';
             return {
@@ -6425,7 +6431,7 @@ export async function designAppSurface(input: {
 // "preview",严格单引用树,2-16 个组件,至少一处活路径绑定(preview 必须反映真实状态,
 // 不许纯字面量拼一张假卡)。ids 前缀 p_,与 overview 的 d_ 空间不冲突。
 let lastPreviewRejectReason = '';
-function validateDesignedPreview(raw: unknown): Array<Record<string, unknown>> | null {
+function validateDesignedPreview(raw: unknown, fields: Array<{name: string; type?: FieldType}> = []): Array<Record<string, unknown>> | null {
   lastPreviewRejectReason = '';
   const reject = (why: string) => { if (!lastPreviewRejectReason) lastPreviewRejectReason = why; return null; };
   if (!Array.isArray(raw) || raw.length < 2 || raw.length > 16) return reject('components must be an array of 2-16 objects');
@@ -6521,7 +6527,7 @@ function validateDesignedPreview(raw: unknown): Array<Record<string, unknown>> |
       const path = text && typeof text === 'object' ? String((text as Record<string, unknown>).path || '') : '';
       const ok = typeof text === 'string'
         ? text.trim().length > 0
-        : rootPaths.has(path) || (['name', 'detail'].includes(path) && itemScoped.has(id));
+        : rootPaths.has(path) || ((['name', 'detail'].includes(path) || stateDisplayPaths(fields).has(path)) && itemScoped.has(id));
       if (!ok) return bad(`text must be a literal string or bind a whitelisted path (got "${path || String(text)}")`);
       if (path) liveBindCount += 1;
       out.push({ id: `p_${id}`, component: 'Text', text: typeof text === 'string' ? compactText(text, 120) : { path }, variant: textVariants.has(String(node.variant)) ? node.variant : 'body' });
@@ -6552,6 +6558,7 @@ export async function designAppPreview(input: {
   description: string;
   sourcePrompt: string;
   itemLabel?: string;
+  businessFields?: Array<{name: string; type?: FieldType}>;
   llm?: LlmRuntimeConfig;
 }): Promise<{ components: Array<Record<string, unknown>>; size: { width: number; height: number } }> {
   const contract = [
@@ -6559,7 +6566,8 @@ export async function designAppPreview(input: {
     'Component vocabulary (exact, read-only): Card{child}, Column{children[],align?}, Row{children[],align?}, Text{text: string | {"path": "..."}, variant?: h2|h3|body|caption}, List{children:{componentId:"<item component id>", path:"/entities"}}. No TextField, no Button — tapping the card opens the full app.',
     'Every component object is {"id": "...", "component": "<Kind>", ...} — the kind key is "component", never "type". Strict tree: every component except the root "preview" must be referenced exactly once.',
     'Bindable paths (live data): /entitiesTitle, /entitiesEmptyHint, /draft/result (latest outcome sentence), /draft/state (short status), /draft/stats (one aggregate line). Inside the /entities List item subtree, Texts may bind {"path":"name"} and {"path":"detail"} — entities are the REAL records this app tracks (dishes, songs, product models, contacts...), fetched from real services.',
-    'THE REQUIRED SHAPE — follow it exactly, choose only the flavor: root "preview" is a Column whose hero is a List bound to /entities. The List item is a Row of exactly two Texts: first {"path":"name"} (variant body — it renders as the bold row title), then {"path":"detail"} (variant caption — it renders as the small right-aligned meta). After the List you MAY add ONE closing status Text (variant caption) bound to /draft/state, /draft/stats or /draft/result — only if that path carries real extra information for THIS app. Nothing else: no Cards, no headings, no literal data values, no invented numbers, no decorative filler strings.',
+    'An entity row may additionally show a Text bound to appState/<declaredField> from persistedStateFields. Only that real entity\'s explicitly associated owner/app SQLite metadata is available; missing/null/unassociated values display Not set. These local preferences/targets never substitute for external service results. No record IDs, credentials, arbitrary nested paths, /appRecords indexing or synthetic rows.',
+    'THE REQUIRED SHAPE — follow it exactly, choose only the flavor: root "preview" is a Column whose hero is a List bound to /entities. The List item is a Row of two main Texts (plus an optional declared local metadata Text): first {"path":"name"} (variant body — it renders as the bold row title), then {"path":"detail"} (variant caption — it renders as the small right-aligned meta). After the List you MAY add ONE closing status Text (variant caption) bound to /draft/state, /draft/stats or /draft/result — only if that path carries real extra information for THIS app. Nothing else: no Cards, no headings, no literal data values, no invented numbers, no decorative filler strings.',
     'NEVER include the app name or any literal stat/number — the chrome already shows them, and a literal value would freeze stale data into the card. Every visible string must come from a live binding. Same language as the intention. 2-16 components, root id "preview" (Column).',
     'Also choose the card size: "size": {"width": <px>, "height": <px>} — width 220-260 fits the row list (min 170 enforced); height is a hint only, the card grows to fit ALL content.',
     'Respond ONLY with JSON: {"components": [ ... ], "size": {"width": ..., "height": ...}}',
@@ -6577,6 +6585,7 @@ export async function designAppPreview(input: {
           appName: input.name,
           description: input.description,
           intention: input.sourcePrompt,
+          persistedStateFields: stateDisplayFields(input.businessFields || []).map(field => ({name:field.name,type:field.type || 'string',path:`appState/${field.name}`})),
           ...(input.itemLabel ? { entityNoun: input.itemLabel } : {}),
           ...(feedback ? { previousAttemptRejected: feedback } : {}),
         }),
@@ -6586,7 +6595,7 @@ export async function designAppPreview(input: {
       feedback = `The model call itself failed (${compactText(String((error as Error).message), 100)}); produce the JSON again.`;
       continue;
     }
-    const valid = validateDesignedPreview(decision?.components);
+    const valid = validateDesignedPreview(decision?.components, input.businessFields);
     console.warn(`[preview-designer] attempt ${round}: ${Array.isArray(decision?.components) ? decision.components.length : 'no'} components, valid=${Boolean(valid)}${valid ? '' : `, reject: ${compactText(lastPreviewRejectReason, 200)}`}, ${Date.now() - startedAt}ms`);
     if (valid) {
       const rawW = Number((decision?.size as Record<string, unknown> | undefined)?.width);
@@ -6688,6 +6697,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         description: String(plan.description || plan.subject),
         sourcePrompt: nextPrompt,
         itemLabel: plan.itemLabel,
+        businessFields: plan.interaction.businessFields,
         llm: input.llm,
       }),
     );
@@ -6921,6 +6931,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
           description: String(appPackage.manifest.description || plan.subject),
           sourcePrompt: prompt,
           itemLabel: plan.itemLabel,
+          businessFields: plan.interaction.businessFields,
           llm: input.llm,
         }),
       );
