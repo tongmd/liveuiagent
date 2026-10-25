@@ -6916,6 +6916,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             trace(traceLog, 'Grounding Requirement Agent', 'Analyze this GUI turn into an executable goal contract', { actionId }, grounding.goal);
             trace(traceLog, 'AppWorld Grounding Agent', 'Ground this GUI turn in real AppWorld API calls', { actionId, goal: grounding.goal, apis: grounding.calls.map((call) => call.tool.apiName) }, { summary: grounding.summary, entities: grounding.entities, attempts: grounding.attempts, dbChanges: grounding.calls.map((call) => call.dbChanges?.changedApps ?? []) });
             trace(traceLog, 'Grounding Evaluator Agent', 'Independently judge whether the grounded result fulfills the goal contract', { actionId, goal: grounding.goal }, grounding.evaluation ?? { pass: false, deficiencies: ['evaluator did not run'] }, grounding.evaluation?.pass === false ? 'rejected' : 'ok');
+            if (grounding.evaluation?.pass !== true) {
+              throw httpError(`grounded action did not pass verification: ${(grounding.evaluation?.deficiencies || ['evaluator did not run']).join('; ')}. External effects may already have occurred; do not automatically repeat this action.`, grounding.deadlineExceeded ? 504 : 502);
+            }
           }
         }
       }
