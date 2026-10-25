@@ -187,7 +187,7 @@ async function respondWithProgress(
     return;
   }
   res.writeHead(200, {
-    'Content-Type': 'text/event-stream',
+    'Content-Type': 'text/event-stream; charset=utf-8',
     'Cache-Control': 'no-cache',
     Connection: 'keep-alive',
     // nginx 默认 proxy_buffering 会把 SSE 帧(连 15s 心跳一起)扣在代理缓冲里,
