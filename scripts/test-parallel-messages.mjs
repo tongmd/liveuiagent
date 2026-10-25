@@ -1,3 +1,4 @@
+// Exercise the HTTP-browser path where randomUUID is unavailable.
 // Browser integration fixtures only: no external model or DSH requests.
 // Run: CHROME_PATH=/path/to/chrome node scripts/test-runtime-controls.mjs
 import http from 'node:http';
@@ -39,7 +40,7 @@ async function type(page,text){await page.focus('.frontend-prompt textarea');awa
 async function finish(prompt,ok){const reply=pending.get(prompt);assert(reply,'request exists');pending.delete(prompt);reply(ok?{type:'answered',answer:'Answer for '+prompt,trace:[]}:{error:'Failure for '+prompt},ok?200:500)}
 try{
  for(const width of [1440,390]){
- console.log('width',width);const page=await browser.newPage();const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.setViewport({width,height:1000});await page.setRequestInterception(true);page.on('request',r=>r.url().startsWith(base.replace('/liveui/',''))||r.url().startsWith('data:')?r.continue():r.abort());await page.goto(base,{waitUntil:'networkidle0'});await page.waitForSelector('.liveui-runtime-controls');
+ console.log('width',width);const page=await browser.newPage();await page.evaluateOnNewDocument(()=>{Object.defineProperty(globalThis.crypto,'randomUUID',{value:undefined,configurable:true});});const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.setViewport({width,height:1000});await page.setRequestInterception(true);page.on('request',r=>r.url().startsWith(base.replace('/liveui/',''))||r.url().startsWith('data:')?r.continue():r.abort());await page.goto(base,{waitUntil:'networkidle0'});await page.waitForSelector('.liveui-runtime-controls');
  const a='Request A '+width,b='Request B '+width,c='Request C '+width,d='Request D '+width;
  await type(page,a);await page.click('.frontend-generate');await wait(()=>pending.has(a));
  await type(page,b);assert.equal(await page.$eval('.frontend-generate',e=>e.disabled),false,'Second Send remains available while A is running');await page.click('.frontend-generate');await wait(()=>pending.has(b));assert(pending.has(a),'A must remain in flight');
