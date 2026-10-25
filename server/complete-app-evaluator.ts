@@ -24,22 +24,36 @@ async function chromeExecutable(chrome?: string) {
 }
 
 // Runs inside the same opaque-origin sandbox used by the application host.
-function bootstrapStorage(initial: Record<string, string>, channel: string) {
+function bootstrapStorage(initial: Record<string, string>, channel: string, actionTimeoutMs: number, bridgeTimeoutMs: number) {
   const values = Object.assign(Object.create(null), initial);
   const pending = new Map<number, { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>();
-  let sequence = 0;
+  let sequence = 0, actionDeadlineAt: number | undefined, unresolved = false;
+  const unresolvedMessage = 'Application action is unresolved: host side effects may already have occurred. Further actions are blocked; do not automatically retry.';
   function request(type: string, payload: Record<string, unknown>) {
+    if (unresolved) return Promise.reject(Error(unresolvedMessage));
+    if (type === 'ai' && actionDeadlineAt === undefined) actionDeadlineAt = Date.now() + actionTimeoutMs;
     const id = ++sequence;
+    const remaining = type === 'ai' ? Math.max(1, actionDeadlineAt! - Date.now()) : bridgeTimeoutMs;
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => { pending.delete(id); reject(Error('Application bridge timed out')); }, 180000);
+      const timer = setTimeout(() => {
+        pending.delete(id);
+        if (type === 'ai') { unresolved = true; parent.postMessage({channel,type:'unresolved',id},'*'); }
+        reject(Error(type === 'ai' ? unresolvedMessage : 'Application storage/download bridge timed out'));
+      }, remaining);
       pending.set(id, { resolve, reject, timer }); parent.postMessage({ channel, id, type, ...payload }, '*');
     });
   }
   addEventListener('message', event => {
-    if (event.source !== parent || event.data?.channel !== channel || event.data?.type !== 'reply') return;
+    if (event.source !== parent || event.data?.channel !== channel) return;
+    if (event.data.type === 'action-deadline') { if (!unresolved) actionDeadlineAt = event.data.deadlineAt; return; }
+    if (event.data.type === 'unresolved') { unresolved = true; return; }
+    if (event.data.type !== 'reply') return;
     const item = pending.get(event.data.id); if (!item) return;
     clearTimeout(item.timer); pending.delete(event.data.id);
     event.data.error ? item.reject(Error(event.data.error)) : item.resolve(event.data.value);
+    // Promise continuations run before this microtask; two paints cover their
+    // synchronous DOM/React updates. HTTP completion alone is not UI completion.
+    queueMicrotask(() => requestAnimationFrame(() => requestAnimationFrame(() => parent.postMessage({channel,type:'settled',id:event.data.id},'*'))));
   });
   const save = () => { request('store', { store: values }).catch(error => console.error(error.message)); };
   const storage = {
@@ -54,15 +68,66 @@ function bootstrapStorage(initial: Record<string, string>, channel: string) {
     download(filename: string, content: unknown, mimeType = 'text/plain;charset=utf-8') { return request('download', { filename: String(filename), content: String(content), mimeType }); } };
 }
 
+export type CompleteAppBrowserOptions = {actionTimeoutMs?: number; bridgeTimeoutMs?: number};
+const DEFAULT_ACTION_TIMEOUT_MS = 16 * 60 * 1000;
+
 export class CompleteAppBrowser {
   browser?: Browser; page?: Page; frame?: Frame;
-  errors: string[] = []; pending = new Set<Promise<unknown>>(); bridgeResults: any[] = [];
+  errors: string[] = []; pending = new Set<Promise<unknown>>();
+  private results: any[] = []; lateBridgeResults: any[] = [];
+  private actionDeadlineAt?: number; private actionEpoch = 0;
+  private unresolved?: {reason: string; deadlineAt?: number};
+  private acknowledgements = new Map<string, {resolve(): void; promise: Promise<unknown>; deadlineAt:number; type:string}>();
+  private actionTimeoutMs: number; private bridgeTimeoutMs: number;
+  private frameTurns = new Map<string, () => void>();
+  get bridgeResults() { return this.results; }
+  set bridgeResults(value: any[]) { this.assertUsable(); if (this.pending.size) throw Error('The previous application operation is still pending; no new action may begin.'); this.results = value; }
+  get actionState() { return {status:this.unresolved ? 'unresolved' : this.pending.size ? 'pending' : 'idle',tainted:!!this.unresolved,deadlineAt:this.actionDeadlineAt,...(this.unresolved ? {warning:this.unresolved.reason} : {}),lateResults:this.lateBridgeResults.length}; }
   downloads: Array<{ filename: string; content: string; mimeType: string }> = [];
   private writes: Promise<unknown> = Promise.resolve(); private opens = 0; private channel = '';
-  constructor(private transport: CompleteBrowserTransport, private appId: string, private out: string, private chrome?: string) {}
+  constructor(private transport: CompleteBrowserTransport, private appId: string, private out: string, private chrome?: string, options: CompleteAppBrowserOptions | number = {}) {
+    const settings = typeof options === 'number' ? {actionTimeoutMs:options} : options;
+    this.actionTimeoutMs = settings.actionTimeoutMs ?? DEFAULT_ACTION_TIMEOUT_MS;
+    this.bridgeTimeoutMs = settings.bridgeTimeoutMs ?? 30000;
+    if (![this.actionTimeoutMs,this.bridgeTimeoutMs].every(value => Number.isFinite(value) && value > 0)) throw Error('Browser bridge deadlines must be positive finite milliseconds');
+  }
+  private unresolvedError(reason = 'Application action deadline expired while the host request or UI acknowledgement was unresolved') {
+    return Object.assign(Error(reason + '. Host side effects may already have occurred; outcome is unknown to this view. Further actions are blocked; do not automatically retry.'), {code:'application_action_unresolved',unresolved:true});
+  }
+  private taint(reason?: string) {
+    if (!this.unresolved) {
+      const error=this.unresolvedError(reason); this.unresolved={reason:error.message,deadlineAt:this.actionDeadlineAt};this.errors.push(error.message);
+      for (const ack of this.acknowledgements.values()) ack.resolve(); this.acknowledgements.clear();
+      for(const resolve of this.frameTurns.values())resolve();this.frameTurns.clear();
+      void this.page?.evaluate(channel => document.querySelector<HTMLIFrameElement>('#app')?.contentWindow?.postMessage({channel,type:'unresolved'},'*'),this.channel).catch(()=>{});
+    }
+    return this.unresolvedError(this.unresolved.reason.split('. Host side effects')[0]);
+  }
+  private assertUsable() {
+    if (this.unresolved) throw this.unresolvedError(this.unresolved.reason.split('. Host side effects')[0]);
+    if (this.pending.size && this.actionDeadlineAt !== undefined && Date.now() >= this.actionDeadlineAt) throw this.taint();
+  }
+  private async beginAction() {
+    this.assertUsable(); if (this.pending.size) throw Error('The previous application operation is still pending; no new action may begin.');
+    this.actionDeadlineAt=Date.now()+this.actionTimeoutMs;this.actionEpoch++;
+    await this.page!.evaluate(({channel,deadlineAt})=>document.querySelector<HTMLIFrameElement>('#app')?.contentWindow?.postMessage({channel,type:'action-deadline',deadlineAt},'*'),{channel:this.channel,deadlineAt:this.actionDeadlineAt});
+  }
+  private async frameTurn() {
+    if(!this.frame)return;
+    const id=randomBytes(12).toString('hex');let resolve!:()=>void;
+    const acknowledged=new Promise<void>(done=>{resolve=done;});this.frameTurns.set(id,resolve);
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    try {
+      await this.frame.evaluate(({channel,id})=>queueMicrotask(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>parent.postMessage({channel,type:'turn',id},'*')))),{channel:this.channel,id});
+      // The source frame posts AI/store requests before its turn marker. Waiting
+      // for the parent to acknowledge that marker closes the IPC publication race.
+      await Promise.race([acknowledged,new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(this.taint('Application frame acknowledgement deadline expired')),this.bridgeTimeoutMs);})]);
+    } finally {if(timer)clearTimeout(timer);this.frameTurns.delete(id);}
+  }
   private route() { return '/agent/complete/apps/' + encodeURIComponent(this.appId); }
   async open() {
-    if (this.page) await this.settle();
+    this.assertUsable();
+    if (this.page || this.pending.size) await this.settle();
     const data = await this.transport.request(this.route());
     if (typeof data.html !== 'string' || !data.html.trim()) throw Error('Complete application returned no HTML');
     await fs.mkdir(this.out, { recursive: true }); await fs.writeFile(path.join(this.out, `delivered-${++this.opens}.html`), data.html);
@@ -79,6 +144,13 @@ export class CompleteAppBrowser {
       });
       await this.page.exposeFunction('__liveuiEvalBridge', async (key: string, type: string, value: any) => {
         if (key !== this.channel) throw Error('Stale application bridge');
+        this.assertUsable();
+        if(type==='ai'&&this.actionDeadlineAt===undefined)this.actionDeadlineAt=Date.now()+this.actionTimeoutMs;
+        const acknowledgementKey = key + ':' + value.id;
+        let acknowledge!: () => void;
+        const acknowledgement = new Promise<void>(resolve => {acknowledge=resolve;});
+        this.acknowledgements.set(acknowledgementKey,{resolve:acknowledge,promise:acknowledgement,deadlineAt:type==='ai'?this.actionDeadlineAt!:Date.now()+this.bridgeTimeoutMs,type});this.pending.add(acknowledgement);
+        void acknowledgement.finally(()=>this.pending.delete(acknowledgement));
         const task = (async () => {
           if (type === 'store') {
             const snapshot = stringStore(value.store);
@@ -87,9 +159,13 @@ export class CompleteAppBrowser {
           }
           if (type === 'ai') {
             if (typeof value.prompt !== 'string' || !value.prompt.trim() || value.prompt.length > 16000) throw Error('Invalid application AI prompt');
+            if (this.actionDeadlineAt === undefined) this.actionDeadlineAt=Date.now()+this.actionTimeoutMs;
+            const deadlineAt=this.actionDeadlineAt,epoch=this.actionEpoch;
+            if (Date.now() >= deadlineAt) throw Error('Application action deadline expired before dispatch; no additional host request was started');
             const result = await this.transport.request(this.route() + '/action', { prompt: value.prompt, context: value.context ?? {} });
+            if (this.unresolved || Date.now() >= deadlineAt || epoch !== this.actionEpoch) {this.lateBridgeResults.push(result);throw this.taint('A host response arrived after its application action deadline or terminal boundary');}
             if (['queued', 'running'].includes(result?.status)) throw Error('Application transport returned an unfinished AI job');
-            this.bridgeResults.push(result); return result.result;
+            this.results.push(result); return result.result;
           }
           if (type === 'download') {
             const content = String(value.content || ''); if (content.length > 1_000_000) throw Error('Application download exceeds the 1 MB evaluator limit');
@@ -102,11 +178,19 @@ export class CompleteAppBrowser {
       });
     }
     const page = this.page!; this.channel = randomBytes(24).toString('hex');
+    await page.removeExposedFunction('__liveuiEvalAck').catch(()=>{});
+    await page.exposeFunction('__liveuiEvalAck',(key:string,id:number|string,type:string)=>{
+      if(key!==this.channel)return false;
+      if(type==='turn'){const resolve=this.frameTurns.get(String(id));if(!resolve)return false;this.frameTurns.delete(String(id));resolve();return true;}
+      if(type==='unresolved'){this.taint();return false;}
+      const entry=this.acknowledgements.get(key+':'+id);if(!entry)return false;
+      this.acknowledgements.delete(key+':'+id);entry.resolve();return true;
+    });
     const policy = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'; frame-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'">';
     const serialized = JSON.stringify(stringStore(data.store)).replace(/</g, '\\u003c');
     // tsx preserves function names with this helper; serialized browser callbacks
     // need it too when the benchmark imports this module without a tsc build.
-    const injection = policy + `<script>var __name=(value)=>value;(${bootstrapStorage.toString()})(${serialized},${JSON.stringify(this.channel)});<\/script>`;
+    const injection = policy + `<script>var __name=(value)=>value;(${bootstrapStorage.toString()})(${serialized},${JSON.stringify(this.channel)},${this.actionTimeoutMs},${this.bridgeTimeoutMs});<\/script>`;
     const html = /<head[^>]*>/i.test(data.html) ? data.html.replace(/<head[^>]*>/i, (match: string) => match + injection) : injection + data.html;
     await page.setContent('<!doctype html><html><head><style>html,body{margin:0;width:100%;height:100%;overflow:hidden}iframe{border:0;width:100%;height:100%}</style></head><body><iframe id="app" sandbox="allow-scripts allow-forms allow-modals allow-downloads" referrerpolicy="no-referrer"></iframe></body></html>');
     await page.evaluate('globalThis.__name = value => value');
@@ -115,6 +199,7 @@ export class CompleteAppBrowser {
       addEventListener('message', async event => {
         if (event.source !== iframe.contentWindow || event.data?.channel !== channel) return;
         const { id, type } = event.data;
+        if(type==='settled'||type==='unresolved'||type==='turn'){await (window as any).__liveuiEvalAck(channel,id,type);return;}
         try { const value = await (window as any).__liveuiEvalBridge(channel, type, event.data); iframe.contentWindow?.postMessage({ channel, id, type: 'reply', value }, '*'); }
         catch (error) { iframe.contentWindow?.postMessage({ channel, id, type: 'reply', error: String((error as Error).message) }, '*'); }
       }); iframe.srcdoc = html;
@@ -125,13 +210,26 @@ export class CompleteAppBrowser {
     await this.settle(); return data;
   }
   async settle() {
-    const deadline = Date.now() + 180000; await delay(120);
+    this.assertUsable();
+    // Reuse the action's absolute deadline. Calling settle again never buys a
+    // second budget for a request whose side effects may already be in flight.
+    const operationDeadline = this.actionDeadlineAt ?? Date.now()+this.bridgeTimeoutMs;
+    await this.frameTurn();this.assertUsable();let failure: unknown;
     while (this.pending.size) {
-      const left = deadline - Date.now(); if (left <= 0) throw Error('Application bridge timed out');
+      const deadline=Math.min(operationDeadline,...[...this.acknowledgements.values()].map(ack=>ack.deadlineAt));
+      const left=deadline-Date.now();if(left<=0)throw this.taint();
       let timer: ReturnType<typeof setTimeout> | undefined;
-      try { await Promise.race([Promise.all([...this.pending]), new Promise((_, reject) => { timer = setTimeout(() => reject(Error('Application bridge timed out')), left); })]); }
-      finally { if (timer) clearTimeout(timer); } await delay(120);
+      try {
+        const values=await Promise.race([Promise.allSettled([...this.pending]),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(this.taint()),left);})]);
+        const rejected=values.find(value=>value.status==='rejected') as PromiseRejectedResult | undefined;if(rejected&&!failure)failure=rejected.reason;
+      } finally {if(timer)clearTimeout(timer);}
+      await delay(0);this.assertUsable();
     }
+    if(failure)throw failure;
+    // A fully acknowledged action is complete; only then may a later explicit
+    // action receive a new budget. Unresolved actions never reach this reset.
+    this.actionDeadlineAt=undefined;
+    await this.page?.evaluate(channel=>document.querySelector<HTMLIFrameElement>('#app')?.contentWindow?.postMessage({channel,type:'action-deadline',deadlineAt:undefined},'*'),this.channel);
   }
   async snapshot(name?: string) {
     if (!this.frame || !this.page) throw Error('Browser is not open');
@@ -150,6 +248,7 @@ export class CompleteAppBrowser {
     return { evaluator: 'complete-html-browser', ...metrics, checks, errors: [...new Set(this.errors)], passed: Object.values(checks).every(Boolean), screenshot };
   }
   async perform(step: CompleteAppStep) {
+    this.assertUsable();
     if (!this.frame) throw Error('Browser is not open');
     if (step.kind === 'reopen') { await this.open(); return { reopened: true }; }
     if (step.kind === 'wait') { await delay(Math.max(0, Math.min(5000, Number(step.milliseconds) || 250))); await this.settle(); return { waited: true }; }
@@ -174,6 +273,7 @@ export class CompleteAppBrowser {
       return found[0].getAttribute('data-liveui-eval-id');
     }, { target: step.target, kind: step.kind });
     const handle = await this.frame.$(`[data-liveui-eval-id="${id}"]`); if (!handle) throw Error('Evaluator target disappeared');
+    await this.settle();await this.beginAction();
     if (step.kind === 'click') await handle.click();
     else if (step.kind === 'select') await handle.select(String(step.value ?? ''));
     else if (step.kind === 'check') { const checked = await handle.evaluate(node => (node as HTMLInputElement).checked); if (checked !== (step.checked !== false)) await handle.click(); }
@@ -198,6 +298,7 @@ export class CompleteAppBrowser {
     return { selection: { fields: fields.map(field => field.label), button: button.label }, bridgeResults: clone(this.bridgeResults), gui: await this.snapshot() };
   }
   async close() {
+    if(this.pending.size)this.taint('The application view was closed with an unresolved host operation or UI acknowledgement');
     const browser = this.browser;
     const child = browser?.process();
     let closed = false;
@@ -215,7 +316,7 @@ export class CompleteAppBrowser {
   }
 }
 
-export type CompleteAppEvaluatorInput = { appId: string; appName: string; html: string; store?: Record<string, string>; mode: 'gui' | 'behavior'; expectedBehaviorPrompt?: string; steps?: CompleteAppStep[]; maxSteps?: number; llm?: LlmRuntimeConfig; chromePath?: string; outDir?: string };
+export type CompleteAppEvaluatorInput = { appId: string; appName: string; html: string; store?: Record<string, string>; mode: 'gui' | 'behavior'; expectedBehaviorPrompt?: string; steps?: CompleteAppStep[]; maxSteps?: number; llm?: LlmRuntimeConfig; chromePath?: string; outDir?: string; actionTimeoutMs?: number; bridgeTimeoutMs?: number };
 export type CompleteAppEvaluatorCallbacks = { ai?: (prompt: string, context: unknown) => Promise<unknown> };
 async function askJson(llm: LlmRuntimeConfig | undefined, system: string, input: unknown, capture?: (record: Record<string, unknown>)=>Promise<void>) {
   if (!llm?.apiKey || !llm.apiBase || !llm.model) throw Object.assign(Error('Behavior evaluation needs a configured evaluator model or explicit steps.'), { status: 428, code: 'llm_config_required' });
@@ -281,7 +382,7 @@ export async function runCompleteAppEvaluator(input: CompleteAppEvaluatorInput, 
     if (url === route + '/action') { if (!callbacks.ai) throw Error('Application AI callback is unavailable for this evaluation; behavior is not verified.'); return { result: await callbacks.ai(body.prompt, body.context) }; }
     throw Error('Unsupported isolated application operation');
   } };
-  const browser = new CompleteAppBrowser(transport, input.appId, out, input.chromePath);
+  const browser = new CompleteAppBrowser(transport, input.appId, out, input.chromePath, {actionTimeoutMs:input.actionTimeoutMs,bridgeTimeoutMs:input.bridgeTimeoutMs});
   const observations: any[] = [], failures: string[] = [], decisions:any[]=[]; let before: any, after: any, mobile: any, verdict: any;
   let repairsUsed=0,reopenedForJudgment=false;
   async function captureDecision(label:string,record:Record<string,unknown>){
