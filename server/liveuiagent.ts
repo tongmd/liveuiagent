@@ -993,7 +993,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
       'Also design how this app presents itself on its gallery tile. The tile is small and glanceable: one emoji, one big number, two short labels. Prefer showing over telling.',
       'glyph: exactly ONE emoji that a user would instantly associate with this app\'s domain (weather -> a sun/cloud emoji, food -> a food emoji, money -> a money emoji, music -> a music emoji, contacts -> a person emoji, shopping -> a cart/bag emoji, tasks -> a checkmark emoji, travel -> a plane emoji). Pick the emoji the domain actually suggests; never reuse a generic gear/box/sparkle for a domain that has its own obvious symbol.',
       'metricLabel: 2-6 characters naming the single most useful number this app tracks, in the prompt language (e.g. "当前最低", "本周完成", "待收金额", "今晚候选"). It is a label, not a sentence.',
-      'metric: a placeholder shape for that number showing the unit and magnitude a real value would take (e.g. "23°", "¥8,799", "4 / 7", "12 项"). Keep it under 10 characters. This is replaced by live data once the app runs, so it only has to demonstrate the shape.',
+      'metric: return an empty string. Numerical service statistics come only from verified runtime state after real execution. Never invent a sample count, balance, progress or other placeholder statistic for the gallery tile.',
       'collection: 2-6 characters naming the list this app shows, in the prompt language (e.g. "关注商品", "今日任务", "本月账单", "推荐菜单").',
       'tileTagline: the app\'s single purpose as a 4-10 character fragment in the prompt language, phrased the way the user would think of the need itself ("今晚吃什么", "谁还没还钱", "路上听什么", "这周该扫哪"). It is a fragment, NOT a sentence: no period, no 帮你/为你/让你, no appName, no verb-object marketing copy. It replaces the full description on the small tile, so it must stand alone.',
       'actionVerb: the 2-4 character verb for opening/using this app, in the prompt language (e.g. "查看", "开始", "记一笔", "发送").',
@@ -1016,7 +1016,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
         services: ['exact name from availableServices'],
         itemLabel: 'string — singular noun for one listed item, or "" if none',
         glyph: 'string — exactly one domain-appropriate emoji',
-        metric: 'string — hero number placeholder with unit, under 10 chars',
+        metric: 'empty string — no statistics before actual runtime evidence',
         metricLabel: 'string — 2-6 chars naming that number',
         collection: 'string — 2-6 chars naming the list this app shows',
         tileTagline: 'string — 4-10 char single-purpose fragment, no punctuation',
@@ -1071,7 +1071,7 @@ export async function makeBusinessFields(prompt: string, subject: string, tokens
   const presentation: AppPresentation = {
     glyph,
     tileTagline: tilePhrase(requiredText(response.tileTagline, 'Business Slot Agent missing tileTagline', 40)),
-    metric: compactLabel(requiredText(response.metric, 'Business Slot Agent missing metric', 24), 10),
+    metric: '', // Design output never supplies a factual service statistic.
     metricLabel: compactLabel(requiredText(response.metricLabel, 'Business Slot Agent missing metricLabel', 24), 8),
     collection: compactLabel(requiredText(response.collection, 'Business Slot Agent missing collection', 24), 8),
     actionVerb: compactLabel(requiredText(response.actionVerb, 'Business Slot Agent missing actionVerb', 24), 6),
@@ -5061,11 +5061,38 @@ function firstModel(pkg: AppPackage) {
   };
 }
 
+/** First-open observations use the same strict review boundary as later turns.
+ * A failed read leaves the newly created app usable, without publishing claims. */
+export function applyVerifiedInitialContent(stored: StoredApp, initial: {
+  entities: Array<{ name: string; id?: string; detail?: string; group?: string }>;
+  stats: Array<{ label: string; value: string }>;
+  summary: string;
+  evaluation: { pass: boolean; deficiencies?: string[] } | null;
+} | null) {
+  if (initial?.evaluation?.pass !== true) return false;
+  stored.runtimeState.entities = initial.entities;
+  stored.runtimeState.entityStats = initial.stats;
+  if (initial.summary && stored.runtimeState.intentResult && typeof stored.runtimeState.intentResult === 'object') {
+    (stored.runtimeState.intentResult as Record<string, unknown>).subtitle = initial.summary;
+  }
+  return true;
+}
+
+function runtimePreviewStatistics(stored: StoredApp) {
+  const values = Array.isArray(stored.runtimeState.entityStats) ? stored.runtimeState.entityStats : [];
+  return values.filter((item): item is { label: string; value: string | number } => Boolean(
+    item && typeof item === 'object'
+    && typeof (item as any).label === 'string' && (item as any).label.trim()
+    && (typeof (item as any).value === 'string' ? (item as any).value.trim()
+      : typeof (item as any).value === 'number' && Number.isFinite((item as any).value))
+  ));
+}
+
 // 从真实 grounding 结果(runtimeState.entities/entityStats)投影出画廊小组件的预览内容。
 // 纯读取、纯派生 —— 不调用 LLM、不编造字段;没有 grounding 数据就诚实返回 empty。
-function buildPreviewWidget(stored: StoredApp) {
+export function buildPreviewWidget(stored: StoredApp) {
   const rawEntities = Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities as Array<Record<string, unknown>> : [];
-  const rawStats = Array.isArray(stored.runtimeState.entityStats) ? stored.runtimeState.entityStats as Array<Record<string, unknown>> : [];
+  const rawStats = runtimePreviewStatistics(stored);
   const items = rawEntities
     .filter((item) => item && typeof item === 'object' && String(item.name || '').trim())
     .slice(0, 6)
@@ -5094,15 +5121,14 @@ function buildPreviewWidget(stored: StoredApp) {
 }
 
 // 画廊卡片的展示元数据:glyph/collection/actionVerb 来自生成期的 Business Slot Agent,
-// 主数值优先用运行期真实统计(entityStats[0])覆盖设计期占位,让卡片显示真数据。
+// 主数值只能来自运行期统计，与widget共享同一证据过滤；设计期数值不作为事实显示。
 // 旧数据(presentation 之前生成的应用)返回 undefined,前端走 legacy 分支。
-function buildPresentation(stored: StoredApp) {
+export function buildPresentation(stored: StoredApp) {
   const intent = (stored.appPackage.manifest?.intent ?? {}) as Record<string, unknown>;
   const raw = (intent.presentation ?? {}) as Record<string, unknown>;
   const glyph = firstEmojiGrapheme(raw.glyph);
   if (!glyph) return undefined;
-  const stats = Array.isArray(stored.runtimeState.entityStats) ? stored.runtimeState.entityStats as Array<Record<string, unknown>> : [];
-  const liveStat = stats.find((item) => item && String(item.label ?? '').trim() && String(item.value ?? '').trim());
+  const liveStat = runtimePreviewStatistics(stored)[0];
   const entities = Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities as Array<Record<string, unknown>> : [];
   const rows = entities.filter((item) => item && String(item.name ?? '').trim());
   const tagline = typeof raw.tileTagline === 'string' ? tilePhrase(raw.tileTagline) : '';
@@ -5112,11 +5138,12 @@ function buildPresentation(stored: StoredApp) {
     // 每个应用在画廊里读起来都是自己的产品而不是同一个模板。
     accent: findAccent(stored.appPackage.ui),
     tagline,
-    metric: tileMetricValue(String(liveStat ? liveStat.value : (raw.metric ?? '')), 12),
-    metricLabel: compactLabel(String(liveStat ? liveStat.label : (raw.metricLabel ?? '')), 8),
+    metric: liveStat ? tileMetricValue(String(liveStat.value), 12) : '',
+    metricLabel: liveStat ? compactLabel(String(liveStat.label), 8) : '',
     collection: compactLabel(String(raw.collection ?? ''), 8),
     actionVerb: compactLabel(String(raw.actionVerb ?? ''), 6),
     live: Boolean(liveStat),
+    metricSource: liveStat ? 'runtime.entityStats' : 'none',
     rows: rows.length,
   };
 }
@@ -6749,13 +6776,13 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
               actionDescription: 'Read-only initial load: fetch the existing data in the real services that this app is about, so the first open already shows it. Make NO write calls.',
               llm: input.llm,
             });
-            if (initial && initial.entities.length) {
-              stored.runtimeState.entities = initial.entities;
-              if (initial.stats.length) stored.runtimeState.entityStats = initial.stats;
-              (stored.runtimeState.intentResult as Record<string, any>).subtitle = initial.summary;
-              saveStoredApp(db, options.registryRoot, stored);
-            }
-            trace(traceLog, 'Initial Content Agent', 'Populate first-open entities with a read-only grounded turn', { appId, readApis: readPermissions.length }, { entities: initial?.entities?.length ?? 0 }, initial ? 'ok' : 'rejected');
+            const published = applyVerifiedInitialContent(stored, initial);
+            if (published) saveStoredApp(db, options.registryRoot, stored);
+            trace(traceLog, 'Initial Content Agent', 'Populate first-open entities with a read-only grounded turn',
+              { appId, readApis: readPermissions.length },
+              { entities: published ? initial!.entities.length : 0, stats: published ? initial!.stats.length : 0,
+                published, evaluation: initial?.evaluation ?? { pass: false, deficiencies: ['No verified initial read'] } },
+              published ? 'ok' : 'rejected');
           } catch (error) {
             console.warn(`[initial-content] ${appId} read-only turn failed: ${(error as Error).message}`);
             trace(traceLog, 'Initial Content Agent', 'Populate first-open entities with a read-only grounded turn', { appId }, { error: compactText(String((error as Error).message), 160) }, 'rejected');
