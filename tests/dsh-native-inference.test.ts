@@ -29,3 +29,9 @@ test('Native DSH never accepts local tool use as a native business operation',as
  const transport=createDshNativeInference({root,projectRoot:process.cwd(),command:'unit',runnerFactory:async()=>({async run({onEvent}){onEvent({type:'tool_call',name:'bash'});return{answer:'{"ok":true}'};},async dispose(){}})});
  try{await assert.rejects(transport.chatCompletion(request),/forbidden local tool/);assert.deepEqual(await fs.readdir(root),[]);}finally{await transport.dispose();await fs.rm(root,{recursive:true,force:true});}
 });
+
+test('transport disposal waits for an aborted runner and workspace cleanup',async()=>{
+ const root=await fs.mkdtemp(path.join(os.tmpdir(),'native-dsh-dispose-'));let started!:()=>void;const ready=new Promise<void>(r=>started=r);let runnerClosed=false;
+ const transport=createDshNativeInference({root,projectRoot:process.cwd(),command:'unit',runnerFactory:async()=>({async run({signal}){started();return new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>setTimeout(()=>{runnerClosed=true;reject(signal.reason);},20),{once:true}));},async dispose(){}})});
+ const run=transport.chatCompletion(request);const rejection=assert.rejects(run,/transport closed/);await ready;await transport.dispose();assert.equal(runnerClosed,true);assert.deepEqual(await fs.readdir(root),[]);await rejection;await fs.rm(root,{recursive:true,force:true});
+});

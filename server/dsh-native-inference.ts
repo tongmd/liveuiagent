@@ -73,6 +73,7 @@ export function createDshNativeInference(config:Config) {
   let active=0;
   let closed=false;
   const running=new Set<AbortController>();
+  const completions=new Set<Promise<void>>();
   const waiting:Array<{resolve:()=>void;reject:(error:Error)=>void;signal:AbortSignal;abort:()=>void}>=[];
   async function acquire(signal:AbortSignal) {
     signal.throwIfAborted();
@@ -93,6 +94,9 @@ export function createDshNativeInference(config:Config) {
       const controller=new AbortController();
       const timer=setTimeout(()=>controller.abort(transportError('Native DSH inference timed out','dsh_native_timeout')),budget);
       running.add(controller);
+      let markComplete!:()=>void;
+      const completion=new Promise<void>(resolve=>{markComplete=resolve;});
+      completions.add(completion);
       let acquired=false;
       let dir:string|undefined;
       let runner:Runner|undefined;
@@ -131,9 +135,9 @@ export function createDshNativeInference(config:Config) {
           execution:{harness:'dsh',delivery:'native',toolsExecutedBy:'host'}};
       } finally {
         clearTimeout(timer);running.delete(controller);
-        try {await runner?.dispose();} finally {if(dir)await fs.rm(dir,{recursive:true,force:true});if(acquired)release();}
+        try {await runner?.dispose();} finally {try {if(dir)await fs.rm(dir,{recursive:true,force:true});} finally {if(acquired)release();completions.delete(completion);markComplete();}}
       }
     },
-    async dispose(){closed=true;for(const controller of running)controller.abort(transportError('Native DSH transport closed','dsh_native_closed'));for(const entry of waiting.splice(0)){entry.signal.removeEventListener('abort',entry.abort);entry.reject(transportError('Native DSH transport closed','dsh_native_closed'));}},
+    async dispose(){closed=true;for(const controller of running)controller.abort(transportError('Native DSH transport closed','dsh_native_closed'));for(const entry of waiting.splice(0)){entry.signal.removeEventListener('abort',entry.abort);entry.reject(transportError('Native DSH transport closed','dsh_native_closed'));}await Promise.allSettled([...completions]);},
   };
 }

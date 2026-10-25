@@ -538,4 +538,32 @@ app.use(async(err: any, req: express.Request, res: express.Response, _next: expr
 });
 
 const host=process.env.HOST || '0.0.0.0';
-app.listen(port, host, () => console.log(`LiveUI Agent (LIVEUIAGENT on) http://${host}:${port}`));
+const httpServer=app.listen(port, host, () => console.log(`LiveUI Agent (LIVEUIAGENT on) http://${host}:${port}`));
+let shuttingDown=false;
+async function shutdown() {
+  if(shuttingDown)return;
+  shuttingDown=true;
+  // Stop admission first. Native DSH disposal aborts and then waits for its
+  // owned process groups to close before the host is allowed to exit.
+  const force=setTimeout(()=>{
+    httpServer.closeAllConnections();
+    process.exit(1);
+  },15000);
+  force.unref();
+  const closed=new Promise<void>(resolve=>httpServer.close(()=>resolve()));
+  httpServer.closeIdleConnections();
+  try {
+    await nativeDsh?.dispose();
+    await closed;
+    clearTimeout(force);
+    db.close();
+    process.exit(0);
+  } catch {
+    // Provider and child diagnostics can contain private inputs. The detailed
+    // failure belongs to its authenticated task response, not shutdown logs.
+    console.error('Native worker shutdown failed');
+    process.exit(1);
+  }
+}
+process.once('SIGTERM',()=>{void shutdown();});
+process.once('SIGINT',()=>{void shutdown();});
