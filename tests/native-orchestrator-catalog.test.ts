@@ -29,7 +29,14 @@ test('wide real public catalog remains complete once with a legal short skeleton
 test('related external choices remain available beyond the first eight global tools',async t=>{
  let selected='';const{plan,captured}=await run(t,(g,p)=>{selected=p.requestedToolCapabilities.filter((x:any)=>x.id.startsWith('tool.appworld.phone.')).at(-1).id;g.agents.find((a:any)=>a.id==='agents.action').tools=['llm.call',selected];});assert(captured.requestedToolCapabilities.findIndex((x:any)=>x.id===selected)>8);assert.deepEqual(plan.orchestration.agents.find((a:any)=>a.id==='agents.action')!.tools,['llm.call',selected]);
 });
-test('more than eight tool declarations reject instead of silently truncating choices',async t=>{await assert.rejects(run(t,(g,p)=>{g.agents[0].tools=p.allowedTools.slice(0,9);}),/at most 8 tools/);});
+test('nine exact selected tools survive without an arbitrary per-role truncation',async t=>{
+ let selected:string[]=[];const {plan}=await run(t,(g,p)=>{selected=p.allowedTools.slice(0,9);assert.equal(selected.length,9);g.agents.find((a:any)=>a.id==='agents.action').tools=selected;});assert.deepEqual(plan.orchestration.agents.find((a:any)=>a.id==='agents.action')!.tools,selected);
+});
+test('tool arrays reject duplicate declarations and cannot exceed the finite selected dictionary',async t=>{
+ await t.test('duplicates',async child=>{await assert.rejects(run(child,g=>{g.agents[0].tools=['llm.call','llm.call'];}),/distinct strings/);});
+ await t.test('finite bound',async child=>{await assert.rejects(run(child,(g,p)=>{g.agents[0].tools=[...p.allowedTools,...p.allowedTools];}),/finite selected catalog/);});
+ await t.test('non-string',async child=>{await assert.rejects(run(child,g=>{g.agents[0].tools=[{toString:'llm.call'}];}),/distinct strings/);});
+});
 test('unsafe tools remain rejected and cannot resolve through user-authored reference data',async t=>{await assert.rejects(run(t,g=>{g.agents[0].tools=['llm.call','evil'];}),/unsafe tools/);});
 
 test('undeclared AppWorld services, unknown same-service APIs and near-prefix spellings cannot survive graph validation',async t=>{

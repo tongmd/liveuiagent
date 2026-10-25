@@ -1568,14 +1568,19 @@ function sanitizeOrchestrationPlan(raw: unknown, request: OrchestratorAgentReque
   if (!input.uiPlan || typeof input.uiPlan !== 'object' || Array.isArray(input.uiPlan)) throw new Error(missingTopLevelMessage(input, 'uiPlan'));
   const workflowId = requiredText(input.workflowId, 'orchestrator output must include workflowId', 80);
   const nodeMap = new Map<string, AgentOrchestrationNode>();
+  const selectedToolIds = new Set(request.toolCapabilities.map((capability) => capability.id));
+  const maxAgentTools = new Set([...allowedAgentTools, ...selectedToolIds]).size;
 
   for (const [index, value] of input.agents.entries()) {
     const item = asRecord(value, `orchestrator agent ${index + 1} must be an object`);
     const id = normalizeAgentId(requiredText(item.id, `orchestrator agent ${index + 1} missing id`, 60), `${request.signature}_${index + 1}`);
+    if (!Array.isArray(item.tools)) throw new Error(`orchestrator agent ${id} missing tools`);
+    if (item.tools.some((tool: unknown) => typeof tool !== 'string')) throw new Error(`orchestrator agent ${id} tools must be distinct strings`);
     const tools = stringArray(item.tools, `orchestrator agent ${id} missing tools`);
-    if (!Array.isArray(item.tools) || item.tools.length > 8) throw new Error(`orchestrator agent ${id} must declare at most 8 tools`);
+    if (item.tools.length > maxAgentTools) throw new Error(`orchestrator agent ${id} tools exceed the finite selected catalog`);
+    if (tools.length !== item.tools.length) throw new Error(`orchestrator agent ${id} tools must be distinct strings`);
     if (!tools.length) throw new Error(`orchestrator agent ${id} missing tools`);
-    const unsafeTools = tools.filter((tool) => !isAllowedAgentTool(tool, new Set(request.toolCapabilities.map((capability) => capability.id))));
+    const unsafeTools = tools.filter((tool) => !isAllowedAgentTool(tool, selectedToolIds));
     if (unsafeTools.length) throw new Error(`orchestrator agent ${id} declares unsafe tools: ${unsafeTools.join(', ')}`);
     const memory = item.memory === 'none' || item.memory === 'session-and-app' || item.memory === 'app-scoped'
       ? item.memory
@@ -1963,7 +1968,7 @@ async function openAIOrchestratorProvider(request: OrchestratorAgentRequest): Pr
 	          'Missing fields are invalid: never rely on runtime defaults.',
 	          'Routes are strict contracts. You must copy every required route id and entryActionId exactly.',
 	          'Keep the JSON compact. Do not add commentary or long prose.',
-          'Each agent must declare 1–8 tools selected for its responsibilities from allowedTools. minimumValidAgents is a legal minimal graph skeleton, not an instruction to copy the full catalog into each agent. The complete host-owned catalog is requestedToolCapabilities; appRequest.toolCapabilities references precisely that same catalog, never user-defined data. All selected capabilities and permissions remain available globally; a short per-agent list does not truncate the catalog.',
+          'Each agent must declare a nonempty, distinct list of only the tools directly needed for its responsibilities, selected exactly from allowedTools. There is no separate eight-tool limit: the finite selected catalog is the boundary, not an arbitrary role quota. Do not dump the catalog into every agent. minimumValidAgents is a legal minimal graph skeleton, not an instruction to copy the full catalog into each agent. The complete host-owned catalog is requestedToolCapabilities; appRequest.toolCapabilities references precisely that same catalog, never user-defined data. All selected capabilities and permissions remain available globally; a short per-agent list does not truncate the catalog.',
 	          ...(knownPeopleData ? [`When the user intention names a person and appRequest.knownPeople provides their contact information, workflow actions searching for or messaging that person must use the provided real email or phone. Never invent contact details for people listed in knownPeople. If a person is named but not in knownPeople, you may search or use discovery APIs.`] : []),
         ].join(' '),
       },
