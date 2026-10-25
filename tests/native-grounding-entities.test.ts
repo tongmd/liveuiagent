@@ -15,8 +15,8 @@ function store(t:any){
  return {db,adapter:createAppStateAdapter(db,'alice','one',fields,['storage.app','app_state.write'])!};
 }
 
-test('actual saved v6 proposal5→old4; explicit read-backed bound proposal now normalizes5',()=>{
- const f=JSON.parse(fs.readFileSync(new URL('./fixtures/native-reading-echo-proof-v6.json',import.meta.url),'utf8'));
+test('actual saved proposal5→old4; explicit read-backed bound proposal now normalizes5',()=>{
+ const f=JSON.parse(fs.readFileSync(new URL('./fixtures/native-reading-echo-proof.json',import.meta.url),'utf8'));
  assert.equal(f.sourceDiagnosticSha256,'056f8efffaf581de87da42939305e88318021002c57d3a32d1bfc09e775003f8');
  const echoes=new Set<string>(Object.values(f.payload).filter((v):v is string=>typeof v==='string').map(v=>v.trim()).filter(Boolean));
  assert.equal(f.rawProposals[1].entities.length,5);assert.equal(f.oldNormalizedEntities.length,4);
