@@ -14,10 +14,12 @@ async function executable(explicit) {
 export async function validateBrowserDelivery(html, { chrome, signal, settleMs = 350, requireAgentAction = false } = {}) {
   let browser;
   let actionPhase = false;
+  let outcome = 'failure';
   const agentCalls = [];
   const token = randomBytes(10).toString('hex');
   const syntheticRequest = `Process this current user request: delivery-check-${token}`;
   const serviceError = `Connected service unavailable: delivery-error-${token}`;
+  const serviceSuccess = {ok:true,status:'succeeded',text:`Observed service result: delivery-success-${token}`,data:{entities:[{id:`delivery-${token}`,name:`Observed entity ${token}`,detail:'Read back from the synthetic host',group:'Observed'}],stats:[{label:`Observed count ${token}`,value:'1'}],evaluation:{pass:true,deficiencies:[]}}};
   let actionVerification;
   const errors = [];
   const add = (code, message) => { if (errors.length < 12 && !errors.some(e => e.code === code && e.message === message)) errors.push({ code, message: String(message).slice(0, 600) }); };
@@ -46,26 +48,30 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       if (key !== channel) throw Error('Invalid delivery bridge channel');
       if (!actionPhase || !primaryAction) { add('agent_action_before_submit', 'Call the host service from the bound primary submit action, not startup or input-change handlers'); throw Error('Service actions require an explicit user action'); }
       agentCalls.push({ prompt, context });
-      return { ok: false, text: serviceError, error: serviceError, data: { ok: false, error: serviceError } };
+      return outcome === 'success' ? serviceSuccess : { ok: false, text: serviceError, error: serviceError, data: { ok: false, error: serviceError } };
     });
     const policy = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'; frame-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'">';
     // Match the host's opaque-origin storage API. AI is unavailable during startup
     // checks: a real request must happen through an explicit user action later.
     const bootstrap = `<script>(${installDeliverySdk.toString()})(${JSON.stringify(channel)},${JSON.stringify(requireAgentAction)});</script>`;
     const injected = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, match => match + policy + bootstrap) : policy + bootstrap + html;
-    await page.setContent('<!doctype html><html><body style="margin:0"><iframe id="app" sandbox="allow-scripts allow-forms allow-modals allow-downloads" style="width:100vw;height:100vh;border:0"></iframe></body></html>');
-    await page.evaluate(({ html, channel }) => {
-      const iframe = document.querySelector('#app');
-      addEventListener('message', event => { if (event.source !== iframe.contentWindow || event.data?.channel !== channel) return;
-        if (event.data.type === 'agent') {
-          const { id, prompt, context, primaryAction } = event.data;
-          window.__deliveryAgentAction(channel, prompt, context, primaryAction).then(value => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', value }, '*'), error => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', error: error.message }, '*'));
-        } else void window.__deliveryViolation(channel, event.data.violation); });
-      iframe.srcdoc = html;
-    }, { html: injected, channel });
-    const frame = await page.waitForFrame(frame => frame.parentFrame() === page.mainFrame());
-    await frame.waitForFunction(() => document.readyState === 'complete');
-    await new Promise(resolve => setTimeout(resolve, settleMs));
+    const loadApp = async () => {
+      await page.setContent('<!doctype html><html><body style="margin:0"><iframe id="app" sandbox="allow-scripts allow-forms allow-modals allow-downloads" style="width:100vw;height:100vh;border:0"></iframe></body></html>');
+      await page.evaluate(({ html, channel }) => {
+        const iframe = document.querySelector('#app');
+        addEventListener('message', event => { if (event.source !== iframe.contentWindow || event.data?.channel !== channel) return;
+          if (event.data.type === 'agent') {
+            const { id, prompt, context, primaryAction } = event.data;
+            window.__deliveryAgentAction(channel, prompt, context, primaryAction).then(value => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', value }, '*'), error => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', error: error.message }, '*'));
+          } else void window.__deliveryViolation(channel, event.data.violation); });
+        iframe.srcdoc = html;
+      }, { html: injected, channel });
+      const frame = await page.waitForFrame(frame => frame.parentFrame() === page.mainFrame());
+      await frame.waitForFunction(() => document.readyState === 'complete');
+      await new Promise(resolve => setTimeout(resolve, settleMs));
+      return frame;
+    };
+    let frame = await loadApp();
     signal?.throwIfAborted();
     const visible = await frame.evaluate(() => {
       const body = document.body;
@@ -74,7 +80,18 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
     });
     if (!visible) add('browser_empty_page', 'Application has no visible content after startup');
     if (requireAgentAction && !errors.length) {
-      try { actionVerification = await verifyAgentAction(frame, syntheticRequest, serviceError, agentCalls, () => { actionPhase = true; }); }
+      try {
+        const failure = await verifyAgentAction(frame, syntheticRequest, serviceError, agentCalls, () => { actionPhase = true; });
+        if (!errors.length) {
+          // A fresh opaque frame gives success an independent startup, storage and
+          // trusted-click boundary; failure UI state must not mask success bugs.
+          actionPhase = false; outcome = 'success'; agentCalls.length = 0;
+          frame = await loadApp();
+          const success = await verifyAgentAction(frame, syntheticRequest + ' success path', serviceSuccess.text, agentCalls, () => { actionPhase = true; }, true);
+          await new Promise(resolve => setTimeout(resolve, settleMs));
+          actionVerification = {calls:failure.calls + success.calls,forwardedInput:true,displayedHostError:true,displayedHostSuccess:true,failureCalls:failure.calls,successCalls:success.calls,scope:'synthetic-host-failure-and-success',realServiceExecuted:false};
+        }
+      }
       catch (error) { add('agent_action_contract', error.message); }
     }
   } catch (error) {
@@ -109,7 +126,7 @@ function installDeliverySdk(channel, agentEnabled) {
   addEventListener('securitypolicyviolation', event => parent.postMessage({ channel, violation: 'Blocked ' + event.violatedDirective }, '*'));
 }
 
-async function verifyAgentAction(frame, request, serviceError, calls, beginAction) {
+async function verifyAgentAction(frame, request, serviceError, calls, beginAction, successPath = false) {
   const binding = await frame.evaluate(() => {
     const visible = node => { const r = node.getBoundingClientRect(), s = getComputedStyle(node); return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden'; };
     const candidates = new Set(), hiddenControls = new Set();
@@ -159,6 +176,10 @@ async function verifyAgentAction(frame, request, serviceError, calls, beginActio
   }
   if (!calls.length) throw Error('The primary user action did not call window.liveuiagent.ai. Wire its submit/click handler to await the host bridge; browser-only saves are not external service operations.');
   if (!calls.some(call => JSON.stringify(call).includes(request))) throw Error('The host call discarded the current natural-language input. Forward the complete entered request and fields in prompt/context.');
+  if (successPath) {
+    if (!after.includes(serviceError)) throw Error('The host returned ok:true but its actual observed result was not visibly shown. Render the returned text/data rather than a local success placeholder.');
+    return {calls:calls.length,forwardedInput:true,displayedHostSuccess:true,scope:'synthetic-host-success',realServiceExecuted:false};
+  }
   if (!after.includes(serviceError)) throw Error('The host returned ok:false but the actual error was not visibly shown. Render returned text/data.error and do not silently hide a failed service operation.');
   const fresh = after.split('\n').map(line => line.trim()).filter(line => line && !binding.before.split('\n').map(x => x.trim()).includes(line));
   if (fresh.some(line => /^(success(?:ful(?:ly)?)?|saved|added|created|updated|done|completed)[.!]?$/i.test(line) || /\b(?:successfully (?:saved|added|created|updated)|(?:saved|added|created|updated) successfully|operation completed)\b/i.test(line))) throw Error('The host returned ok:false but the app displayed a success claim. Show the real error and do not mark external writes as successful.');

@@ -8,7 +8,7 @@ test('real primary form submission invokes SDK, forwards synthetic input and vis
   const result=await check(app(good));
   assert.equal(result.ok,true,JSON.stringify(result));
   assert.equal(result.scope,'browser-agent-action-contract');
-  assert.deepEqual(result.agentAction,{calls:1,forwardedInput:true,displayedHostError:true,scope:'synthetic-host-failure',realServiceExecuted:false});
+  assert.deepEqual(result.agentAction,{calls:2,forwardedInput:true,displayedHostError:true,displayedHostSuccess:true,failureCalls:1,successCalls:1,scope:'synthetic-host-failure-and-success',realServiceExecuted:false});
   assert.equal(result.businessBehaviorVerified,false);
 });
 test('local-only save cannot satisfy the service contract despite valid HTML and JavaScript', async () => {
@@ -55,4 +55,9 @@ test('a correctly bound primary action hidden behind a tab reports visibility ra
   assert.match(error.message,/initially visible/);
   assert.match(error.message,/without prior tab navigation/);
   assert.doesNotMatch(error.message,/Mark the real primary form/);
+});
+
+test('a success-only callback ReferenceError is rejected even when failure rendering works',async()=>{
+ const result=await check(app(good+'if(reply.ok===true){missingSuccessState.value=false;}'));
+ assert.equal(result.ok,false);assert.ok(result.errors.some(error=>error.code==='browser_script_error'&&/missingSuccessState/.test(error.message)),JSON.stringify(result));assert.equal(result.businessBehaviorVerified,false);
 });
