@@ -36,7 +36,7 @@ The command runner advertises model/provider override capabilities through `GET 
 
 Install Chrome or Chromium on the service host. Set `CHROME_PATH` when it is outside the standard installation paths. The service uses a real browser to reject blank applications, script errors, external network dependencies and agent calls during startup. A missing browser is an explicit delivery failure.
 
-Generation first writes metadata and a working application within four minutes, then allows one bounded repair if delivery checks fail. A passing startup check confirms the app opens; it does not establish that its business workflows succeed.
+Generation first writes metadata and a working application within four minutes, then allows one bounded repair if delivery checks fail. A passing startup check confirms the app opens; it does not establish that its business workflows succeed. For applications with selected connected services, a second browser check submits a synthetic request and verifies a real SDK call, complete input forwarding, and visible handling of a simulated service failure. This check makes no external service calls; business workflows still need fixture-backed evaluation.
 
 When hosted through LiveUIAgent with AppWorld enabled, connected-service actions call `window.liveuiagent.ai(prompt, context)`. The host plans and executes real service APIs, reviews the outcome, and persists its own execution evidence. Generated code must display errors and treat only `ok === true` as verified success. Standalone DSH action execution does not acquire this service integration automatically.
 
