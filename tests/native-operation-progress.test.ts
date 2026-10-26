@@ -85,3 +85,15 @@ test('runtime JSON optional shapes fail closed rather than skipping required eff
  assert.throws(()=>new NativeOperationProgress(scope,[{...effects[0],completed:true} as any],caps,permissions),/contract/);
  assert.throws(()=>new NativeOperationProgress(scope,[effects[0],{...effects[1],arguments:{name:{fromEffect:'lookup',responsePointer:'not-a-pointer'}}}],caps,permissions),/binding/);
 });
+
+test('present optional references reject falsy values and non-exact shapes before readonly observations can become writes',()=>{
+ const open:Scope={owner:'alice',appId:'app',actionId:'open',executionId:'open-turn',intent:{source:'host-readonly-observation',phase:'initial_open'}};
+ const row:Scope={owner:'alice',appId:'app',actionId:'edit',executionId:'row-turn',intent:{source:'host-bound-current-row-action',actionId:'edit',targetEntity:{id:'9',name:'Selected'},eventPayloadSha256:'a'.repeat(64)}};
+ const write={id:'write',api:'create',effect:'external_write',arguments:{name:literal('Blue')}};
+ for(const value of [false,null,'',0,[],{},'unknown',{phase:'initial_open',completed:true}])assert.throws(()=>new NativeOperationProgress(open,[{...write,observationReference:value} as any],caps,permissions),/observation/);
+ for(const value of [false,null,'',0,[],{}, {actionId:'edit',targetEntityId:'9',completed:true},{actionId:'',targetEntityId:'9'},{actionId:'edit',targetEntityId:''}])assert.throws(()=>new NativeOperationProgress(row,[{...write,rowActionReference:value} as any],caps,permissions),/row reference/);
+ assert.throws(()=>new NativeOperationProgress(row,[{...write,rowActionReference:{actionId:'other',targetEntityId:'9'}} as any],caps,permissions),/current target/);
+ assert.throws(()=>new NativeOperationProgress(open,[{...write,observationReference:'initial_open'} as any],caps,permissions),/never grants/);
+ assert.throws(()=>new NativeOperationProgress(open,[{...effects[0],requestQuote:undefined,observationReference:'reopen'}],caps,permissions),/observation/);
+ const validRead={...effects[0],requestQuote:undefined,observationReference:'initial_open' as const};assert.deepEqual(new NativeOperationProgress(open,[validRead],caps,permissions).snapshot().ready.map(e=>e.id),['lookup']);
+});
