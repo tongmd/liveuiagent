@@ -143,3 +143,11 @@ test('actual HTTP unknown response shapes bind in the next existing decision; ma
   const readCall={api:'read',args:{collection_id:700}};assert.equal(readGuard(turn,readCall).length,1);const final=await dispatch(readCall.api,readCall.args);assert.deepEqual((final.response as any).tracks,[9]);assert.equal(ledger.snapshot().allRequiredReceiptsObserved,true);assert.deepEqual(routes,['search','create','attach','read']);
  }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));for(const[n,v]of Object.entries(prior)){if(v===undefined)delete process.env[n];else process.env[n]=v;}await fs.rm(dir,{recursive:true,force:true});}
 });
+
+test('the only two native grounding callers construct trusted scopes and preserve separate actual permission/adapters',async()=>{
+ const fs=await import('node:fs/promises'),ts=await import('typescript');const source=await fs.readFile(new URL('../server/liveuiagent.ts',import.meta.url),'utf8');const file=ts.createSourceFile('liveuiagent.ts',source,ts.ScriptTarget.Latest,true);const calls:string[]=[];
+ const visit=(node:any)=>{if(ts.isCallExpression(node)&&ts.isIdentifier(node.expression)&&node.expression.text==='runAppWorldGrounding')calls.push(node.arguments[0].getText(file));ts.forEachChild(node,visit);};visit(file);assert.equal(calls.length,2);
+ assert.match(calls[0],/owner:stored\.owner/);assert.match(calls[0],/appId:stored\.appId/);assert.match(calls[0],/executionId:randomUUID\(\)/);assert.match(calls[0],/source:'host-readonly-observation',phase:'initial_open'/);assert.match(calls[0],/permissions: readPermissions/);assert.match(calls[0],/appState:initialAppState/);assert.match(calls[0],/fullPermissions:appPackage\.manifest\.permissions/);
+ assert.match(calls[1],/executionId:nativeWorkflow\.executionId/);assert.match(calls[1],/source:'host-current-command'/);assert.match(calls[1],/source:'host-bound-current-row-action'/);assert.match(calls[1],/nativeActionPayloadSha256\(input\.eventPayload\)/);assert.match(calls[1],/fullPermissions:permissions/);assert.match(calls[1],/permissions: appWorldPermissions/);assert.match(calls[1],/appState,/);
+ for(const call of calls)assert.doesNotMatch(call,/input\.operationProgressContext|input\.fullPermissions|input\.scope/);
+});

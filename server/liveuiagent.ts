@@ -19,7 +19,7 @@ import {authorizedGroundingCapabilities,nativeActionContext,nativeActionContextP
 import {NativeCommandReceipts,type CommandReceiptBinding} from './native-command-receipts.js';
 import {HOST_COMMAND_ACTION,HOST_COMMAND_PREPARE,parseHostCommandPrepareEvent,parseHostCommandEvent,businessSurfaceWithoutHostCommand,appendHostCommand,assertHostCommandDescriptor,hostCommandDescriptor} from './native-host-command.js';
 import {hostCommandRoute,stageHostCommandResult} from './native-host-command-runtime.js';
-import {markNativeActionNotStarted,normalizeNativeActionId,hostNativeActionNotStartedProof} from './native-action-not-started.js';
+import {markNativeActionNotStarted,normalizeNativeActionId,hostNativeActionNotStartedProof,nativeActionPayloadSha256} from './native-action-not-started.js';
 import { assertSurfaceContract, compileSemanticSurface, semanticSurfaceDesignPolicy, SemanticLabelValidationError, type SemanticSurfaceDesign } from './native-surface-design.js';
 import {factorNativePlanInput} from './native-plan-factor.js';
 import {factorNativeSnapshotPaths,nativeSnapshotPathPolicy} from './native-snapshot-path-factor.js';
@@ -37,7 +37,8 @@ import { createAppStateAdapter, createInitialAppStateAdapter, appStateCapability
 import { independentInferencePair } from './inference-pair.js';
 import { nativeRowSlotContext } from './native-row-context.js';
 import { groundingViewContext, groundingViewPolicy, parseProjectionPolicy, projectionCoverageGaps, type GroundingViewContext } from './grounding-view.js';
-import { appWorldCatalogLine } from './appworld-schema.js';
+import { appWorldCatalogLine, validateApiValue } from './appworld-schema.js';
+import {NativeOperationProgress,operationProgressPolicy,type Scope as OperationProgressScope,type GuardedCall} from './native-operation-progress.js';
 import { actualGroundingEvidence, attemptedGroundingEvidence, groundingEvidenceHistory } from './grounding-evidence.js';
 import { AppWorldRequestNotStartedError } from './appworld-request-error.js';
 import { MailReplyEvidence } from './mail-reply-evidence.js';
@@ -5995,6 +5996,8 @@ async function runToolStep(step: Record<string, unknown>, payload: Record<string
 export async function runAppWorldGrounding(input: {
   bridge?: AppWorldBridge;
   appState?: AppStateAdapter;
+  // Internal callers only: never read this scope/permission context from a client body.
+  operationProgressContext?:{scope:OperationProgressScope;fullPermissions:readonly string[]};
   declaredFieldContext?: GroundingDeclaredFields;
   permissions: string[];
   payload: Record<string, unknown>;
@@ -6003,7 +6006,7 @@ export async function runAppWorldGrounding(input: {
   appPurpose?: string;
   supportingProjectionScope?: SupportingScope;
   priorSupportingProjection?: SupportingSeal;
-  // Actual user command, never synthesized action/field labels. Presentation only.
+  // Actual user command, never synthesized action/field labels.
   currentUserCommand?: string;
   viewContext?: GroundingViewContext;
   // Last verified UI projection only: not fresh world evidence or business authorization.
@@ -6018,7 +6021,7 @@ export async function runAppWorldGrounding(input: {
   // 语义的回合知道上一批产出了什么。
   recentTurns?: Array<Record<string, unknown>>;
   llm?: LlmRuntimeConfig;
-}): Promise<{ calls: AppWorldCallResult[]; appStateCalls: Array<Record<string, unknown>>; appStateExecutionEvidence: {attemptedCalls:number;successfulCalls:number;unknownDispatchOutcomes:number;unknownWriteOutcomes:number}; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; supportingProjection?: SupportingSeal; diagnostics?: GroundingDiagnosticsReceipt; deadlineExceeded?: boolean; executionEvidence?: { attemptedApiCalls: number; successfulApiCalls: number; unknownDispatchOutcomes: number; unknownWriteOutcomes: number; notStartedApiCalls: number; totalApiAttemptLimit: number; zeroSuccessfulCallCause?: string } } | null> {
+}): Promise<{ calls: AppWorldCallResult[]; appStateCalls: Array<Record<string, unknown>>; appStateExecutionEvidence: {attemptedCalls:number;successfulCalls:number;unknownDispatchOutcomes:number;unknownWriteOutcomes:number}; summary: string; entities: Array<{ name: string; id?: string; detail?: string; group?: string }>; stats: Array<{ label: string; value: string }>; goal: Record<string, unknown>; evaluation: { pass: boolean; deficiencies: string[] } | null; attempts: Array<Record<string, unknown>>; supportingProjection?: SupportingSeal; operationProgress?:unknown; diagnostics?: GroundingDiagnosticsReceipt; deadlineExceeded?: boolean; executionEvidence?: { attemptedApiCalls: number; successfulApiCalls: number; unknownDispatchOutcomes: number; unknownWriteOutcomes: number; notStartedApiCalls: number; totalApiAttemptLimit: number; zeroSuccessfulCallCause?: string } } | null> {
   // The ablation keeps planning/catalog access but supplies no external facts.
   // Guard the shared executor as well as its current callers.
   if (process.env.LIVEUIAGENT_APPWORLD_GROUNDING === 'off') return null;
@@ -6088,14 +6091,15 @@ export async function runAppWorldGrounding(input: {
         ...(input.supportingProjectionScope?[supportingProjectionPolicy]:[]),
       ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
       `Wired services this turn can write to: ${wiredServices}.`,
+      ...(input.operationProgressContext?[operationProgressPolicy]:[]),
       'Turn the submission into an executable goal contract. Respond ONLY with JSON:',
-      '{"objective": "<one sentence: this turn requests reading/discovery, awaiting an explicit user selection, or an authorized change; what must be true afterwards>", "targetCount": <explicit quantity of requested logical results, or null; not automatically a write count>, "deliverables": ["<concrete result to read/show, choice to await, or authorized object/change to verify; NAME its actual facility and object type>", ...], "projectionPolicy": "retain_existing|replace_or_filter|unspecified", "expectedNumbers": [{"label": "<derived quantity>", "value": "<the number, with its arithmetic>"}]}',
+      '{"objective": "<one sentence: this turn requests reading/discovery, awaiting an explicit user selection, or an authorized change; what must be true afterwards>", "targetCount": <explicit quantity of requested logical results, or null; not automatically a write count>, "deliverables": ["<concrete result to read/show, choice to await, or authorized object/change to verify; NAME its actual facility and object type>", ...], "projectionPolicy": "retain_existing|replace_or_filter|unspecified", "expectedNumbers": [{"label": "<derived quantity>", "value": "<the number, with its arithmetic>"}]' + (input.operationProgressContext ? ', "requiredEffects": [<faithfully representable effects under the operation-progress policy; otherwise use an empty array>]' : '') + '}',
       'Scope the goal to the current turn: reading or presenting candidates is not authorization to create/save them. When the user reserves a choice for themselves, deliver actual candidates and the requested selection affordance, and identify the unresolved choice in objective/deliverables; do not claim the later whole goal is complete. targetCount describes the requested logical results (including candidates when requested), not an instruction to write that many objects. Preserve explicit genre, style, mood, duration and other constraints; do not weaken them to obtain a match. Bind every deliverable to the actual facility selected by the original app purpose and current user intent. If the user requires task-service objects, checking off/completing them requires real individual tasks in that service; a note listing those tasks is not a substitute. If the user instead maintains entries in their actual documents, changing those entries through the authorized document API is that facility operation, not a reason to invent a task-service obligation. Playable music requires the actual music facility; money owed requires the actual expense/payment facility. Classify money intent from the full current submission: a NEW bill, shared cost, debt, or request for someone to pay creates an expense or payment-request object supported by the service; it does NOT assert that money has already changed hands. Record a PAYMENT only when the user explicitly reports an actual repayment or instructs an actual transfer. Future reimbursement language such as asking someone to pay back does not establish a completed repayment. Name an API family only when its documented semantics match that intent. Every money turn additionally delivers the visible PER-PERSON balance list (one entry per member INCLUDING settled ones, read from the balance API after the write). When a container (project/playlist/group) is a deliverable, its content items are SEPARATE deliverables living INSIDE that container. Container nesting: when the user names both an umbrella (a project/board name) and subgroups (per-meeting, per-category), the umbrella is ONE project and each subgroup is a SECTION inside it — never a sibling project per subgroup.',
       'projectionPolicy describes the CURRENT visible view only, never business authorization. Preserve untouched units within that requested view for ordinary additions or updates. An explicitly requested page, batch window, query or filter may use replace_or_filter for that visible scope; displaying a subset does not delete or replace the real saved collection and does not authorize any write to off-page or filtered-out members. Do not require every member of the full saved collection to appear in an explicitly requested current page. If the requested scope cannot be established from the actual request and evidence, keep it unspecified rather than inventing deletion or replacement authority. Do not infer new business obligations from UI metadata.',
       'expectedNumbers: compute every number the request implies but does not state — a bill split share = total ÷ ALL participants INCLUDING the payer (e.g. "186.45 / 3 = 62.15 per person"). Label each derived number with its scope (this event share, repayment amount, or final cumulative balance) and show its arithmetic in the value. A new event share is an INCREMENT, not the final cumulative balance; derive a final balance only from a fresh existing balance plus the signed change. Never assume the existing balance is zero. Use [] when nothing is derived.',
       'When a targetEntity is given, reference exactly that logical business target by its name/id, never authorize a broader business batch. If its backend record packs multiple units, express only the requested subset outcome with all untargeted units preserved under the shared representation-only partition policy; do not invent a same-backend-record requirement.',
     ].join('\n'),
-    user: JSON.stringify({ hostIntentContext, presentationLanguage, userRequest, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.declaredFieldContext?{declaredFieldContext:input.declaredFieldContext}:{}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}) }),
+    user: JSON.stringify({ hostIntentContext, presentationLanguage, userRequest, ...(input.operationProgressContext?{operationIntent:input.operationProgressContext.scope.intent,authorizedOperationCatalog:capabilities.map(c=>({api:c.apiName,id:c.id,method:c.method,purpose:c.purpose,requiredParams:c.requiredParams,inputSchema:c.inputSchema}))}:{}), ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.declaredFieldContext?{declaredFieldContext:input.declaredFieldContext}:{}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}) }),
   }) as Record<string, any>;
   const goalProposal=groundingGoalProposal(goalRaw);
   const goal = {
@@ -6108,6 +6112,23 @@ export async function runAppWorldGrounding(input: {
       .slice(0, 6)
       .map((item: Record<string, unknown>) => ({ label: compactText(String(item.label), 60), value: compactText(String(item.value), 60) })),
   };
+  let operationProgress:NativeOperationProgress|undefined;
+  let readProgressGuard:((scope:OperationProgressScope,call:GuardedCall)=>string[])|undefined;
+  let mutationProgressGuard:((scope:OperationProgressScope,call:GuardedCall)=>string[])|undefined;
+  const progressNotes:string[]=[];
+  let progressUnavailable='trusted current event unavailable';
+  if(input.operationProgressContext)try{
+    if(!Array.isArray(goalRaw?.requiredEffects)||!goalRaw.requiredEffects.length)throw Error('effects not proposed');
+    operationProgress=new NativeOperationProgress(input.operationProgressContext.scope,goalRaw.requiredEffects,capabilities,input.operationProgressContext.fullPermissions,appStateCapabilities,{registerReadPreflightConsumer:c=>{readProgressGuard=c;},registerMutationVerifiedConsumer:c=>{mutationProgressGuard=c;}});
+  }catch(error){progressUnavailable=String((error as Error).message);}
+  const progressSnapshot=()=>operationProgress?{status:'available',...operationProgress.snapshot(),notes:[...progressNotes]}:{status:'unavailable',reason:progressUnavailable,authority:'no additional permission or completion verdict'};
+  const progressTry=(work:()=>unknown)=>{if(operationProgress)try{work();}catch(error){progressNotes.push(String((error as Error).message));}};
+  const progressGuard=(capability:{apiName:string;method:string;inputSchema?:unknown},args:Record<string,unknown>,writeVerified:boolean)=>progressTry(()=>{
+    if(capability.inputSchema)validateApiValue(args,capability.inputSchema as any,capability.apiName);
+    const read=['GET','HEAD','OPTIONS'].includes(capability.method.toUpperCase());
+    if(read)readProgressGuard?.(input.operationProgressContext!.scope,{api:capability.apiName,args});
+    else if(writeVerified)mutationProgressGuard?.(input.operationProgressContext!.scope,{api:capability.apiName,args});
+  });
   const calls: AppWorldCallResult[] = [];
   const mailEvidence = new MailReplyEvidence(input.bridge?.identityEmail ?? '');
   const historyLog: Array<Record<string, unknown>> = [];
@@ -6163,7 +6184,7 @@ export async function runAppWorldGrounding(input: {
     proposals:diagnosticProposals, finalProposedEntities:diagnosticProposals.at(-1)?.entities ?? null,
     finalProposedStats:diagnosticProposals.at(-1)?.stats ?? null,
     normalizedProjection:{summary,entities,stats,entitiesProvided},
-    apiHistory:historyLog, appStateCalls,
+    apiHistory:historyLog, appStateCalls, operationProgress:progressSnapshot(),
     orderedHostCalls:[...historyLog,...appStateCalls].filter(entry=>typeof entry.order==='number').sort((a,b)=>Number(a.order)-Number(b.order)),
     reviews:diagnosticReviews, evaluation, projectionReadOnlyRepair,
     executionEvidence:executionEvidence(),appStateExecutionEvidence:appStateExecutionEvidence(),
@@ -6203,6 +6224,7 @@ export async function runAppWorldGrounding(input: {
         ...(input.declaredFieldContext?[groundingDeclaredFieldsPolicy]:[]),
         ...(input.supportingProjectionScope?[supportingProjectionPolicy]:[]),
           ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
+          ...(input.operationProgressContext?[operationProgressPolicy]:[]),
           'A user submitted a GUI form. Ground their request in REAL API calls against the available APIs below, then summarize.',
           'Respond ONLY with JSON: {"calls": [{"api": "<apiName>", "args": {...}}, ...]} to make the next API call(s) — BATCH every independent call you can already determine into ONE array (e.g. the create plus one add per song); one call per turn wastes the user\'s time.',
           'or {"done": true, "summary": "<one user-facing sentence naming the exact concrete entities now created or fetched>", "entities": [{"name": "<app_local: complete exact declared persisted string value from the current read; otherwise actual entity name>", "id": "<external or display id if any; not a local membership proof>", "appRecordId": "<REQUIRED only for app_local: exact actual separately-read record.recordId; omit for other kinds>", "detail": "<one short user-facing fact>", "group": "<optional section this item belongs to, e.g. Produce / coast morning / a person name>"}], "stats": [{"label": "<aggregate the user should see>", "value": "<computed value>"}]} to finish. stats are the COMPUTED aggregates the request implies — cumulative per-person totals across ALL existing records (read them back first), remaining/unchecked counts per group, days-until dates computed from the world date — each verified against the numbers you actually read. Return AT LEAST ONE stat whenever the turn touched any quantity (durations, prices, counts, amounts, dates): it becomes the app\'s headline figure. An empty stats array is only acceptable when the turn genuinely produced nothing quantifiable.',
@@ -6242,6 +6264,7 @@ export async function runAppWorldGrounding(input: {
           ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.declaredFieldContext?{declaredFieldContext:input.declaredFieldContext}:{}),
           ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}),
           previousCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls),
+          ...(input.operationProgressContext?{operationProgress:progressSnapshot()}:{}),
           ...(input.recentTurns?.length ? { previousTurns: input.recentTurns } : {}),
           ...(feedback.length ? { evaluatorDeficiencies: feedback } : {}),
           ...((feedback.length || mustFinish) ? { instruction: [mustFinish ? 'You must finish NOW with {\"done\": true, \"summary\": ..., \"entities\": [...]} naming the concrete entities.' : '', feedback.length ? 'An independent evaluator found these deficiencies. Fix only the remaining gaps, reusing ids and confirmed successful writes in previousCalls and appStateCalls as the baseline. Count distinct requested logical units established by those receipts, not API calls or raw record counts; add only the evidenced remaining quantity, never a new full batch when part is already complete. A display/coverage gap alone does not authorize another write, an extra unit or deletion of an overshoot. Reuse confirmed ids. Do not replay successful creates or retry an unknown write outcome. Missing required real values must be reported, never invented. Then finish with an updated summary and the FULL entities list for the whole turn.' : ''].filter(Boolean).join(' ') } : {}),
@@ -6252,6 +6275,7 @@ export async function runAppWorldGrounding(input: {
         historyLog.push({ ok: false, api: '(decision)', error: compactText((error as Error).message, 160) });
         continue;
       }
+      if(Array.isArray(decision?.bindings))progressTry(()=>operationProgress!.proposeBindings(input.operationProgressContext!.scope,decision.bindings));
       if (decision?.done || (mustFinish && !decision?.call && !Array.isArray(decision?.calls))) {
         if(diagnosticsEnabled)diagnosticProposals.push({round,step,done:decision?.done,summary:decision?.summary,entities:decision?.entities ?? null,stats:decision?.stats ?? null,acceptedForEvaluation:false});
         // Read-back 硬门:有写操作而其后没有任何读调用,实体列表就是 agent 的自述
@@ -6316,6 +6340,7 @@ export async function runAppWorldGrounding(input: {
       // Write Verifier 门:写参数错误(发明金额 0.01/改名/误追加/错向)是 prompt 劝不住的
       // 顽症 —— 在参数层加一道核准:目标契约+表单提交+拟发调用,批准或只纠正 args 后才执行。
       let verifiedCalls = rawCalls;
+      let progressWriteVerified=false;
       const hasWrite = rawCalls.some((call: any) => {
         const apiName=String(call?.api || '').trim();
         const cap = allCapabilities.find((tool) => tool.apiName === apiName)
@@ -6369,9 +6394,9 @@ export async function runAppWorldGrounding(input: {
             return capability && (capability.requiredParams ?? []).every(key => Object.hasOwn(call.args,key) && call.args[key] !== undefined && call.args[key] !== null);
           });
         if(check?.approved === true && verifierNotRejected) {
-          verifiedCalls = rawCalls;
+          verifiedCalls = rawCalls;progressWriteVerified=true;
         } else if(correctionsValid) {
-          verifiedCalls = check!.correctedCalls;
+          verifiedCalls = check!.correctedCalls;progressWriteVerified=true;
           historyLog.push({ok:true,api:'(write-verifier)',response:compactText(String(check!.reason || 'args corrected'),200)});
         } else {
           const reason = check?.reason || (!check ? 'Verifier returned no usable decision after its bounded attempts'
@@ -6415,19 +6440,23 @@ export async function runAppWorldGrounding(input: {
         const localCapability = appStateCapabilities.find(tool => tool.apiName === apiName);
         if (localCapability && input.appState) {
           if(apiName==='app_state.delete_record'&&!hasLocalDeleteReadProof(args.recordId,args.expectedRevision,appStateCalls)){
+            if(operationProgress)progressNotes.push('Actual local delete preflight rejected before dispatch; no receipt order or API attempt was invented.');
             appStateCalls.push({source:'app-state',api:apiName,ok:false,executionState:'not_started',dispatchOutcome:'not_dispatched',dispatchBlocked:true,actualAttempted:false,automaticRetry:false,attemptedArguments:args,error:'Delete not dispatched: first read/list this exact current owner/app record and revision after its latest local mutation, then make a new decision. Model provenance or a guessed revision is not evidence.'});
             continue;
           }
           remainingActionMs();
           const localMutation=isMutation(localCapability);
           if(localMutation&&(!localReadCapability||remainingDispatchCost()<2)){
+            if(operationProgress)progressNotes.push('Local write/readback budget preflight rejected before dispatch; original budget unchanged.');
             appStateCalls.push({source:'app-state',api:apiName,ok:false,executionState:'not_started',dispatchBlocked:true,actualAttempted:false,request:args,error:'Local write and its independent read cannot both fit the original dispatch budget'});continue;
           }
+          progressGuard(localCapability,args,progressWriteVerified);
           appStateAttempts += 1;
           let response:unknown;
           try { response=await input.appState.call(apiName,args); remainingActionMs(); }
           catch(error) {
             appStateUnknown += 1;
+            progressTry(()=>operationProgress!.recordFailure(input.operationProgressContext!.scope,apiName,totalAttempts(),'unknown',args));
             if(localMutation){unknownWriteOutcomes+=1;appStateUnknownWrites+=1;}
             appStateCalls.push({source:'app-state',api:apiName,order:totalAttempts(),attemptedArguments:args,ok:false,executionState:'outcome_unknown',automaticRetry:false,error:compactText((error as Error).message,240)});
             if((error as {code?:string}).code==='action_deadline_exceeded')throw error;
@@ -6442,6 +6471,7 @@ export async function runAppWorldGrounding(input: {
               if(apiName==='app_state.list_records'&&observed?.operation==='list'&&observed.offset===0&&Array.isArray(observed.records)&&Number.isSafeInteger(observed.limit)&&observed.records.length<observed.limit)for(const key of localPendingDeletes){if(observed.filter?.recordKind===localDeletedKinds.get(key)&&!observed.records.some((record:any)=>record.recordId===key)){localPendingDeletes.delete(key);localPendingReadback.delete(key);}}
             } else {localWriteAt=appStateAttempts;localPendingReadback.add(String(args.recordId));if(apiName==='app_state.delete_record'){localPendingDeletes.add(String(args.recordId));localDeletedKinds.set(String(args.recordId),String((response as any).deletedRecordKind));}else localPendingDeletes.delete(String(args.recordId));}
           appStateCalls.push({source:'app-state',api:apiName,order:totalAttempts(),request:args,response,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments'});
+          progressTry(()=>operationProgress!.recordLocal(input.operationProgressContext!.scope,{api:apiName,order:totalAttempts(),request:args,response,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments'}));
           if(localMutation){
             const written=response as any;
             const returnedId=apiName==='app_state.upsert_record'?written?.record?.recordId:written?.recordId;
@@ -6450,17 +6480,20 @@ export async function runAppWorldGrounding(input: {
               remainingActionMs();
               if(typeof returnedId!=='string'||returnedId!==args.recordId)throw Error('Successful local write response has no matching actual record identity; independent read not dispatched');
               appStateAttempts+=1;readDispatched=true;
+              progressGuard(localReadCapability!,readArgs,false);
               const observed=await input.appState.call('app_state.read_record',readArgs) as any;remainingActionMs();readResponded=true;
               appStateSuccesses+=1;localReadAt=appStateAttempts;
               const valid=observed?.source==='app-state'&&observed?.operation==='read'&&observed?.scope==='authenticated-current-owner-app'&&observed?.persisted===true&&(apiName==='app_state.delete_record'
                 ? observed.record===null
                 : observed?.record?.recordId===returnedId&&observed.record.recordKind===written.record.recordKind&&observed.record.revision===written.record.revision&&JSON.stringify(observed.record.values)===JSON.stringify(written.record.values));
               appStateCalls.push({source:'app-state',api:'app_state.read_record',order:totalAttempts(),request:readArgs,response:observed,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments',dispatchInitiator:'host-scheduled-independent-local-readback',readbackValidated:valid});
+              progressTry(()=>operationProgress!.recordLocal(input.operationProgressContext!.scope,{api:'app_state.read_record',order:totalAttempts(),request:readArgs,response:observed,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments'}));
               if(valid){localPendingReadback.delete(returnedId);localPendingDeletes.delete(returnedId);}
               remainingActionMs();
             }catch(error){
               if(readResponded)throw error; // a known read response is not an unknown dispatch
               if(readDispatched)appStateUnknown+=1;
+              if(readDispatched)progressTry(()=>operationProgress!.recordFailure(input.operationProgressContext!.scope,'app_state.read_record',totalAttempts(),'unknown',readArgs));
               appStateCalls.push({source:'app-state',api:'app_state.read_record',...(readDispatched?{order:totalAttempts()}:{}),attemptedArguments:readArgs,ok:false,executionState:readDispatched?'outcome_unknown':'not_started',actualAttempted:readDispatched,automaticRetry:false,requestSource:'host-bound-app-state-dispatched-arguments',dispatchInitiator:'host-scheduled-independent-local-readback',error:compactText((error as Error).message,240)});
               if((error as {code?:string}).code==='action_deadline_exceeded')throw error;
             }
@@ -6478,6 +6511,7 @@ export async function runAppWorldGrounding(input: {
         try {
           input.llm?.onProgress?.(`Calling API: ${capability.apiName}`);
           replyRecipients = mailEvidence.before(capability, args);
+          progressGuard(capability,args,progressWriteVerified);
           bridgeAttempted = true;
           apiAttemptCount += 1;
           const result = await input.bridge!.callTool(capability.id, args);
@@ -6486,9 +6520,11 @@ export async function runAppWorldGrounding(input: {
           if (String(capability.method || '').toUpperCase() === 'GET') lastReadAt = calls.length;
           else lastWriteAt = calls.length;
           historyLog.push(actualGroundingEvidence({ api: capability.apiName, order: totalAttempts(), request: result.request, response: result.response }));
+          progressTry(()=>operationProgress!.recordExternal(input.operationProgressContext!.scope,totalAttempts(),result));
         } catch (error) {
           if (bridgeAttempted && replyRecipients) mailEvidence.failedAttempt(capability, args, replyRecipients, error);
           const notStarted = bridgeAttempted && error instanceof AppWorldRequestNotStartedError;
+          if(bridgeAttempted)progressTry(()=>operationProgress!.recordFailure(input.operationProgressContext!.scope,capability.apiName,totalAttempts(),notStarted?'not_started':'unknown',args));
           if (notStarted) notStartedApiCalls += 1;
           else if (bridgeAttempted) {unknownDispatchOutcomes += 1;if(isMutation(capability))unknownWriteOutcomes += 1;}
           historyLog.push(bridgeAttempted
@@ -6522,6 +6558,7 @@ export async function runAppWorldGrounding(input: {
       system: [
         turnTime,
         groundingIntentEvaluationPolicy,
+        ...(input.operationProgressContext?[operationProgressPolicy,'operationProgress is a fallible proposed work ledger, not an extra user requirement. Inspect its unmet/delta against the original raw current user goal and actual receipts. Reject a real missing authorized effect, not merely a missing/invalid or excessive proposed effect. Never approve solely because allRequiredReceiptsObserved is true.']:[]),
         'You are an INDEPENDENT evaluator for a generated app backend turn. You did not execute it; judge only from the evidence.',
         groundingViewPolicy,
         groundingIntentPolicy,
@@ -6540,7 +6577,7 @@ export async function runAppWorldGrounding(input: {
         'Treat the goal contract as a fallible plan: fail a repayment/transfer write for a new bill, shared debt, or future payment request unless the user explicitly requested that transfer or reported a completed repayment. Do not approve only because execution matched a mistaken goal. A successful read alone never fulfills a requested mutation. Do not waive a requested change by relabeling it discovery or awaiting selection; that boundary must come from the actual user request. Also fail if a write lacks a successful read AFTER the last write verifying the changed target and current state; step/time limits and mustFinish do not waive this evidence requirement. When evidence is incomplete, return pass:false with the missing evidence, not assumed success.',
         'Also fail when any visibleEntities entry lacks traceable successful response evidence inside apiCalls, or inside appStateCalls for explicitly app-local rows/metadata only. For actual user-chosen document members, evidence can be the exact member name and location in complete fresh structured container content under the shared membership policy; no independent service member object or invented unit ID is required. Arbitrary text mentions are not membership: external service objects still require external API evidence; local values cannot prove external state. Entities are a read-back of the corresponding store, and a row whose name/id cannot be traced to response evidence is fabricated no matter how plausible it looks (e.g. inventing inbox subjects the API never returned).',
       ].join('\n'),
-      user: JSON.stringify({ hostIntentContext, userRequest, goal, goalProposal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.declaredFieldContext?{declaredFieldContext:input.declaredFieldContext}:{}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities, visibleStats: stats, ...(supportingPrepared?{supportingProjection:{...supportingPrepared,sources:supportingPrepared.sources.map(c=>({api:c.api,order:c.order}))}}:{}), ...(input.priorSupportingProjection?{priorSupportingProjection:input.priorSupportingProjection}:{}), ...(supportingGaps.length?{supportingSourceDeficiencies:supportingGaps}:{}) }),
+      user: JSON.stringify({ hostIntentContext, userRequest, goal, goalProposal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.declaredFieldContext?{declaredFieldContext:input.declaredFieldContext}:{}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities, visibleStats: stats, ...(input.operationProgressContext?{operationProgress:progressSnapshot()}:{}), ...(supportingPrepared?{supportingProjection:{...supportingPrepared,sources:supportingPrepared.sources.map(c=>({api:c.api,order:c.order}))}}:{}), ...(input.priorSupportingProjection?{priorSupportingProjection:input.priorSupportingProjection}:{}), ...(supportingGaps.length?{supportingSourceDeficiencies:supportingGaps}:{}) }),
     }) as Record<string, any>;
     evaluation = {
       pass: verdictRaw?.pass === true && entitiesProvided && lastWriteAt <= lastReadAt && localWriteAt <= localReadAt && localPendingReadback.size === 0 && appStateUnknown === 0 && unknownWriteOutcomes === 0 && totalSuccesses() > 0,
@@ -6594,9 +6631,9 @@ export async function runAppWorldGrounding(input: {
     }
     historyLog.push({ok:false,api:'(action-deadline)',error:(error as Error).message});
     evaluation={pass:false,deficiencies:[(error as Error).message,...(lastWriteAt>lastReadAt?['not_verified: no successful read-back after the last write']:[])]};
-    return {calls,appStateCalls,appStateExecutionEvidence:appStateExecutionEvidence(),summary,entities,stats,goal,evaluation,attempts:historyLog,deadlineExceeded:true,executionEvidence:executionEvidence(),diagnostics:persistDiagnostics('deadline_exceeded')};
+    return {calls,appStateCalls,appStateExecutionEvidence:appStateExecutionEvidence(),summary,entities,stats,goal,evaluation,attempts:historyLog,deadlineExceeded:true,executionEvidence:executionEvidence(),operationProgress:progressSnapshot(),diagnostics:persistDiagnostics('deadline_exceeded')};
   }
-  return { ...(evaluation?.pass===true&&approvedSupportingProjection?{supportingProjection:approvedSupportingProjection}:{}), calls, appStateCalls, appStateExecutionEvidence:appStateExecutionEvidence(), summary, entities, stats, goal, evaluation, attempts: historyLog, executionEvidence: executionEvidence(), diagnostics:persistDiagnostics(evaluation?.pass===true?'returned_verified':'returned_not_verified') };
+  return { ...(evaluation?.pass===true&&approvedSupportingProjection?{supportingProjection:approvedSupportingProjection}:{}), calls, appStateCalls, appStateExecutionEvidence:appStateExecutionEvidence(), summary, entities, stats, goal, evaluation, attempts: historyLog, executionEvidence: executionEvidence(), operationProgress:progressSnapshot(), diagnostics:persistDiagnostics(evaluation?.pass===true?'returned_verified':'returned_not_verified') };
 }
 
 // 没有命中 AppWorld API 的领域(比如"每天吃什么"),后端 agent 直接完成这轮工作
@@ -7306,6 +7343,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             const initial = await runAppWorldGrounding({
               bridge: appWorldBridge ?? undefined,
               appState:initialAppState,
+              operationProgressContext:{scope:{owner:stored.owner??'',appId:stored.appId,actionId:'host.initial-read',executionId:randomUUID(),intent:{source:'host-readonly-observation',phase:'initial_open'}},fullPermissions:appPackage.manifest.permissions},
               declaredFieldContext:groundingDeclaredFields(plan.interaction,{}),
               permissions: readPermissions,
               payload: {},
@@ -7535,6 +7573,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
           const grounding = await runAppWorldGrounding({
             bridge: appWorldBridge ?? undefined,
             appState,
+            ...(commandEvent||action.perItem===true&&targetEntity?{operationProgressContext:{scope:{owner,appId:stored.appId,actionId,executionId:nativeWorkflow.executionId,intent:commandEvent?{source:'host-current-command' as const,message:commandEvent.command}:{source:'host-bound-current-row-action' as const,actionId,targetEntity:targetEntity!,eventPayloadSha256:nativeActionPayloadSha256(input.eventPayload)}},fullPermissions:permissions}}:{}),
             permissions: appWorldPermissions,
             payload: rawPayload,
             declaredFieldContext:groundingDeclaredFields(interactionModel,rawPayload),

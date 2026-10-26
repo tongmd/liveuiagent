@@ -1,0 +1,73 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import http from 'node:http';
+import Database from 'better-sqlite3';
+import {runAppWorldGrounding} from '../server/liveuiagent.js';
+import {createAppStateAdapter} from '../server/native-app-state.js';
+import type {Scope,RequiredEffect} from '../server/native-operation-progress.js';
+
+// Real HTTP role packets and real host dispatch/SQLite. Scripted decisions are
+// not a claim about provider quality, and progress never decides semantic pass.
+const command='Create the selected collection, attach the selected record, and read the result.';
+const scope=(message=command):Scope=>({owner:'owner',appId:'app',actionId:'host.app.command',executionId:'fixture-execution',intent:{source:'host-current-command',message}});
+const tool=(api:string,method='GET',properties:Record<string,unknown>={})=>({id:api,apiName:api,permission:api,source:'appworld',appName:'fixture',method,purpose:api,requiredParams:Object.keys(properties),inputSchema:{type:'object',required:Object.keys(properties),properties,additionalProperties:false}});
+const str={type:'string'};
+const tools=[tool('lookup'),tool('create','POST',{source_id:str,name:str}),tool('attach','POST',{collection_id:str,source_id:str}),tool('read_result','GET',{collection_id:str})];
+const effect=(id:string,api:string,kind:RequiredEffect['effect'],args:RequiredEffect['arguments'],extra:Partial<RequiredEffect>={}):RequiredEffect=>({id,api,effect:kind,arguments:args,requestQuote:command,...extra});
+const effects:RequiredEffect[]=[effect('lookup','lookup','external_read',{}),effect('created','create','external_write',{source_id:{unresolvedFromEffect:'lookup'},name:{literal:'Verified collection'}},{after:'lookup'}),effect('attached','attach','external_write',{collection_id:{fromEffect:'created',responsePointer:'/result/id'},source_id:{unresolvedFromEffect:'lookup'}},{after:'created'}),effect('read','read_result','external_read',{collection_id:{fromEffect:'created',responsePointer:'/result/id'}},{after:'attached'})];
+async function roles(t:any,respond:(role:string,input:any)=>unknown){
+ const packets:Array<{role:string;input:any;system:string}>=[];
+ const server=http.createServer(async(req,res)=>{try{let text='';for await(const b of req)text+=b;const wire=JSON.parse(text);const system=wire.messages[0].content;
+  const role=system.includes('You analyze a GUI')?'requirement':system.includes('You are the Write Verifier')?'verifier':system.includes('You are an INDEPENDENT evaluator')?'evaluator':'executor';
+  const input=JSON.parse(wire.messages[1].content);packets.push({role,input,system});const value=await respond(role,input);
+  res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({choices:[{message:{content:JSON.stringify(value)},finish_reason:'stop'}]}));
+ }catch(error){res.writeHead(500,{'content-type':'application/json'});res.end(JSON.stringify({error:String(error)}));}});
+ await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));t.after(()=>{server.closeAllConnections();return new Promise<void>(r=>server.close(()=>r()));});
+ return{packets,llm:{model:'fixture',apiKey:'synthetic-local-only',apiBase:`http://127.0.0.1:${(server.address()as any).port}/v1`}};
+}
+function done(){return{done:true,summary:'Verified collection created and attached',entities:[],stats:[{label:'Collections',value:'1'}]};}
+for(const mode of ['success','semantic_reject','write_reject','unknown_write','missing_effects','invalid_effects']as const)test(`real role HTTP and nested external dispatch progress: ${mode}`,async t=>{
+ const operations:Array<{api:string;args:any}>=[];let decision=0;const tracked=!['missing_effects','invalid_effects'].includes(mode);const complete=['success','missing_effects','invalid_effects'].includes(mode);
+ const f=await roles(t,(role,p)=>{
+  if(role==='requirement'){assert.deepEqual(p.operationIntent,scope().intent);assert.deepEqual(p.authorizedOperationCatalog.map((c:any)=>c.api),tools.map(c=>c.apiName));return{objective:command,...(mode==='missing_effects'?{}:{requiredEffects:mode==='invalid_effects'?[{...effects[0],requestQuote:'absent source quote'}]:effects})};}
+  if(role==='verifier')return mode==='write_reject'?{approved:false,reject:true,reason:'Current request safety rejected'}:{approved:true};
+  if(role==='evaluator'){assert.equal(p.operationProgress.status,tracked?'available':'unavailable');return{pass:complete,deficiencies:complete?[]:['Actual original goal remains unverified']};}
+  decision++;assert.equal(p.operationProgress.status,tracked?'available':'unavailable');
+  if(decision===1){if(tracked){assert.equal(p.operationProgress.recordedReceiptCount,0);assert.equal(p.operationProgress.bindings.length,2);}return{calls:[{api:'lookup',args:{}}]};}
+  if(decision===2){if(!tracked)return{calls:[{api:'create',args:{source_id:'unit-7',name:'Verified collection'}}]};const snapshot=p.operationProgress;assert.equal(snapshot.effects.find((e:any)=>e.id==='lookup').status,'receipt_observed');const bindings=snapshot.bindings.map((b:any)=>({bindingId:b.bindingId,receiptOrder:snapshot.effects.find((e:any)=>e.id==='lookup').receiptOrder,responsePointer:'/envelope/items/0/key'}));return{bindings,calls:[{api:'create',args:{source_id:'unit-7',name:'Verified collection'}}]};}
+  if(mode==='unknown_write'&&decision===3){assert.equal(p.operationProgress.hasUnknownWrite,true);return{calls:[{api:'create',args:{source_id:'unit-7',name:'Verified collection'}}]};}
+  if((complete||mode==='semantic_reject')&&decision===3){if(tracked){const created=p.operationProgress.effects.find((e:any)=>e.id==='created');assert.equal(created.status,'receipt_observed');assert.equal(p.operationProgress.effects.find((e:any)=>e.id==='attached').status,'blocked');}return{calls:[{api:'attach',args:{collection_id:'collection-9',source_id:'unit-7'}},{api:'read_result',args:{collection_id:'collection-9'}}]};}
+  return done();
+ });
+ const bridge:any={getCapabilities:async()=>tools,callTool:async(api:string,args:any)=>{operations.push({api,args:structuredClone(args)});if(api==='create'&&mode==='unknown_write')throw Error('Synthetic lost write response');return{tool:tools.find(c=>c.apiName===api),request:args,response:api==='lookup'?{envelope:{items:[{key:'unit-7'}]}}:api==='create'?{result:{id:'collection-9'}}:api==='attach'?{attached:true}:{id:'collection-9',attached:['unit-7']},dbChanges:null};}};
+ const result=await runAppWorldGrounding({bridge,permissions:tools.map(c=>c.permission),appName:'Collections',payload:{command},llm:f.llm,operationProgressContext:{scope:scope(),fullPermissions:tools.map(c=>c.permission)}});
+ assert.equal(result?.evaluation?.pass,complete);assert.equal(f.packets.filter(p=>p.role==='requirement').length,1);
+ assert.equal(operations.filter(c=>c.api==='create').length,mode==='write_reject'?0:1,'verified or unknown creates are never replayed');
+ if(complete){assert.deepEqual(operations.map(c=>c.api),['lookup','create','attach','read_result']);if(tracked)assert.equal((result as any).operationProgress.allRequiredReceiptsObserved,true);else assert.equal((result as any).operationProgress.status,'unavailable');assert.deepEqual(f.packets.map(p=>p.role),['requirement','executor','executor','verifier','executor','verifier','executor','evaluator']);}
+ if(mode==='semantic_reject'){assert.deepEqual(operations.map(c=>c.api),['lookup','create','attach','read_result']);assert.equal((result as any).operationProgress.allRequiredReceiptsObserved,true);assert.equal(f.packets.filter(p=>p.role==='evaluator').length,2,'original no-progress repair stop preserves independent semantic refusal');}
+ if(mode==='write_reject'){assert.deepEqual(operations.map(c=>c.api),['lookup']);assert.equal((result as any).operationProgress.allRequiredReceiptsObserved,false);assert(result?.attempts.some((a:any)=>a.api==='(write-verifier)'&&a.ok===false));}
+ if(mode==='unknown_write'){assert.deepEqual(operations.map(c=>c.api),['lookup','create']);assert.equal(result?.executionEvidence?.unknownWriteOutcomes,1);assert.equal((result as any).operationProgress.hasUnknownWrite,true);assert(result?.attempts.some((a:any)=>a.dispatchBlocked===true));}
+});
+
+for(const mode of ['discovery','missing','invalid','excessive_effects']as const)test(`current discovery HTTP preserves selection and optional progress: ${mode}`,async t=>{
+ const message='Show available choices; wait for my explicit selection before saving.';let step=0;let dispatches=0;const tracked=mode==='discovery'||mode==='excessive_effects';
+ const f=await roles(t,(role,p)=>{if(role==='requirement')return{objective:message,...(mode==='missing'?{}:{requiredEffects:mode==='invalid'?[{...effects[0],requestQuote:'not in this message'}]:[effect('lookup','lookup','external_read',{}, {requestQuote:message}),...(mode==='excessive_effects'?[effect('unrequested_write','create','external_write',{source_id:{literal:'choice-1'},name:{literal:'Unrequested saved collection'}},{requestQuote:message,after:'lookup'})]:[])]})};if(role==='verifier')throw Error('Discovery must never ask a write verifier');if(role==='evaluator'){assert.equal(p.operationProgress.status,tracked?'available':'unavailable');return{pass:true,deficiencies:[]};}step++;return step===1?{calls:[{api:'lookup',args:{}}]}:{done:true,summary:'Actual choices shown; awaiting your explicit selection before saving.',entities:[{name:'Actual choice',id:'choice-1'}],stats:[{label:'Choices',value:'1'}]};});
+ const bridge:any={getCapabilities:async()=>tools,callTool:async(api:string,args:any)=>{assert.equal(api,'lookup');dispatches++;return{tool:tools[0],request:args,response:[{name:'Actual choice',id:'choice-1'}],dbChanges:null};}};
+ const result=await runAppWorldGrounding({bridge,permissions:tools.map(c=>c.permission),appName:'Choices',payload:{command:message},llm:f.llm,operationProgressContext:{scope:scope(message),fullPermissions:tools.map(c=>c.permission)}});
+ assert.equal(result?.evaluation?.pass,true);assert.equal(dispatches,1);assert.match(result!.summary,/awaiting your explicit selection/);assert.equal((result as any).operationProgress.status,tracked?'available':'unavailable');if(mode==='excessive_effects'){const progress=(result as any).operationProgress;assert.equal(progress.allRequiredReceiptsObserved,false);assert.equal(progress.effects.find((e:any)=>e.id==='unrequested_write').status,'ready');assert(progress.unmet.some((e:any)=>e.id==='unrequested_write'));assert.equal(f.packets.filter(p=>p.role==='verifier').length,0,'an excessive plan is not write authorization');assert.equal(f.packets.find(p=>p.role==='evaluator')!.input.userRequest.some((v:string)=>v.includes(message)),true,'semantic evaluation retains the actual reserved-choice request');}assert.deepEqual(f.packets.map(p=>p.role),['requirement','executor','executor','evaluator']);
+});
+
+for(const mode of ['write','readonly']as const)test(`real SQLite progress uses actual local permission and readonly intent: ${mode}`,async t=>{
+ const db=new Database(':memory:');t.after(()=>db.close());db.exec("CREATE TABLE agent_apps(app_id TEXT,owner TEXT);INSERT INTO agent_apps VALUES('app','owner');INSERT INTO agent_apps VALUES('other-app','other-owner')");
+ const permissions=mode==='write'?['storage.app','app_state.write']:['storage.app'];const adapter=createAppStateAdapter(db,'owner','app',[{name:'title',type:'string'},{name:'count',type:'number'},{name:'enabled',type:'boolean'}],permissions)!;
+ const other=createAppStateAdapter(db,'other-owner','other-app',[{name:'title',type:'string'}],['storage.app','app_state.write'])!;other.call('app_state.upsert_record',{recordId:'row',recordKind:'primary_member',values:{title:'Other owner secret'}});
+ const message='Save the current local item with zero count and disabled status.';const currentScope:Scope=mode==='write'?scope(message):{...scope(message),intent:{source:'host-readonly-observation',phase:'reopen'}};
+ const localEffects:RequiredEffect[]=[{id:'saved',api:'app_state.upsert_record',effect:'local_write',arguments:{recordId:{literal:'row'},recordKind:{literal:'primary_member'},values:{literal:{title:'Local item',count:0,enabled:false}}},...(mode==='write'?{requestQuote:message}:{observationReference:'reopen' as const})},{id:'read',api:'app_state.read_record',effect:'local_read',arguments:{recordId:{literal:'row'}},after:'saved',...(mode==='write'?{requestQuote:message}:{observationReference:'reopen' as const})}];
+ let step=0;const sequence:string[]=[];const appState={...adapter,call(api:string,args:any){sequence.push(api);return adapter.call(api,args);}};
+ const f=await roles(t,(role,p)=>{if(role==='requirement'){assert.deepEqual(p.authorizedOperationCatalog,[]);assert.equal(p.appStateCapabilities.some((c:any)=>c.apiName==='app_state.upsert_record'),mode==='write');return{objective:message,requiredEffects:localEffects};}if(role==='verifier')return{approved:true};if(role==='evaluator'){assert.equal(p.operationProgress.status,mode==='write'?'available':'unavailable');return{pass:true,deficiencies:[]};}step++;return step===1?{calls:[mode==='write'?{api:'app_state.upsert_record',args:{recordId:'row',recordKind:'primary_member',values:{title:'Local item',count:0,enabled:false}}}:{api:'app_state.list_records',args:{recordKind:'primary_member',offset:0,limit:100}}]}:{done:true,summary:mode==='write'?'Actual local item saved':'Actual local collection inspected',entities:mode==='write'?[{name:'Local item',appRecordId:'row'}]:[],stats:[{label:'Items',value:mode==='write'?'1':'0'}]};});
+ const result=await runAppWorldGrounding({bridge:{getCapabilities:async()=>[]}as any,permissions:[],appState,appName:'Local items',payload:{command:message},viewContext:{primaryMembership:'app_local'},llm:f.llm,operationProgressContext:{scope:currentScope,fullPermissions:permissions}});
+ assert.equal(result?.evaluation?.pass,true);assert.deepEqual(sequence,mode==='write'?['app_state.upsert_record','app_state.read_record']:['app_state.list_records']);assert.equal((result as any).operationProgress.status,mode==='write'?'available':'unavailable');
+ assert.equal(db.prepare("SELECT count(*) n FROM native_app_records WHERE owner='owner' AND app_id='app'").get().n,mode==='write'?1:0);assert.equal(other.listAll('primary_member')[0].values.title,'Other owner secret');
+ if(mode==='write'){assert.equal((result as any).operationProgress.allRequiredReceiptsObserved,true);assert.deepEqual(adapter.listAll('primary_member')[0].values,{title:'Local item',count:0,enabled:false});assert.deepEqual(f.packets.map(p=>p.role),['requirement','executor','verifier','executor','evaluator']);}
+ else assert.match((result as any).operationProgress.reason,/observation|capability|write/i);
+});
