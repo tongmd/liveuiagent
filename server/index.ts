@@ -484,6 +484,7 @@ app.post('/evaluator/interaction-step', createGuiInteractionPlanner({
     return {harness, llm:llmConfigFromRequest(selected)};
   },
   plan: planNativeGuiInteractionStep,
+  businessEpoch:(appId,owner)=>liveuiagentRuntime.guiBusinessEpoch(appId,owner),
 }));
 
 app.post('/evaluator/run', async (req, res, next) => {

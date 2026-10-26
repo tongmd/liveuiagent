@@ -1,5 +1,6 @@
 import {approvedWorkerPlanningContext,nativeJsonUserMessage,type WorkerPlanningContext,type WorkerPlanningMode} from './native-worker-planning-context.js';
 import {SUPPORTING_PROTOCOL,approvedLocalPrimaryRemoval,prepareSupportingSections,sealSupportingSections,supportingText,supportingProjectionPolicy,type SupportingScope,type SupportingPreparation,type SupportingSeal} from './native-supporting-projections.js';
+import {GuiBusinessEpochs,requireGuiEpochAutocommit} from './gui-business-epoch.js';
 import type {GuiPreparationHostContext} from './gui-field-proof.js';
 import {guiPlanningModelInput} from './gui-interaction-planner.js';
 import {canonicalizeDomainReferences} from './native-domain-references.js';
@@ -6897,12 +6898,15 @@ export async function runActionTools(action: Record<string, any>, payload: Recor
 }
 
 export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTRuntimeOptions) {
+  requireGuiEpochAutocommit(db);
   const nativeActionTimeoutMs = options.nativeActionTimeoutMs ?? 16 * 60 * 1000;
   const innerWorkerPlanning=options.innerWorkerPlanning??'labelled-reference';
   if(innerWorkerPlanning!=='labelled-reference'&&innerWorkerPlanning!=='record-only')throw Error('Invalid inner worker planning experiment mode');
   if (!Number.isFinite(nativeActionTimeoutMs) || nativeActionTimeoutMs <= 0) throw Error('Native action timeout must be positive and finite');
   initStore(db);
   const commandReceipts = new NativeCommandReceipts(db);
+  const guiBusinessEpochs=new GuiBusinessEpochs(db);
+  function advanceOwnedGuiEpoch(appId:string,user?:string){const owner=String(user||'').trim();if(!getOwnedApp(db,appId,owner.slice(0,60)))throw httpError(`app not found: ${appId}`,404);guiBusinessEpochs.advance(owner,appId);}
   fs.mkdirSync(options.registryRoot, { recursive: true });
   const debugPolicy = loadLiveUIAgentConfig(options.projectRoot ?? process.cwd()).gui_debug_policy;
   const projectRoot = options.projectRoot ?? process.cwd();
@@ -6911,6 +6915,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
   // 修改现有应用:把新句子并入原始意图重新规划整个包(动作/图标/UI 全部重设计),
   // appId 与白板位置保持不变。run() 的 Router Agent 判定 modify_app 时也走这里。
   async function patchAgentApp(input: { appId: string; prompt: string; llm?: LlmRuntimeConfig; user?: string }) {
+    advanceOwnedGuiEpoch(input.appId,input.user);
     // 同应用写互斥:并发的两个 modify(或 modify+action)否则会互相丢更新。
     const releaseAppLock = await acquireAppLock(String(input.appId || ''));
     try {
@@ -7000,6 +7005,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
   // 删除应用:登记行、工作流状态、白板节点、注册目录一起清(shell 的 remove 能力,
   // 白板句子 remove_app 和预览卡「删除」按钮都走这里)。
   async function removeAgentApp(input: { appId: string; user?: string }) {
+    advanceOwnedGuiEpoch(input.appId,input.user);
     const releaseAppLock = await acquireAppLock(String(input.appId || ''));
     try {
       const stored = getOwnedApp(db, input.appId, String(input.user || '').trim().slice(0, 60));
@@ -7304,6 +7310,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
 
     async action(input: { appId: string; actionId: string; requestId:string; eventPayload?: unknown; clientState?: unknown; platform?: Platform; llm?: LlmRuntimeConfig; user?: string }) {
       return withActionDeadline(Date.now() + nativeActionTimeoutMs, async () => {
+      remainingActionMs();advanceOwnedGuiEpoch(input.appId,input.user);
       // 同应用写互斥:调度器只串行同 fairness 键,patch 经 run:<uuid> 键进来时
       // 会和本回合并行 —— 进程内锁保证同一应用的读-改-写不交叠。
       const releaseAppLock = await acquireAppLock(String(input.appId || ''));
@@ -7654,6 +7661,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       }
       });
     },
+
+    guiBusinessEpoch(appId:string,owner:string){return guiBusinessEpochs.read(owner,appId);},
 
     async queryState(query?: { user?: string }) {
       const user = String(query?.user || '').trim();
