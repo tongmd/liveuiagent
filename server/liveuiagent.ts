@@ -1,3 +1,4 @@
+import {writeSupportingProposalDiagnostics} from './supporting-proposal-diagnostics.js';
 import {writeSemanticLabelDiagnostics} from './semantic-label-diagnostics.js';
 import {approvedWorkerPlanningContext,nativeJsonUserMessage,type WorkerPlanningContext,type WorkerPlanningMode} from './native-worker-planning-context.js';
 import {SUPPORTING_PROTOCOL,approvedLocalPrimaryRemoval,prepareSupportingSections,sealSupportingSections,supportingText,supportingProjectionPolicy,type SupportingScope,type SupportingPreparation,type SupportingSeal} from './native-supporting-projections.js';
@@ -6259,6 +6260,7 @@ export async function runAppWorldGrounding(input: {
           && Boolean(((item as Record<string, unknown>).name as string).trim()));
         proposedEntities=decision?.entities;
         proposedSupportingSections=decision?.supportingSections;
+        if(diagnosticsEnabled){const supportingProposalDiagnostic=writeSupportingProposalDiagnostics(proposedSupportingSections,round,step,input.llm?.apiKey);if(diagnosticProposals.length&&supportingProposalDiagnostic)diagnosticProposals[diagnosticProposals.length-1].supportingProposalDiagnostic=supportingProposalDiagnostic;}
         // This association only avoids suppressing a same-form-name entity.
         // The independent evaluator and all write/read/membership gates still decide truth.
         const readonlyExternalReadResponses=calls.slice(Math.max(0,lastWriteAt)).filter(call=>call.tool?.method==='GET').map(call=>call.response);

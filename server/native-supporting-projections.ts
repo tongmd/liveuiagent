@@ -8,6 +8,7 @@ export type SupportingRead={api:string;order:number;request:unknown;response:unk
 export type SupportingPreparation={protocol:typeof SUPPORTING_PROTOCOL;sections:SupportingSection[];bindings:Array<Array<{source:number;rowPointer:string;namePointer:string;idPointer?:string;detailPointer?:string}>>;sources:SupportingRead[];lastExternalWriteOrder:number;lastLocalWriteOrder:number;proposalSha256:string};
 export type SupportingSeal=SupportingPreparation&{scope:SupportingScope;reviewed:true;sha256:string};
 const hash=(x:unknown)=>createHash('sha256').update(JSON.stringify(x)).digest('hex');
+const canonical=(v:any):any=>Array.isArray(v)?v.map(canonical):object(v)?Object.fromEntries(Object.keys(v).sort().map(k=>[k,canonical(v[k])])):v;
 const escaped=(s:string)=>s.replace(/~/g,'~0').replace(/\//g,'~1');
 const object=(x:any)=>x&&typeof x==='object'&&!Array.isArray(x);
 function keys(x:any,allowed:string[]){if(!object(x)||Object.keys(x).some(k=>!allowed.includes(k)))throw Error('supporting_projection: unknown fields or non-object');}
@@ -32,19 +33,20 @@ export function prepareSupportingSections(raw:unknown,actualReads:SupportingRead
  for(const section of sections){
   keys(section,['role','title','rows']);if(!['catalog_options','supporting_results'].includes(section.role)||typeof section.title!=='string'||!section.title.trim()||!Array.isArray(section.rows)||!section.rows.length)throw Error('supporting_projection: invalid readonly section');
   const sectionBindings:SupportingPreparation['bindings'][number]=[];
-  type Candidate={call:SupportingRead;rowPointer:string;namePointer:string;idPointer?:string;detailPointer?:string;semanticKey:string;groupKey:string};
+  type Candidate={call:SupportingRead;rowPointer:string;namePointer:string;idPointer?:string;detailPointer?:string;semanticKey:string;groupKey:string;contractKey:string;fieldContract:{groupKey:string;name:string;id?:string;detail?:string}};
   const sectionCandidates:Candidate[][]=[];
   for(const row of section.rows){
    keys(row,['name','id','detail']);if(typeof row.name!=='string'||!row.name.trim()||(row.detail!==undefined&&typeof row.detail!=='string')||(row.id!==undefined&&(typeof row.id!=='string'||opaqueIdentity(row.id)!==row.id||!row.id.trim())))throw Error('supporting_projection: invalid exact row values');
    const candidates:Candidate[]=[];
-   for(const call of eligible)for(const element of [...elements(call.response),...(call.source==='app-state'&&(call.response as any)?.operation==='read'&&object((call.response as any)?.record)?[{path:'/record',value:(call.response as any).record}]:[])]){
-    const values=leaves(element.value);const names=values.filter(v=>v.value===row.name);
+   for(const call of eligible)for(const element of [...elements(call.response),...(call.source!=='app-state'&&object(call.response)?[{path:'',value:call.response,rootScalar:true}]:[]),...(call.source==='app-state'&&(call.response as any)?.operation==='read'&&object((call.response as any)?.record)?[{path:'/record',value:(call.response as any).record}]:[])]){
+    const values=(element as any).rootScalar?Object.entries(element.value).filter(([,v])=>v===null||typeof v!=='object').map(([k,value])=>({path:'/'+escaped(k),value})):leaves(element.value);const names=values.filter(v=>v.value===row.name);
     const ids=row.id===undefined?[undefined]:values.filter(v=>(typeof v.value==='string'||(typeof v.value==='number'&&Number.isSafeInteger(v.value)))&&String(v.value)===row.id);
     const details=row.detail===undefined?[undefined]:values.filter(v=>v.value===row.detail);
     for(const n of names)for(const id of ids)for(const detail of details){
      // A nested object with the same values is not a second row. Only an actual
      // array element is a candidate; differing objects with no real ID remain ambiguous.
-     candidates.push({groupKey:hash({api:call.api,source:call.source??'external',collectionPointer:element.path.slice(0,element.path.lastIndexOf('/'))}),call,rowPointer:element.path,namePointer:element.path+n.path,...(id?{idPointer:element.path+id.path}:{}),...(detail?{detailPointer:element.path+detail.path}:{}),semanticKey:hash({api:call.api,...(row.id===undefined?{request:call.request,rowPointer:element.path}:{}),namePointer:n.path,idPointer:id?.path,detailPointer:detail?.path,rowValue:element.value})});
+     const groupKey=hash({api:call.api,source:call.source??'external',collectionPointer:element.path.slice(0,element.path.lastIndexOf('/'))});
+     candidates.push({groupKey,fieldContract:{groupKey,name:n.path,id:id?.path,detail:detail?.path},contractKey:hash({groupKey,name:n.path,id:id?.path,detail:detail?.path}),call,rowPointer:element.path,namePointer:element.path+n.path,...(id?{idPointer:element.path+id.path}:{}),...(detail?{detailPointer:element.path+detail.path}:{}),semanticKey:hash({api:call.api,namePointer:n.path,idPointer:id?.path,detailPointer:detail?.path,rowValue:canonical(element.value)})});
     }
    }
    sectionCandidates.push(candidates);
@@ -52,11 +54,17 @@ export function prepareSupportingSections(raw:unknown,actualReads:SupportingRead
   // The whole section must select one uniquely supported structural source
   // contract. This is not semantic type guessing: e.g. one saved preference
   // sharing a directory label cannot compete with the actual ten-value source.
-  const groups=new Set(sectionCandidates[0].map(c=>c.groupKey));
-  for(const candidates of sectionCandidates)for(const group of groups)if(!candidates.some(c=>c.groupKey===group))groups.delete(group);
-  if(groups.size!==1)throw Error(`supporting_projection: ${groups.size?'ambiguous':'missing fresh actual'} section source`);
+  type Contract=Candidate['fieldContract'];
+  const compatible=(a:Contract,b:Contract)=>a.groupKey===b.groupKey&&a.name===b.name&&(a.id===undefined||b.id===undefined||a.id===b.id)&&(a.detail===undefined||b.detail===undefined||a.detail===b.detail);
+  let contracts=new Map<string,Contract>(sectionCandidates[0].map(c=>[c.contractKey,c.fieldContract]));
+  for(const candidates of sectionCandidates.slice(1)){const next=new Map<string,Contract>();for(const a of contracts.values())for(const c of candidates)if(compatible(a,c.fieldContract)){const merged={groupKey:a.groupKey,name:a.name,id:a.id??c.fieldContract.id,detail:a.detail??c.fieldContract.detail};next.set(hash(merged),merged);}contracts=next;}
+  if(contracts.size!==1)throw Error(`supporting_projection: ${contracts.size?'ambiguous':'missing fresh actual'} section source`);
+  const selectedContract=[...contracts.values()][0];
   for(const candidates of sectionCandidates){
-   const unique=new Map<string,Candidate>();for(const c of candidates.filter(c=>groups.has(c.groupKey))){const prior=unique.get(c.semanticKey);if(!prior||c.call.order>prior.call.order)unique.set(c.semanticKey,c);}
+   const selected=candidates.filter(c=>compatible(c.fieldContract,selectedContract));
+   // Identical objects repeated within one actual read remain separate entities.
+   for(const c of selected)if(selected.some(other=>other!==c&&other.call===c.call&&other.semanticKey===c.semanticKey&&other.rowPointer!==c.rowPointer))throw Error('supporting_projection: ambiguous repeated actual row');
+   const unique=new Map<string,Candidate>();for(const c of selected){const prior=unique.get(c.semanticKey);if(!prior||c.call.order>prior.call.order)unique.set(c.semanticKey,c);}
    if(unique.size!==1)throw Error(`supporting_projection: ${unique.size?'ambiguous':'missing fresh actual'} source for row`);
    const bound=[...unique.values()][0];let index=sources.findIndex(c=>c.order===bound.call.order&&c.api===bound.call.api);if(index<0){index=sources.length;sources.push(bound.call);}
    const {rowPointer,namePointer,idPointer,detailPointer}=bound;sectionBindings.push({source:index,rowPointer,namePointer,...(idPointer?{idPointer}:{}),...(detailPointer?{detailPointer}: {})});

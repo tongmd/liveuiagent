@@ -58,3 +58,20 @@ for(const mode of ['authorized','unapproved','missing_read'] as const)test(`actu
  return{choices:[{message:{content:JSON.stringify(v)}}]};}}});assert.equal(result?.evaluation?.pass,mode==='authorized',JSON.stringify(result?.evaluation));assert.equal((adapter.call('app_state.read_record',{recordId:'saved-1'})as any).record,null);if(mode!=='authorized')assert(result?.evaluation?.deficiencies.some(x=>/downgraded|read-back/.test(x)));else assert.match(supportingText(result!.supportingProjection,{owner:'alice',appId:'app'}),/Choice A/);
  }finally{db.close();}
 });
+
+test('actual closed Artist response counterfactual: whole-section field contract and latest identical rows',async()=>{
+ const fs=await import('node:fs');const f=JSON.parse(fs.readFileSync(new URL('./fixtures/supporting-artist-actual-reads.json',import.meta.url),'utf8'));const calls=f.reads.map((c:any)=>({...c,method:'GET'}));const actual=calls.at(-1).response;
+ for(const withId of [false,true]){const rows=actual.map((r:any)=>({name:r.title,...(withId?{id:String(r.album_id)}:{})}));const p=prepareSupportingSections([{role:'catalog_options',title:'Albums',rows}],calls,-1);assert.equal(p.sources.length,1);assert.equal(p.sources[0].order,8);assert.deepEqual(p.bindings[0].map(b=>b.rowPointer),['/0','/1','/2']);if(withId)assert(p.bindings[0].every(b=>b.idPointer?.endsWith('/album_id')));}
+ assert.throws(()=>prepareSupportingSections([{role:'catalog_options',title:'One album',rows:[{name:actual[2].title,id:'10'}]}],calls,-1),/ambiguous/);
+ const wrong=structuredClone(calls);wrong.at(-1).response[0].rating=0;assert.throws(()=>prepareSupportingSections([{role:'catalog_options',title:'Albums',rows:actual.map((r:any)=>({name:r.title}))}],wrong,-1),/ambiguous/);
+ const moved=[read([{id:2,title:'Other'}, {id:1,title:'Same',zero:0,enabled:false}],1),{...read([{enabled:false,zero:0,title:'Same',id:1}],3),request:{filter:'same'}}];const p=prepareSupportingSections([{role:'supporting_results',title:'Result',rows:[{name:'Same',id:'1'}]}],moved,0);assert.equal(p.sources[0].order,3);assert.equal((p.sources[0].response as any)[0].zero,0);assert.equal((p.sources[0].response as any)[0].enabled,false);
+ for(const more of [[read([{id:1,title:'Same'},{id:1,title:'Same'}])],[read([{id:1,title:'Same'}]),{...read([{id:1,title:'Same'}],2),api:'other_read'}]])assert.throws(()=>prepareSupportingSections([{role:'supporting_results',title:'Result',rows:[{name:'Same',id:'1'}]}],more,0),/ambiguous/);
+});
+
+test('actual external object root binds only its own scalar fields',()=>{
+ const call=read({id:0,title:'Root',enabled:false,child:{id:9,title:'Nested'},items:[{id:8,title:'Child'}]});const p=prepareSupportingSections([{role:'supporting_results',title:'Root result',rows:[{name:'Root',id:'0'}]}],[call],0);assert.equal(p.bindings[0][0].rowPointer,'');assert.equal(p.bindings[0][0].idPointer,'/id');assert.equal((p.sources[0].response as any).enabled,false);
+ for(const row of [{name:'Root',id:'9'},{name:'Nested',id:'0'},{name:'Root',id:'8'}])assert.throws(()=>prepareSupportingSections([{role:'supporting_results',title:'Invalid',rows:[row]}],[call],0),/missing fresh/);
+});
+
+
+test('optional row identity/detail omissions do not invent values or force extra fields',()=>{const response=[{id:1,title:'First',body:'Full first'},{id:2,title:'Second',body:'Full second'}];const p=prepareSupportingSections([{role:'supporting_results',title:'Actual rows',rows:[{name:'First',id:'1',detail:'Full first'},{name:'Second'}]}],[read(response)],0);assert.equal(p.bindings[0][0].detailPointer,'/0/body');assert.equal(p.bindings[0][1].idPointer,undefined);assert.equal(p.bindings[0][1].detailPointer,undefined);assert.equal(p.sections[0].rows[1].id,undefined);assert.equal(p.sections[0].rows[1].detail,undefined);});
