@@ -6455,13 +6455,13 @@ export async function runAppWorldGrounding(input: {
               const valid=observed?.source==='app-state'&&observed?.operation==='read'&&observed?.scope==='authenticated-current-owner-app'&&observed?.persisted===true&&(apiName==='app_state.delete_record'
                 ? observed.record===null
                 : observed?.record?.recordId===returnedId&&observed.record.recordKind===written.record.recordKind&&observed.record.revision===written.record.revision&&JSON.stringify(observed.record.values)===JSON.stringify(written.record.values));
-              appStateCalls.push({source:'app-state',api:'app_state.read_record',order:totalAttempts(),request:readArgs,response:observed,ok:true,executionState:'succeeded',requestSource:'host-scheduled-independent-local-readback',readbackValidated:valid});
+              appStateCalls.push({source:'app-state',api:'app_state.read_record',order:totalAttempts(),request:readArgs,response:observed,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments',dispatchInitiator:'host-scheduled-independent-local-readback',readbackValidated:valid});
               if(valid){localPendingReadback.delete(returnedId);localPendingDeletes.delete(returnedId);}
               remainingActionMs();
             }catch(error){
               if(readResponded)throw error; // a known read response is not an unknown dispatch
               if(readDispatched)appStateUnknown+=1;
-              appStateCalls.push({source:'app-state',api:'app_state.read_record',...(readDispatched?{order:totalAttempts()}:{}),attemptedArguments:readArgs,ok:false,executionState:readDispatched?'outcome_unknown':'not_started',actualAttempted:readDispatched,automaticRetry:false,requestSource:'host-scheduled-independent-local-readback',error:compactText((error as Error).message,240)});
+              appStateCalls.push({source:'app-state',api:'app_state.read_record',...(readDispatched?{order:totalAttempts()}:{}),attemptedArguments:readArgs,ok:false,executionState:readDispatched?'outcome_unknown':'not_started',actualAttempted:readDispatched,automaticRetry:false,requestSource:'host-bound-app-state-dispatched-arguments',dispatchInitiator:'host-scheduled-independent-local-readback',error:compactText((error as Error).message,240)});
               if((error as {code?:string}).code==='action_deadline_exceeded')throw error;
             }
           }else remainingActionMs();

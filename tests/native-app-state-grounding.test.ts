@@ -74,8 +74,8 @@ for(const mode of ['complete','external_read_missing','local_read_missing','wron
  assert.equal(result?.calls.filter(c=>c.tool.apiName==='create_external').length,mode==='local_only'?0:1);
  assert.equal(result?.evaluation?.pass,['complete','local_only','local_read_missing','wrong_local_read'].includes(mode));
  if(mode==='external_read_missing')assert.match(result!.evaluation!.deficiencies.join('\n'),/read-back/);
- if(mode==='wrong_local_read')assert(result!.appStateCalls.some(c=>c.requestSource==='host-scheduled-independent-local-readback'&&c.readbackValidated===true),'the host exact read proves the changed record even if the later model read targets another record');
- if(mode==='local_read_missing')assert(result!.appStateCalls.some(c=>c.requestSource==='host-scheduled-independent-local-readback'&&c.readbackValidated===true),'the host supplies the missing independent read without another model decision');
+ if(mode==='wrong_local_read')assert(result!.appStateCalls.some(c=>c.dispatchInitiator==='host-scheduled-independent-local-readback'&&c.readbackValidated===true),'the host exact read proves the changed record even if the later model read targets another record');
+ if(mode==='local_read_missing')assert(result!.appStateCalls.some(c=>c.dispatchInitiator==='host-scheduled-independent-local-readback'&&c.readbackValidated===true),'the host supplies the missing independent read without another model decision');
  if(mode==='schema_failure')assert.equal((real.call('app_state.read_record',{recordId:'x'}) as any).record,null);
  else assert.equal((real.call('app_state.read_record',{recordId:'x'}) as any).record.values.target,25);
  if(mode==='unknown_after_commit'||mode==='deadline_after_commit'){assert.equal(result!.appStateExecutionEvidence.unknownDispatchOutcomes,1);assert.equal((real.call('app_state.read_record',{recordId:'x'}) as any).record.revision,1,'unknown dispatch must never cause another local write');}
