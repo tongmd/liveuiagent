@@ -32,11 +32,19 @@ function choice<T extends string>(value: unknown, allowed: readonly T[]): T {
   if (typeof value !== 'string' || !allowed.includes(value as T)) throw Error(`Design choice must be one of: ${allowed.join(', ')}`);
   return value as T;
 }
-function label(raw: unknown): string {
-  if (typeof raw !== 'string' || raw !== raw.trim() || raw.length < 1 || raw.length > 18 || /[\d\n\r<>]|\{\{|\}\}/u.test(raw)) {
-    throw Error('Design labels must be plain human text of 1-18 characters, without numeric facts, markup or bindings');
-  }
-  return raw;
+export type SemanticLabelDiagnostic={path:string;actualType:string;utf16Length:number|null;unicodeLength:number|null;flags:string[]};
+export function semanticLabelDiagnostic(raw:unknown,path:string):SemanticLabelDiagnostic{
+ const text=typeof raw==='string';const flags:string[]=[];
+ if(!text)flags.push('not_string');
+ else{if(raw!==raw.trim())flags.push('surrounding_whitespace');if(raw.length<1)flags.push('empty');if(raw.length>18)flags.push('utf16_length_gt_18');if(/\d/u.test(raw))flags.push('numeric_fact');if(/[\n\r]/u.test(raw))flags.push('line_break');if(/[<>]/u.test(raw))flags.push('markup');if(/\{\{|\}\}/u.test(raw))flags.push('binding');}
+ return {path,actualType:raw===null?'null':Array.isArray(raw)?'array':typeof raw,utf16Length:text?raw.length:null,unicodeLength:text?[...raw].length:null,flags};
+}
+export class SemanticLabelValidationError extends Error{
+ readonly diagnostic:SemanticLabelDiagnostic;
+ constructor(diagnostic:SemanticLabelDiagnostic){super(`Design label ${diagnostic.path}: type=${diagnostic.actualType}; UTF16=${diagnostic.utf16Length}; Unicode=${diagnostic.unicodeLength}; flags=${diagnostic.flags.join(',')}. Require plain trimmed human text of 1-18 UTF16 code units without numeric facts, markup or bindings.`);this.diagnostic=diagnostic;this.name='SemanticLabelValidationError';}
+}
+function label(raw:unknown,path:string):string{
+ const diagnostic=semanticLabelDiagnostic(raw,path);if(diagnostic.flags.length)throw new SemanticLabelValidationError(diagnostic);return raw as string;
 }
 /** The only model-facing design grammar. It cannot declare controls or bindings. */
 export function validateSemanticSurfaceDesign(raw: unknown, contract: SurfaceContract): SemanticSurfaceDesign {
@@ -55,7 +63,7 @@ export function validateSemanticSurfaceDesign(raw: unknown, contract: SurfaceCon
   return {
     schemaVersion: 1, sectionOrder,
     layout: {fields: choice(layout.fields, ['paired-short', 'stacked']), records: choice(layout.records, ['cards', 'compact'])},
-    headings: {records: label(headings.records), composer: label(headings.composer)},
+    headings: {records: label(headings.records,'headings.records'), composer: label(headings.composer,'headings.composer')},
     recordFields: value.recordFields as string[],
   };
 }
@@ -65,7 +73,7 @@ export const semanticSurfaceDesignPolicy = [
   'Return ONLY JSON with exactly these required keys: {"schemaVersion":1,"sectionOrder":["summary","composer","records"],"layout":{"fields":"paired-short","records":"cards"},"headings":{"records":"...","composer":"..."},"recordFields":[]}.',
   'sectionOrder is any permutation containing summary, records and composer exactly once. Choose field layout paired-short or stacked; records style cards or compact. Layout is a phone-width single column, never a desktop table. For frequent additions or edits, put composer before a potentially long records list so inputs stay easy to reach; review-focused apps may put records first. Choose the actual order for this intention.',
   'Use intention-specific section headings in the same language as the user. Business field labels and action labels/operation verbs come directly from the verified contract. Do not output fieldLabels or actionLabels, rename a control, or change what it means.',
-  'Section headings are plain human text of 1-18 characters; no digits, values, dates, percentages, markup, bindings, internal jargon or claims of success. Do not repeat the app name. Action labels are taken directly from the supplied action purpose and cannot be changed here.',
+  'Section headings must be strings with no leading/trailing whitespace and 1-18 UTF16 code units (emoji may count as two); the host reports the exact offending heading path and flags. They are plain human text; no digits, values, dates, percentages, markup, bindings, internal jargon or claims of success. Do not repeat the app name. Action labels are taken directly from the supplied action purpose and cannot be changed here.',
   'recordFields is an ordered subset of supplied persistedStateFields names to display beside each real entity. These values are declared local inputs/domain state, not external service facts. Unknown/null remains Not set; never invent a value.',
   'Do NOT output components, component IDs, field declarations, options, paths, events, contexts, entity identity or executable code. The host always exposes every real typed business field exactly once, every action, real entity title/detail, result and computed stats. Per-item actions use exact host-selected row identity and consumed slots. Your design cannot replace these requirements.',
 ].join('\n');

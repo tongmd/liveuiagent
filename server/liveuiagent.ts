@@ -1,3 +1,4 @@
+import {writeSemanticLabelDiagnostics} from './semantic-label-diagnostics.js';
 import {approvedWorkerPlanningContext,nativeJsonUserMessage,type WorkerPlanningContext,type WorkerPlanningMode} from './native-worker-planning-context.js';
 import {SUPPORTING_PROTOCOL,approvedLocalPrimaryRemoval,prepareSupportingSections,sealSupportingSections,supportingText,supportingProjectionPolicy,type SupportingScope,type SupportingPreparation,type SupportingSeal} from './native-supporting-projections.js';
 import {GuiBusinessEpochs,requireGuiEpochAutocommit} from './gui-business-epoch.js';
@@ -6657,6 +6658,7 @@ export async function designAppSurface(input: {
         throw Error(lastDesignRejectReason || 'Compiled surface failed strict validation');
       }
     } catch (error) {
+      writeSemanticLabelDiagnostics(round,decision,error,input.llm?.apiKey);
       const reason = String((error as Error).message);
       console.warn(`[ui-designer] attempt ${round}: semantic design rejected: ${compactText(reason, 200)}, ${Date.now() - startedAt}ms`);
       feedback = `Your semantic design was REJECTED: ${reason}. Return the full strict semantic design JSON. Do not output components, bindings or events.`;
