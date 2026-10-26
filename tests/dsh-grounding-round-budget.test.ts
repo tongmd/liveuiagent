@@ -78,3 +78,19 @@ for(const trusted of [true,false])test(`only a trusted local preflight type prov
  const output=await f.run();assert.equal(f.operations.length,1,'the executor never automatically resubmits the failed write');assert.equal(output?.executionEvidence?.attemptedApiCalls,1);assert.equal(output?.executionEvidence?.notStartedApiCalls,trusted?1:0);assert.equal(output?.executionEvidence?.unknownDispatchOutcomes,trusted?0:1);
  assert(output!.attempts.some(x=>x.dispatchOutcome===(trusted?'not_started':'unknown')));assert.equal(output?.evaluation?.pass,false);
 });
+
+test('natural terminal repair step retains both finish and repair instructions without waiving post-write readback',async t=>{
+ let decisions=0,terminalRepairSeen=false;
+ const f=await fixture(t,body=>{
+  if(body.messages[0].content.includes('You are an INDEPENDENT evaluator'))return{pass:true,deficiencies:[]};
+  const p=JSON.parse(body.messages[1].content);decisions++;
+  if(!p.evaluatorDeficiencies)return decisions===1?{calls:[{api:'create_item',args:{name:'Actual item'}}]}:done;
+  if(p.instruction.startsWith('You must finish NOW')){
+   terminalRepairSeen=true;assert.match(p.instruction,/Fix only the remaining gaps/);assert.match(p.instruction,/Do not replay successful creates/);assert(p.evaluatorDeficiencies.some((x:string)=>x.includes('read-back')));return done;
+  }
+  if(!f.operations.some(x=>x.id==='read_item'))return{calls:[read()]};
+  if(!f.operations.some(x=>x.id==='attach_relation'))return{calls:[{api:'attach_relation',args:{id:'saved-1',relation:'required'}}]};
+  return done;
+ },()=>({id:'saved-1',name:'Actual item'}));
+ const result=await f.run();assert(terminalRepairSeen);assert.equal(result?.evaluation?.pass,false);assert.match(result!.evaluation!.deficiencies.join(' '),/no successful read-back after the last write/);assert.equal(f.operations.filter(x=>x.id==='create_item').length,1);assert.equal(f.operations.filter(x=>x.id==='attach_relation').length,1);
+});
