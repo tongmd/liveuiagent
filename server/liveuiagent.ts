@@ -1,3 +1,4 @@
+import {groundingDeclaredFields,groundingDeclaredFieldsPolicy,type GroundingDeclaredFields} from './grounding-declared-fields.js';
 import {writeSupportingProposalDiagnostics} from './supporting-proposal-diagnostics.js';
 import {writeSemanticLabelDiagnostics} from './semantic-label-diagnostics.js';
 import {approvedWorkerPlanningContext,nativeJsonUserMessage,type WorkerPlanningContext,type WorkerPlanningMode} from './native-worker-planning-context.js';
@@ -5991,6 +5992,7 @@ async function runToolStep(step: Record<string, unknown>, payload: Record<string
 export async function runAppWorldGrounding(input: {
   bridge?: AppWorldBridge;
   appState?: AppStateAdapter;
+  declaredFieldContext?: GroundingDeclaredFields;
   permissions: string[];
   payload: Record<string, unknown>;
   fields?: Array<{ label: string; value: string; valueState?: 'empty_string' | 'null' }>;
@@ -6077,6 +6079,7 @@ export async function runAppWorldGrounding(input: {
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
         persistedDomainPolicy,
+        ...(input.declaredFieldContext?[groundingDeclaredFieldsPolicy]:[]),
         ...(input.supportingProjectionScope?[supportingProjectionPolicy]:[]),
       ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
       `Wired services this turn can write to: ${wiredServices}.`,
@@ -6087,7 +6090,7 @@ export async function runAppWorldGrounding(input: {
       'expectedNumbers: compute every number the request implies but does not state — a bill split share = total ÷ ALL participants INCLUDING the payer (e.g. "186.45 / 3 = 62.15 per person"). Label each derived number with its scope (this event share, repayment amount, or final cumulative balance) and show its arithmetic in the value. A new event share is an INCREMENT, not the final cumulative balance; derive a final balance only from a fresh existing balance plus the signed change. Never assume the existing balance is zero. Use [] when nothing is derived.',
       'When a targetEntity is given, reference exactly that logical business target by its name/id, never authorize a broader business batch. If its backend record packs multiple units, express only the requested subset outcome with all untargeted units preserved under the shared representation-only partition policy; do not invent a same-backend-record requirement.',
     ].join('\n'),
-    user: JSON.stringify({ presentationLanguage, userRequest, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}) }),
+    user: JSON.stringify({ presentationLanguage, userRequest, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.declaredFieldContext?{declaredFieldContext:input.declaredFieldContext}:{}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}) }),
   }) as Record<string, any>;
   const goal = {
     projectionPolicy: parseProjectionPolicy(goalRaw?.projectionPolicy),
@@ -6190,6 +6193,7 @@ export async function runAppWorldGrounding(input: {
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
         persistedDomainPolicy,
+        ...(input.declaredFieldContext?[groundingDeclaredFieldsPolicy]:[]),
         ...(input.supportingProjectionScope?[supportingProjectionPolicy]:[]),
           ...(input.appPurpose ? [`The app exists to: ${compactText(input.appPurpose, 300)}`] : []),
           'A user submitted a GUI form. Ground their request in REAL API calls against the available APIs below, then summarize.',
@@ -6227,7 +6231,7 @@ export async function runAppWorldGrounding(input: {
           presentationLanguage,
           userRequest,
           goal,
-          ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities,
+          ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.declaredFieldContext?{declaredFieldContext:input.declaredFieldContext}:{}),
           ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}),
           previousCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls),
           ...(input.recentTurns?.length ? { previousTurns: input.recentTurns } : {}),
@@ -6318,13 +6322,14 @@ export async function runAppWorldGrounding(input: {
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
         persistedDomainPolicy,
+        ...(input.declaredFieldContext?[groundingDeclaredFieldsPolicy]:[]),
         ...(input.supportingProjectionScope?[supportingProjectionPolicy]:[]),
                 'The host-authored batchScope describes ONLY the actual bounded proposedCalls selected for this dispatch. Judge whether EACH call is safe, authorized incremental progress toward the explicit user intent, with actual identity, amounts, prerequisites and protection of untargeted objects. A finite batch need not complete the entire goal, reach the final requested count or touch every requested destination in the SAME batch. Remaining work is not itself grounds to reject a safe batch. Worker end-state contracts describe the eventual result, not a requirement that each write batch finish it; they never override explicit user intent. Do not approve unrelated or harmful partial work. If the user explicitly requires atomic/all-or-nothing execution and this partial batch would violate that requirement, reject it. Batch metadata grants no authority, invents no prerequisites and claims no completion. Final complete-goal coverage, fresh post-write read-back and current full membership remain mandatory for the separate final evaluators.',
                 'Check the API operation family AND its arguments against the explicit current user request; the goal may be mistaken: (1) every amount must trace to a submitted value, a value read earlier this turn, or goal.expectedNumbers (respect the scope of expectedNumbers: an event share is not a cumulative balance; a bill split share = total ÷ ALL participants including the payer; the payer is owed, never owing; NEVER a placeholder like 0.01); (2) names/titles the user provided must be used VERBATIM (no renaming, translating, date prefixes, or concatenated form fields); (3) an update must REPLACE the field content, not append, unless the user asked to add; (4) a change aimed at one named user-facing unit must not change sibling values; a packed-record representation-only partition must satisfy the shared policy rather than impose a same-backend-record constraint; (5) no UI component ids (d_b1, slot_2) inside names or contents.',
                 'DUPLICATE & TURN-SCOPE gate: reject the batch with {"approved": false, "reject": true, "reason": "<why>"} when (a) previousCalls already show a successful create of the same object (same bill/record, matching amounts or title) and the batch re-creates it WITHOUT first deleting the stale copy, or (b) the batch DELETES or re-records an object whose id does NOT trace to a create in previousCalls (i.e. it predates this turn) and the user request does not explicitly ask to remove or correct that record, or (c) the batch COMPLETES/closes/checks-off an item whose name is NOT mentioned in the user request or targetEntity — completing unmentioned siblings corrupts per-item state. Also reject when the API family contradicts explicit intent (for example recording an actual payment for a new bill, debt or future payment request), or when fixing the call would require changing the API family or inventing missing business values. Return approved:false, reject:true with the concrete reason so the executor can re-plan; do not disguise an intent error as an argument correction.',
                 'Otherwise respond ONLY with JSON: {"approved": true} only when the API intent and all args are right, or {"approved": false, "correctedCalls": [{"api": "<same api>", "args": {...fixed args...}}, ...], "reason": "<what you fixed>"}. Use correctedCalls only for evidenced argument corrections within an already-correct API family; keep the SAME apis in the SAME order. For a wrong API family return reject:true instead of correctedCalls.',
               ].join('\n'),
-              user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, previousCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), batchScope, proposedCalls: rawCalls }),
+              user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.declaredFieldContext?{declaredFieldContext:input.declaredFieldContext}:{}), previousCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), batchScope, proposedCalls: rawCalls }),
             }) as Record<string, any>;
           } catch (error) {
             if (attempt >= 2) historyLog.push({ ok: false, api: '(write-verifier)', error: compactText((error as Error).message, 160) });
@@ -6474,6 +6479,7 @@ export async function runAppWorldGrounding(input: {
         primaryMembershipPolicy,
         appStateMembershipEvidencePolicy,
         persistedDomainPolicy,
+        ...(input.declaredFieldContext?[groundingDeclaredFieldsPolicy]:[]),
         ...(input.supportingProjectionScope?[supportingProjectionPolicy]:[]),
         ...(input.supportingProjectionScope?['For nonempty supportingProjection, independently verify every section role and source-bound visible row against the original app purpose and current request. The host verifies exact provenance, not semantic role. When correct, include supportingApproval:{approved:true,proposalSha256:<the exact supplied proposalSha256>} alongside pass/deficiencies; otherwise pass:false with concrete deficiencies. A primary saved member may not be hidden or downgraded into a readonly section. Only when the current user explicitly authorized a local primary record deletion and actual scoped successful delete plus a later separate exact-record null read establish removal, supportingApproval may additionally include authorizedDeletedAppRecordIds:[<exact deleted appRecordId>]. A same-name independent catalog option may remain; replace/filter alone is not deletion authorization. Inspect priorSupportingProjection only as prior display context, never fresh service facts.']:[]),
         'Decide whether the executed real API calls and the user-visible result fulfill the user request and the goal contract.',
@@ -6483,7 +6489,7 @@ export async function runAppWorldGrounding(input: {
         'Treat the goal contract as a fallible plan: fail a repayment/transfer write for a new bill, shared debt, or future payment request unless the user explicitly requested that transfer or reported a completed repayment. Do not approve only because execution matched a mistaken goal. A successful read alone never fulfills a requested mutation. Also fail if a write lacks a successful read AFTER the last write verifying the changed target and current state; step/time limits and mustFinish do not waive this evidence requirement. When evidence is incomplete, return pass:false with the missing evidence, not assumed success.',
         'Also fail when any visibleEntities entry lacks traceable successful response evidence inside apiCalls, or inside appStateCalls for explicitly app-local rows/metadata only. For actual user-chosen document members, evidence can be the exact member name and location in complete fresh structured container content under the shared membership policy; no independent service member object or invented unit ID is required. Arbitrary text mentions are not membership: external service objects still require external API evidence; local values cannot prove external state. Entities are a read-back of the corresponding store, and a row whose name/id cannot be traced to response evidence is fabricated no matter how plausible it looks (e.g. inventing inbox subjects the API never returned).',
       ].join('\n'),
-      user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities, visibleStats: stats, ...(supportingPrepared?{supportingProjection:{...supportingPrepared,sources:supportingPrepared.sources.map(c=>({api:c.api,order:c.order}))}}:{}), ...(input.priorSupportingProjection?{priorSupportingProjection:input.priorSupportingProjection}:{}), ...(supportingGaps.length?{supportingSourceDeficiencies:supportingGaps}:{}) }),
+      user: JSON.stringify({ userRequest, goal, ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.declaredFieldContext?{declaredFieldContext:input.declaredFieldContext}:{}), ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}), apiCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), visibleSummary: summary, visibleEntities: entities, visibleStats: stats, ...(supportingPrepared?{supportingProjection:{...supportingPrepared,sources:supportingPrepared.sources.map(c=>({api:c.api,order:c.order}))}}:{}), ...(input.priorSupportingProjection?{priorSupportingProjection:input.priorSupportingProjection}:{}), ...(supportingGaps.length?{supportingSourceDeficiencies:supportingGaps}:{}) }),
     }) as Record<string, any>;
     evaluation = {
       pass: verdictRaw?.pass === true && entitiesProvided && lastWriteAt <= lastReadAt && localWriteAt <= localReadAt && localPendingReadback.size === 0 && appStateUnknown === 0 && unknownWriteOutcomes === 0 && totalSuccesses() > 0,
@@ -7240,6 +7246,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             const initial = await runAppWorldGrounding({
               bridge: appWorldBridge ?? undefined,
               appState:initialAppState,
+              declaredFieldContext:groundingDeclaredFields(plan.interaction,{}),
               permissions: readPermissions,
               payload: {},
               appName: String(appPackage.manifest.name),
@@ -7470,6 +7477,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             appState,
             permissions: appWorldPermissions,
             payload: rawPayload,
+            declaredFieldContext:groundingDeclaredFields(interactionModel,rawPayload),
             currentUserCommand: commandEvent?.command,
             // 带标签的业务字段:agent 必须能分辨 36 是账单、12 是份额。
             // 目标实体置于首位:行内按钮回合的唯一业务输入就是"对这一个对象做该动作"。
