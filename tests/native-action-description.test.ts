@@ -27,7 +27,7 @@ for(const innerWorkerPlanning of ['labelled-reference','record-only'] as const)t
    if(innerWorkerPlanning==='record-only')assert(!Object.hasOwn(input,'hostWorkerPlanningContext'));
    else{const planning=input.hostWorkerPlanningContext;assert.equal(planning.authority,'fallible-planning-only');assert.match(planning.policy,/not user preferences, original goals, observed facts/);assert.equal(planning.workerContracts.length,phase==='command'?3:5);for(const plan of planning.workerContracts){assert.equal(plan.instructions,transportHandoff.instructions);assert.deepEqual(plan.constraints,transportHandoff.constraints);assert.equal(plan.expectedOutcome,transportHandoff.expectedOutcome);}}
   }
-  if(phase!=='generation'&&sys.includes('independently verify')){outerReviews++;assert(!Object.hasOwn(input,'hostWorkerPlanningContext'));assert.equal(input.workerContracts.length,phase==='command'?3:5);assert(input.workerContracts.every((h:any)=>h.expectedOutcome===transportHandoff.expectedOutcome));}
+  if(phase!=='generation'&&sys.includes('You independently verify a native app execution.')){outerReviews++;assert(!Object.hasOwn(input,'hostWorkerPlanningContext'));assert.equal(input.workerContracts.length,phase==='command'?3:5);assert(input.workerContracts.every((h:any)=>h.expectedOutcome===transportHandoff.expectedOutcome));}
 
   if(sys.includes('create_app')&&sys.includes('targetAppId'))return reply({intent:'create_app',targetAppId:null,reason:'Persistent entries'});
   if(sys.includes('Business Slot Agent'))return reply({appName:'Entry journal',tagline:'Save and inspect entries',accent:'#426b57',persistedDomainFields:[],slots:[{label:'Mode',type:'string',required:false}],actions:[{label:'Save entry',description:saveDescription},{label:'Inspect entry',description:inspectDescription,perItem:true,consumedSlotIndices:[]}],primaryMembership:'app_local',services:[],itemLabel:'Entry',glyph:'📝',tileTagline:'Entry journal',metricLabel:'Entries',collection:'Entries',actionVerb:'Save'});
@@ -46,7 +46,7 @@ for(const innerWorkerPlanning of ['labelled-reference','record-only'] as const)t
    const calls=phase==='global'?[{api:'app_state.upsert_record',args:{recordId:'entry-one',recordKind:'primary_member',values:{mode:'Entry Alpha'}}},{api:'app_state.list_records',args:{recordKind:'primary_member',offset:0,limit:100}}]:[{api:'app_state.list_records',args:{recordKind:'primary_member',offset:0,limit:100}}];
    const call=calls[step++];return reply(call?{calls:[call]}:{done:true,summary:'Current verified entries',entities:phase==='generation'?[]:[{name:'Entry Alpha',appRecordId:'entry-one'}],stats:[{label:'Entries',value:phase==='generation'?'0':'1'}]});
   }
-  if(sys.includes('independently verify'))return reply({pass:true,reason:'Actual scoped record read-back checked'});
+  if(sys.includes('You independently verify a native app execution.'))return reply({pass:true,reason:'Actual scoped record read-back checked'});
   if(sys.includes('Return JSON {proceed:boolean')){assert.match(sys,/together at most 4096 Unicode characters/);return reply(transportHandoff);}
   return reply({glyph:'<path d="M20 18h56v60H20z" fill="#fff"/>'});
  };
