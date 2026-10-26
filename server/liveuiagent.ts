@@ -6906,7 +6906,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
   initStore(db);
   const commandReceipts = new NativeCommandReceipts(db);
   const guiBusinessEpochs=new GuiBusinessEpochs(db);
-  function advanceOwnedGuiEpoch(appId:string,user?:string){const owner=String(user||'').trim();if(!getOwnedApp(db,appId,owner.slice(0,60)))throw httpError(`app not found: ${appId}`,404);guiBusinessEpochs.advance(owner,appId);}
+  function enterOwnedGuiEpoch(appId:string,user?:string){const owner=String(user||'').trim();if(!getOwnedApp(db,appId,owner.slice(0,60)))throw httpError(`app not found: ${appId}`,404);return guiBusinessEpochs.enter(owner,appId);}
   fs.mkdirSync(options.registryRoot, { recursive: true });
   const debugPolicy = loadLiveUIAgentConfig(options.projectRoot ?? process.cwd()).gui_debug_policy;
   const projectRoot = options.projectRoot ?? process.cwd();
@@ -6915,10 +6915,11 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
   // 修改现有应用:把新句子并入原始意图重新规划整个包(动作/图标/UI 全部重设计),
   // appId 与白板位置保持不变。run() 的 Router Agent 判定 modify_app 时也走这里。
   async function patchAgentApp(input: { appId: string; prompt: string; llm?: LlmRuntimeConfig; user?: string }) {
-    advanceOwnedGuiEpoch(input.appId,input.user);
+    const closeGuiAdmission=enterOwnedGuiEpoch(input.appId,input.user);
     // 同应用写互斥:并发的两个 modify(或 modify+action)否则会互相丢更新。
-    const releaseAppLock = await acquireAppLock(String(input.appId || ''));
+    let releaseAppLock=()=>{};
     try {
+    releaseAppLock = await acquireAppLock(String(input.appId || ''));
     const stored = getOwnedApp(db, input.appId, String(input.user || '').trim().slice(0, 60));
     if (!stored) throw httpError(`app not found: ${input.appId}`, 404);
     const traceLog: AgentTrace[] = [];
@@ -6998,16 +6999,17 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       trace: traceLog,
     };
     } finally {
-      releaseAppLock();
+      try{releaseAppLock();}finally{closeGuiAdmission();}
     }
   }
 
   // 删除应用:登记行、工作流状态、白板节点、注册目录一起清(shell 的 remove 能力,
   // 白板句子 remove_app 和预览卡「删除」按钮都走这里)。
   async function removeAgentApp(input: { appId: string; user?: string }) {
-    advanceOwnedGuiEpoch(input.appId,input.user);
-    const releaseAppLock = await acquireAppLock(String(input.appId || ''));
+    const closeGuiAdmission=enterOwnedGuiEpoch(input.appId,input.user);
+    let releaseAppLock=()=>{};
     try {
+    releaseAppLock = await acquireAppLock(String(input.appId || ''));
       const stored = getOwnedApp(db, input.appId, String(input.user || '').trim().slice(0, 60));
       if (!stored) throw httpError(`app not found: ${input.appId}`, 404);
       const traceLog: AgentTrace[] = [];
@@ -7024,7 +7026,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       trace(traceLog, 'Shell Agent', 'Remove app from registry, workflow store and whiteboard', { appId: input.appId, name }, { removed: true });
       return { type: 'app_removed', appId: input.appId, name, canvasState: canvasForUser(db, canvas, input.user), trace: traceLog };
     } finally {
-      releaseAppLock();
+      try{releaseAppLock();}finally{closeGuiAdmission();}
     }
   }
 
@@ -7310,7 +7312,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
 
     async action(input: { appId: string; actionId: string; requestId:string; eventPayload?: unknown; clientState?: unknown; platform?: Platform; llm?: LlmRuntimeConfig; user?: string }) {
       return withActionDeadline(Date.now() + nativeActionTimeoutMs, async () => {
-      remainingActionMs();advanceOwnedGuiEpoch(input.appId,input.user);
+      remainingActionMs();const closeGuiAdmission=enterOwnedGuiEpoch(input.appId,input.user);
+      try {
       // 同应用写互斥:调度器只串行同 fairness 键,patch 经 run:<uuid> 键进来时
       // 会和本回合并行 —— 进程内锁保证同一应用的读-改-写不交叠。
       const releaseAppLock = await acquireAppLock(String(input.appId || ''));
@@ -7659,10 +7662,11 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       } finally {
         releaseAppLock();
       }
+      }finally{closeGuiAdmission();}
       });
     },
 
-    guiBusinessEpoch(appId:string,owner:string){return guiBusinessEpochs.read(owner,appId);},
+    guiBusinessEpoch(appId:string,owner:string){requireGuiEpochAutocommit(db);try{commandReceipts.assertAppResolved(owner,appId);}catch(error){throw Object.assign(Error('GUI business scope has an unresolved Native receipt; do not repeat this episode'),{status:409,code:'gui_field_proof_scope_changed',cause:error});}return guiBusinessEpochs.read(owner,appId);},
 
     async queryState(query?: { user?: string }) {
       const user = String(query?.user || '').trim();

@@ -48,3 +48,7 @@ test('SQLite outer rollback cannot retract an admitted epoch or issue/consume a 
 });
 
 test('actual HTTP rechecks authoritative epoch after inference before issuing any step or proof',async t=>{const s=await setup(t),i:any=make();s.set(preparation(i));s.onModel(()=>s.epochs.advance('alice','owned'));const r=await s.post(i);assert.equal(r.status,409);assert.equal(r.body.code,'gui_field_proof_scope_changed');assert.equal(r.body.plannerModelCalls,1);assert.equal(r.body.step,undefined);assert.equal(r.body.fieldProof,undefined);});
+
+test('durable active survives restart, cannot be closed inside outer transaction, and only real exit clears it',t=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'gui-active-crash-'));const file=path.join(dir,'active.sqlite');t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));const db=new Database(file);const epochs=new GuiBusinessEpochs(db);const close=epochs.enter('alice','owned');assert.throws(()=>epochs.read('alice','owned'),/active/);db.exec('BEGIN');assert.throws(()=>epochs.enter('alice','owned'),/autocommit/);assert.throws(()=>close(),/autocommit/);db.exec('ROLLBACK');assert.throws(()=>epochs.read('alice','owned'),/active/);close();const completed=epochs.read('alice','owned');close();assert.equal(epochs.read('alice','owned'),completed,'exit is once only');epochs.enter('alice','owned');db.close();const reopened=new Database(file);t.after(()=>reopened.close());const afterCrash=new GuiBusinessEpochs(reopened);assert.throws(()=>afterCrash.read('alice','owned'),/active/,'startup must not fabricate quiescence');
+});
