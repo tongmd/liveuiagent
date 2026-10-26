@@ -31,14 +31,14 @@ test('actual runtime persists local values with independent receipts and reads t
  const chatCompletion=async(request:any)=>{const sys=request.messages[0].content;const input=JSON.parse(request.messages[1].content.split('\n')[0]);prompts.push({sys,input});
   if(sys.includes('You analyze a GUI'))return reply({objective:'Read Parcel42 and save its local target preference'});
   if(sys.includes('You are the Write Verifier')){assert.deepEqual(input.proposedCalls,[{api:'app_state.upsert_record',args:{recordKind:'primary_member',recordId:'parcel42',values:{subject:'Parcel42',filter:'249'}}}]);assert.equal(input.appStateCapabilities.find((c:any)=>c.apiName==='app_state.upsert_record').source,'app-state');return reply({approved:true});}
-  if(sys.includes('You are an INDEPENDENT evaluator')){assert.equal(input.apiCalls.filter((c:any)=>c.ok).length,1);assert.equal(input.appStateCalls.filter((c:any)=>c.ok).length,2);assert.equal(input.appStateCalls[1].response.record.values.filter,'249');return reply({pass:true,deficiencies:[]});}
+  if(sys.includes('You are an INDEPENDENT evaluator')){assert.equal(input.apiCalls.filter((c:any)=>c.ok).length,1);assert.equal(input.appStateCalls.filter((c:any)=>c.ok).length,3);assert.equal(input.appStateCalls[1].response.record.values.filter,'249');return reply({pass:true,deficiencies:[]});}
   if(sys.includes('You are the backend workflow')){step++;return reply(step===1?{calls:[{api:'read_items',args:{}}]}:step===2?{calls:[{api:'app_state.upsert_record',args:{recordKind:'primary_member',recordId:'parcel42',values:{subject:'Parcel42',filter:'249'}}}]}:step===3?{calls:[{api:'app_state.read_record',args:{recordId:'parcel42'}}]}:{done:true,summary:'Parcel42 target preference saved as 249',entities:[{id:'parcel42',name:'Parcel42',detail:'Local target 249',appRecordId:'parcel42'}],stats:[{label:'Tracked',value:'1'}]});}
   return reply(sys.includes('independently verify')?{pass:true,reason:'Actual service read plus local persisted target readback'}:{proceed:true,instructions:'Read service and persist requested local preference',constraints:[],expectedOutcome:'Actual local target saved'});
  };
  const action=await f.runtime.action({requestId:randomUUID(),appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{subject:'Parcel42',scope:'All',filter:'249'},llm:{model:'fixture-only',chatCompletion}}as any);
  assert.equal((action as any).runtimeState.entities[0].appState.filter,'249');assert.equal((action as any).runtimeState.entities[0].appRecordId,'parcel42');
  assert.equal(f.db.prepare('SELECT count(*) AS n FROM native_app_records').get().n,1);
- const locals=Object.values((action as any).toolResults).filter((v:any)=>v.source==='app-state');assert.equal(locals.length,2);assert.deepEqual((action as any).toolDbChanges,[],'local persistence must not masquerade as external DB changes');
+ const locals=Object.values((action as any).toolResults).filter((v:any)=>v.source==='app-state');assert.equal(locals.length,3);assert.deepEqual((action as any).toolDbChanges,[],'local persistence must not masquerade as external DB changes');
  const reopen=await f.runtime.queryState({user:'fixture-owner'});assert.equal(reopen.apps[0].runtimeState.entities[0].appState.filter,'249');assert.equal(reopen.apps[0].appPackage.ui.meta.a2ui.initialData.entities[0].appState.filter,'249');assert.equal(reopen.apps[0].appPackage.ui.meta.a2ui.initialData.appRecords[0].recordId,'parcel42');
  f.db.prepare('UPDATE native_app_records SET values_json=?').run(JSON.stringify({subject:'Parcel42',filter:'199'}));
  const reread=await f.runtime.queryState({user:'fixture-owner'});assert.equal(reread.apps[0].runtimeState.entities[0].appState.filter,'199','query-state reads real local table, not cached history');
@@ -72,16 +72,16 @@ for(const mode of ['complete','external_read_missing','local_read_missing','wron
  const result=mode==='deadline_after_commit'?await withActionDeadline(Date.now()+70,run):await run();
  assert.equal(external.filter(api=>api==='create_external').length,mode==='local_only'?0:1,'real external mutation receipt must not be lost or replayed');
  assert.equal(result?.calls.filter(c=>c.tool.apiName==='create_external').length,mode==='local_only'?0:1);
- assert.equal(result?.evaluation?.pass,mode==='complete'||mode==='local_only');
+ assert.equal(result?.evaluation?.pass,['complete','local_only','local_read_missing','wrong_local_read'].includes(mode));
  if(mode==='external_read_missing')assert.match(result!.evaluation!.deficiencies.join('\n'),/read-back/);
- if(mode==='wrong_local_read')assert.match(result!.evaluation!.deficiencies.join('\n'),/exact subsequent read-back/);
- if(mode==='local_read_missing')assert.match(result!.evaluation!.deficiencies.join('\n'),/app-state write lacks/);
+ if(mode==='wrong_local_read')assert(result!.appStateCalls.some(c=>c.requestSource==='host-scheduled-independent-local-readback'&&c.readbackValidated===true),'the host exact read proves the changed record even if the later model read targets another record');
+ if(mode==='local_read_missing')assert(result!.appStateCalls.some(c=>c.requestSource==='host-scheduled-independent-local-readback'&&c.readbackValidated===true),'the host supplies the missing independent read without another model decision');
  if(mode==='schema_failure')assert.equal((real.call('app_state.read_record',{recordId:'x'}) as any).record,null);
  else assert.equal((real.call('app_state.read_record',{recordId:'x'}) as any).record.values.target,25);
  if(mode==='unknown_after_commit'||mode==='deadline_after_commit'){assert.equal(result!.appStateExecutionEvidence.unknownDispatchOutcomes,1);assert.equal((real.call('app_state.read_record',{recordId:'x'}) as any).record.revision,1,'unknown dispatch must never cause another local write');}
  if(mode==='deadline_after_commit')assert.equal(result?.deadlineExceeded,true);
- if(mode==='complete'){assert.deepEqual(result!.attempts.filter(c=>c.ok===true&&c.api!=='(write-verifier)').map(c=>c.order),[1,4]);assert.deepEqual(result!.appStateCalls.map(c=>c.order),[2,3]);assert.equal(result?.executionEvidence?.successfulApiCalls,2);assert.equal(result?.appStateExecutionEvidence.successfulCalls,2);assert.equal(result?.appStateCalls.every(c=>c.source==='app-state'),true);}
- if(mode==='local_only'){assert.equal(result?.calls.length,0);assert.equal(result?.executionEvidence?.successfulApiCalls,0);assert.equal(result?.appStateExecutionEvidence.successfulCalls,2);}
+ if(mode==='complete'){assert.deepEqual(result!.attempts.filter(c=>c.ok===true&&c.api!=='(write-verifier)').map(c=>c.order),[1,5]);assert.deepEqual(result!.appStateCalls.map(c=>c.order),[2,3,4]);assert.equal(result?.executionEvidence?.successfulApiCalls,2);assert.equal(result?.appStateExecutionEvidence.successfulCalls,3);assert.equal(result?.appStateCalls.every(c=>c.source==='app-state'),true);}
+ if(mode==='local_only'){assert.equal(result?.calls.length,0);assert.equal(result?.executionEvidence?.successfulApiCalls,0);assert.equal(result?.appStateExecutionEvidence.successfulCalls,3);}
  db.close();
 });
 

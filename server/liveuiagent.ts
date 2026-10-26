@@ -6285,17 +6285,27 @@ export async function runAppWorldGrounding(input: {
         break;
       }
       // 一次决策可以带多条独立调用(先建歌单+逐首添加),显著减少 LLM 往返。
-      const dispatchAllowance = Math.min(10, totalApiAttemptLimit - totalAttempts(), roundSuccessLimit - roundSuccesses);
+      const remainingDispatchCost=()=>Math.min(totalApiAttemptLimit-totalAttempts(),roundSuccessLimit-(totalSuccesses()-callsAtRoundStart));
+      const dispatchAllowance = Math.min(10, remainingDispatchCost());
       if (dispatchAllowance <= 0) {
         historyLog.push({ ok: false, api: '(dispatch-budget)', error: 'Bounded API budget reached; completion still requires evidence.' });
         break;
       }
       const proposedBatch = (Array.isArray(decision?.calls) ? decision.calls : [decision?.call]).filter(Boolean);
-      const rawCalls = proposedBatch.slice(0, dispatchAllowance);
+      const rawCalls:any[]=[];let reservedDispatchCost=0;
+      const localReadCapability=appStateCapabilities.find(c=>c.apiName==='app_state.read_record'&&c.method==='GET');
+      for(const call of proposedBatch){
+        if(rawCalls.length>=10)break;
+        const local=appStateCapabilities.find(c=>c.apiName===String(call?.api||'').trim());
+        const cost=local&&isMutation(local)?2:1;
+        if(cost===2&&!localReadCapability){historyLog.push({api:'(dispatch-budget)',ok:false,executionState:'not_started',error:'Local mutation requires an authorized independent exact-record read before dispatch'});break;}
+        if(reservedDispatchCost+cost>remainingDispatchCost())break;
+        rawCalls.push(call);reservedDispatchCost+=cost;
+      }
       const batchScope = {
         source: 'host-selected-dispatch-batch', purpose: 'incremental_write_safety_not_goal_completion',
         proposedCallCount: proposedBatch.length, selectedCallCount: rawCalls.length,
-        dispatchAllowance, omittedTailCallCount: proposedBatch.length - rawCalls.length,
+        dispatchAllowance, reservedDispatchCost, omittedTailCallCount: proposedBatch.length - rawCalls.length,
         totalApiAttemptLimit, attemptedCallCountBeforeBatch: totalAttempts(),
         completionClaim: false, grantsAdditionalAuthority: false,
       };
@@ -6409,11 +6419,21 @@ export async function runAppWorldGrounding(input: {
             continue;
           }
           remainingActionMs();
+          const localMutation=isMutation(localCapability);
+          if(localMutation&&(!localReadCapability||remainingDispatchCost()<2)){
+            appStateCalls.push({source:'app-state',api:apiName,ok:false,executionState:'not_started',dispatchBlocked:true,actualAttempted:false,request:args,error:'Local write and its independent read cannot both fit the original dispatch budget'});continue;
+          }
           appStateAttempts += 1;
-          try {
-            const response = await input.appState.call(apiName,args);
-            remainingActionMs();
-            appStateSuccesses += 1;
+          let response:unknown;
+          try { response=await input.appState.call(apiName,args); remainingActionMs(); }
+          catch(error) {
+            appStateUnknown += 1;
+            if(localMutation){unknownWriteOutcomes+=1;appStateUnknownWrites+=1;}
+            appStateCalls.push({source:'app-state',api:apiName,order:totalAttempts(),attemptedArguments:args,ok:false,executionState:'outcome_unknown',automaticRetry:false,error:compactText((error as Error).message,240)});
+            if((error as {code?:string}).code==='action_deadline_exceeded')throw error;
+            continue;
+          }
+          appStateSuccesses += 1;
             if(localCapability.method === 'GET') {
               localReadAt=appStateAttempts;
               const observed=response as any;
@@ -6421,13 +6441,30 @@ export async function runAppWorldGrounding(input: {
               if(apiName==='app_state.read_record'&&observed?.operation==='read'&&observed.record===null&&localPendingDeletes.has(String(args.recordId))){localPendingDeletes.delete(String(args.recordId));localPendingReadback.delete(String(args.recordId));}
               if(apiName==='app_state.list_records'&&observed?.operation==='list'&&observed.offset===0&&Array.isArray(observed.records)&&Number.isSafeInteger(observed.limit)&&observed.records.length<observed.limit)for(const key of localPendingDeletes){if(observed.filter?.recordKind===localDeletedKinds.get(key)&&!observed.records.some((record:any)=>record.recordId===key)){localPendingDeletes.delete(key);localPendingReadback.delete(key);}}
             } else {localWriteAt=appStateAttempts;localPendingReadback.add(String(args.recordId));if(apiName==='app_state.delete_record'){localPendingDeletes.add(String(args.recordId));localDeletedKinds.set(String(args.recordId),String((response as any).deletedRecordKind));}else localPendingDeletes.delete(String(args.recordId));}
-            appStateCalls.push({source:'app-state',api:apiName,order:totalAttempts(),request:args,response,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments'});
-          } catch(error) {
-            appStateUnknown += 1;
-            if(isMutation(localCapability)){unknownWriteOutcomes+=1;appStateUnknownWrites+=1;}
-            appStateCalls.push({source:'app-state',api:apiName,order:totalAttempts(),attemptedArguments:args,ok:false,executionState:'outcome_unknown',automaticRetry:false,error:compactText((error as Error).message,240)});
-            if((error as {code?:string}).code==='action_deadline_exceeded')throw error;
-          }
+          appStateCalls.push({source:'app-state',api:apiName,order:totalAttempts(),request:args,response,ok:true,executionState:'succeeded',requestSource:'host-bound-app-state-dispatched-arguments'});
+          if(localMutation){
+            const written=response as any;
+            const returnedId=apiName==='app_state.upsert_record'?written?.record?.recordId:written?.recordId;
+            const readArgs={recordId:returnedId};let readDispatched=false,readResponded=false;
+            try{
+              remainingActionMs();
+              if(typeof returnedId!=='string'||returnedId!==args.recordId)throw Error('Successful local write response has no matching actual record identity; independent read not dispatched');
+              appStateAttempts+=1;readDispatched=true;
+              const observed=await input.appState.call('app_state.read_record',readArgs) as any;remainingActionMs();readResponded=true;
+              appStateSuccesses+=1;localReadAt=appStateAttempts;
+              const valid=observed?.source==='app-state'&&observed?.operation==='read'&&observed?.scope==='authenticated-current-owner-app'&&observed?.persisted===true&&(apiName==='app_state.delete_record'
+                ? observed.record===null
+                : observed?.record?.recordId===returnedId&&observed.record.recordKind===written.record.recordKind&&observed.record.revision===written.record.revision&&JSON.stringify(observed.record.values)===JSON.stringify(written.record.values));
+              appStateCalls.push({source:'app-state',api:'app_state.read_record',order:totalAttempts(),request:readArgs,response:observed,ok:true,executionState:'succeeded',requestSource:'host-scheduled-independent-local-readback',readbackValidated:valid});
+              if(valid){localPendingReadback.delete(returnedId);localPendingDeletes.delete(returnedId);}
+              remainingActionMs();
+            }catch(error){
+              if(readResponded)throw error; // a known read response is not an unknown dispatch
+              if(readDispatched)appStateUnknown+=1;
+              appStateCalls.push({source:'app-state',api:'app_state.read_record',...(readDispatched?{order:totalAttempts()}:{}),attemptedArguments:readArgs,ok:false,executionState:readDispatched?'outcome_unknown':'not_started',actualAttempted:readDispatched,automaticRetry:false,requestSource:'host-scheduled-independent-local-readback',error:compactText((error as Error).message,240)});
+              if((error as {code?:string}).code==='action_deadline_exceeded')throw error;
+            }
+          }else remainingActionMs();
           continue;
         }
         const capability = capabilities.find((tool) => tool.apiName === apiName)
