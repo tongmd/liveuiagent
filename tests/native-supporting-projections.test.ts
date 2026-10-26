@@ -34,3 +34,27 @@ test('actual SQLite local read binding has its own namespace/freshness, never a 
  assert.throws(()=>prepareSupportingSections(s,[{...local,source:undefined,requestSource:'model-supplied'}],0,0),/missing fresh/);
  }finally{db.close();}
 });
+
+
+test('nested collection wrappers never combine scalar evidence from different structural rows',()=>{
+ const response=[{items:[{id:7,subject:'Subject A',meta:{detail:'Exact A'},zero:0,enabled:false},{id:8,subject:'Subject B',meta:{detail:'Exact B'}}],wrapper:'Container'}];
+ const make=(name:string,id:string,detail?:string)=>[{role:'supporting_results',title:'Nested results',rows:[{name,id,...(detail===undefined?{}:{detail})}]}];
+ const p=prepareSupportingSections(make('Subject A','7','Exact A'),[read(response)],0);
+ assert.equal(p.bindings[0][0].rowPointer,'/0/items/0');assert.equal(p.bindings[0][0].idPointer,'/0/items/0/id');
+ assert.deepEqual(p.sources[0].response,response);assert.equal((p.sources[0].response as any)[0].items[0].zero,0);assert.equal((p.sources[0].response as any)[0].items[0].enabled,false);
+ for(const proposal of [make('Subject A','8'),make('Subject A','7','Exact B'),make('Container','7')])assert.throws(()=>prepareSupportingSections(proposal,[read(response)],0),/missing fresh/);
+ const both=prepareSupportingSections([{role:'supporting_results',title:'Nested results',rows:[{name:'Subject A',id:'7'},{name:'Subject B',id:'8'}]}],[read(response)],0);assert.deepEqual(both.bindings[0].map(b=>b.rowPointer),['/0/items/0','/0/items/1']);
+});
+
+for(const mode of ['authorized','unapproved','missing_read'] as const)test(`actual SQLite delete with independent same-name catalog: ${mode}`,async()=>{
+ const {default:Database}=await import('better-sqlite3');const {createAppStateAdapter}=await import('../server/native-app-state.js');const db=new Database(':memory:');db.exec("CREATE TABLE agent_apps(app_id TEXT,owner TEXT);INSERT INTO agent_apps VALUES('app','alice')");
+ const adapter=createAppStateAdapter(db,'alice','app',[{name:'title',type:'string'}],['storage.app','app_state.write'])!;adapter.call('app_state.upsert_record',{recordId:'saved-1',recordKind:'primary_member',values:{title:'Choice A'}});let step=0;
+ const tool={id:'read_choices',apiName:'read_choices',permission:'read_choices',appName:'fixture',method:'GET',purpose:'Actual catalog'};const bridge:any={getCapabilities:async()=>[tool],callTool:async()=>({tool,request:{},response:['Choice A'],dbChanges:null})};
+ try{const result=await runAppWorldGrounding({bridge,permissions:['read_choices'],appState:adapter,appName:'Saved choices',appPurpose:'Keep saved choices and browse available choices',payload:{request:'Remove the saved Choice A record; keep available catalog visible'},priorProjection:{entities:[{id:'saved-1',appRecordId:'saved-1',name:'Choice A'}],stats:[]},viewContext:{itemLabel:'Saved choice',primaryMembership:'app_local',perItemActions:[]},supportingProjectionScope:{owner:'alice',appId:'app'},llm:{model:'fixture-only',chatCompletion:async(req:any)=>{const sys=req.messages[0].content,p=JSON.parse(req.messages[1].content);let v:any;
+ if(sys.includes('You analyze a GUI'))v={objective:'Delete explicitly targeted saved record, retain catalog',projectionPolicy:'replace_or_filter'};
+ else if(sys.includes('You are the Write Verifier'))v={approved:true};
+ else if(sys.includes('You are an INDEPENDENT evaluator'))v={pass:true,deficiencies:[],supportingApproval:{approved:true,proposalSha256:p.supportingProjection.proposalSha256,...(mode==='unapproved'?{}:{authorizedDeletedAppRecordIds:['saved-1']})}};
+ else {step++;v=step===1?{calls:[{api:'app_state.read_record',args:{recordId:'saved-1'}}]}:step===2?{calls:[{api:'app_state.delete_record',args:{recordId:'saved-1',expectedRevision:1}}]}:step===3?{calls:[{api:'read_choices',args:{}},...(mode==='missing_read'?[]:[{api:'app_state.read_record',args:{recordId:'saved-1'}},{api:'app_state.list_records',args:{recordKind:'primary_member',offset:0,limit:20}}])]}:{done:true,summary:'Saved record removed; catalog remains',entities:[],stats:[],supportingSections:[{role:'catalog_options',title:'Available choices',rows:[{name:'Choice A'}]}]};}
+ return{choices:[{message:{content:JSON.stringify(v)}}]};}}});assert.equal(result?.evaluation?.pass,mode==='authorized',JSON.stringify(result?.evaluation));assert.equal((adapter.call('app_state.read_record',{recordId:'saved-1'})as any).record,null);if(mode!=='authorized')assert(result?.evaluation?.deficiencies.some(x=>/downgraded|read-back/.test(x)));else assert.match(supportingText(result!.supportingProjection,{owner:'alice',appId:'app'}),/Choice A/);
+ }finally{db.close();}
+});

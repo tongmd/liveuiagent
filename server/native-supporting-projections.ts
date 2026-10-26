@@ -11,7 +11,9 @@ const hash=(x:unknown)=>createHash('sha256').update(JSON.stringify(x)).digest('h
 const escaped=(s:string)=>s.replace(/~/g,'~0').replace(/\//g,'~1');
 const object=(x:any)=>x&&typeof x==='object'&&!Array.isArray(x);
 function keys(x:any,allowed:string[]){if(!object(x)||Object.keys(x).some(k=>!allowed.includes(k)))throw Error('supporting_projection: unknown fields or non-object');}
-function leaves(x:any,path=''):Array<{path:string;value:unknown}>{if(x===null||typeof x!=='object')return[{path,value:x}];return Object.entries(x).flatMap(([k,v])=>leaves(v,`${path}/${escaped(k)}`));}
+// A row may contain nested scalar objects, but a nested array starts separate
+// structural rows. Never combine identity/name/detail across its child rows.
+function leaves(x:any,path=''):Array<{path:string;value:unknown}>{if(x===null||typeof x!=='object')return[{path,value:x}];if(Array.isArray(x))return[];return Object.entries(x).flatMap(([k,v])=>leaves(v,`${path}/${escaped(k)}`));}
 function elements(x:any,path=''):Array<{path:string;value:any}>{if(!x||typeof x!=='object')return[];return Object.entries(x).flatMap(([k,v])=>[...(Array.isArray(x)?[{path:`${path}/${escaped(k)}`,value:v}]:[]),...elements(v,`${path}/${escaped(k)}`)]);}
 /** Names/IDs come only from actual host call receipts, never from model-authored
  * receipt-shaped data or a free-form source pointer. This proves provenance;
@@ -79,3 +81,13 @@ export function supportingText(seal:unknown,scope:SupportingScope):string{
  return value.sections.map(s=>[s.title+':',...s.rows.map(r=>'• '+[r.name,r.detail].filter(v=>v!==undefined).join('\n'))].join('\n\n')).join('\n\n');
 }
 export const supportingProjectionPolicy='The host offers optional readonly supportingSections distinct from primary entities. Use catalog_options for actual available choices and supporting_results for actual requested secondary results alongside the main tracked units. Do not insert directory choices or secondary feed rows into primary entities merely to make them visible. For done JSON you may return supportingSections:[{role:"catalog_options"|"supporting_results",title:string,rows:[{name:string,id?:string,detail?:string}]}]. Copy each name and optional detail as one complete exact string from actual current read evidence (external GET or authenticated owner/app app-state read/list); preserve a real ID only from that same source object. No pointers, source claims, actions, fabricated labels, paraphrased values or receipt metadata in rows. The host derives exact unique source bindings, rejecting ambiguity or pre-write stale evidence. Roles are proposals: the independent evaluator must compare original/current need and full actual sources, not infer semantic types from API names. Supporting sections are readonly display, never saved membership, primary row actions, write authority or evidence of external success. Keep actual untouched saved members and all primary readback/full-goal gates unchanged. Omitted required secondary results still make the whole goal incomplete. An enabled typed protocol is not permission to downgrade saved primary members to a supporting section.';
+
+/** Narrow removal exception: only the actual scoped local delete and a later
+ * separate exact-null read can establish removal; a model policy alone cannot. */
+export function approvedLocalPrimaryRemoval(recordId:unknown,calls:any[],approval:any):boolean{
+ if(typeof recordId!=='string'||!recordId||approval?.approved!==true||!Array.isArray(approval.authorizedDeletedAppRecordIds)||!approval.authorizedDeletedAppRecordIds.includes(recordId))return false;
+ const actual=(c:any)=>c.source==='app-state'&&c.ok===true&&c.executionState==='succeeded'&&c.requestSource==='host-bound-app-state-dispatched-arguments'&&c.response?.source==='app-state'&&c.response?.scope==='authenticated-current-owner-app'&&c.response?.persisted===true&&Number.isSafeInteger(c.order);
+ const mutations=calls.filter(c=>actual(c)&&['app_state.upsert_record','app_state.delete_record'].includes(c.api)&&c.request?.recordId===recordId).sort((a,b)=>b.order-a.order);const d=mutations[0];
+ if(d?.api!=='app_state.delete_record'||d.response.operation!=='delete-and-read-back'||d.response.recordId!==recordId||d.response.deleted!==true||d.response.deletedRecordKind!=='primary_member')return false;
+ return calls.some(c=>actual(c)&&c.api==='app_state.read_record'&&c.request?.recordId===recordId&&c.order>d.order&&c.response.operation==='read'&&c.response.record===null);
+}
