@@ -58,7 +58,16 @@ for(const mode of ['authorized','unapproved','missing_read'] as const)test(`actu
  else if(sys.includes('You are the Write Verifier'))v={approved:true};
  else if(sys.includes('You are an INDEPENDENT evaluator'))v={pass:true,deficiencies:[],supportingApproval:{approved:true,proposalSha256:p.supportingProjection.proposalSha256,...(mode==='unapproved'?{}:{authorizedDeletedAppRecordIds:['saved-1']})}};
  else {step++;v=step===1?{calls:[{api:'app_state.read_record',args:{recordId:'saved-1'}}]}:step===2?{calls:[{api:'app_state.delete_record',args:{recordId:'saved-1',expectedRevision:1}}]}:step===3?{calls:[{api:'read_choices',args:{}},...(mode==='missing_read'?[]:[{api:'app_state.read_record',args:{recordId:'saved-1'}},{api:'app_state.list_records',args:{recordKind:'primary_member',offset:0,limit:20}}])]}:{done:true,summary:'Saved record removed; catalog remains',entities:[],stats:[],supportingSections:[{role:'catalog_options',title:'Available choices',rows:[{name:'Choice A'}]}]};}
- return{choices:[{message:{content:JSON.stringify(v)}}]};}}});assert.equal(result?.evaluation?.pass,mode==='authorized',JSON.stringify(result?.evaluation));assert.equal((adapter.call('app_state.read_record',{recordId:'saved-1'})as any).record,null);if(mode!=='authorized')assert(result?.evaluation?.deficiencies.some(x=>/downgraded|read-back/.test(x)));else assert.match(supportingText(result!.supportingProjection,{owner:'alice',appId:'app'}),/Choice A/);
+ return{choices:[{message:{content:JSON.stringify(v)}}]};}}});assert.equal(result?.evaluation?.pass,mode==='authorized',JSON.stringify(result?.evaluation));assert.equal((adapter.call('app_state.read_record',{recordId:'saved-1'})as any).record,null);const actualDelete=result!.appStateCalls.find(c=>c.api==='app_state.delete_record'&&c.ok===true)!;
+ const automaticNullRead=result!.appStateCalls.find(c=>c.api==='app_state.read_record'&&c.dispatchInitiator==='host-scheduled-independent-local-readback')!;
+ assert(actualDelete&&automaticNullRead,'actual CAS delete must be followed by the host independent GET');
+ assert.equal(automaticNullRead.requestSource,'host-bound-app-state-dispatched-arguments');assert.deepEqual(automaticNullRead.request,{recordId:'saved-1'});assert.equal(automaticNullRead.response.record,null);assert.equal(automaticNullRead.readbackValidated,true);assert(automaticNullRead.order>actualDelete.order);
+ if(mode==='missing_read'){
+  assert.equal(result!.appStateCalls.filter(c=>c.api==='app_state.read_record'&&c.order>actualDelete.order).length,1,'only the real host automatic null read exists; model omitted its own read');
+  assert(!result!.appStateCalls.some(c=>c.api==='app_state.list_records'),'the model still omitted the full primary-collection read');
+  assert(result!.evaluation!.deficiencies.some(x=>x.includes('verified empty app-local collection requires an actual empty first list page')),'exact-record null proves deletion but never a complete empty primary collection');
+ }else if(mode==='unapproved')assert(result?.evaluation?.deficiencies.some(x=>/downgraded/.test(x)),'real readback does not replace explicit independent deletion authorization');
+ else assert.match(supportingText(result!.supportingProjection,{owner:'alice',appId:'app'}),/Choice A/);
  }finally{db.close();}
 });
 
