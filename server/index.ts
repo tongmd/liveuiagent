@@ -1,3 +1,4 @@
+import {hostPlanningRecovery}from'./gui-planning-recovery.js';
 import {readNativeHostExperiments,nativeHostCaptureRoot,bindNativeHostExperiments} from './native-host-experiments.js';
 import {requireActionRequestId} from './native-action-request.js';
 import {hostNativeActionNotStartedProof} from './native-action-not-started.js';
@@ -161,6 +162,7 @@ function errorPayload(err: any) {
     ...(err?.artifactsDir ? { artifactsDir:err.artifactsDir } : {}),
     ...(err?.workflowExecution ? { workflowExecution:err.workflowExecution } : {}),
     ...(hostNativeActionNotStartedProof(err)?{nativeActionNotStarted:hostNativeActionNotStartedProof(err)}:{}),
+    ...(hostPlanningRecovery(err)?{planningRecovery:hostPlanningRecovery(err)}:{}),
     ...(err?.nativeInference ? { nativeInference:err.nativeInference } : {}),
     ...(err?.planningContractInvalid===true?{planningContractInvalid:true}:{}),
     ...(Number.isInteger(err?.plannerModelCalls) ? {plannerModelCalls:err.plannerModelCalls} : {}),
@@ -470,6 +472,7 @@ app.post('/agent/settings/test', async (req, res, next) => {
 
 // Pure step planning: no app action, storage write or evaluator behavior loop.
 app.post('/evaluator/interaction-step', createGuiInteractionPlanner({
+  transportRecovery:nativeExperiments.guiTransportRecovery===true,
   owner: requestUser,
   authorize(appId, owner) {
     const row = db.prepare('SELECT owner FROM agent_apps WHERE app_id=?').get(appId) as {owner:string}|undefined;

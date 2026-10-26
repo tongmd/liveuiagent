@@ -29,7 +29,8 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
  const protectedFields=new Set(['model','messages','tools','tool_choice','parallel_tool_calls','stream','stream_options']);
  const parameters=Object.fromEntries(Object.entries(input.request).filter(([name])=>!protectedFields.has(name)));
  function fail(res:http.ServerResponse,status:number,code:string){if(!res.headersSent){res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:code,code}}));}else res.destroy();}
- const server=http.createServer(async(req,res)=>{
+ const handlers=new Set<Promise<void>>();
+ const handle=async(req:http.IncomingMessage,res:http.ServerResponse)=>{
   if(closed||input.signal.aborted)return fail(res,503,'native_relay_closed');
   const auth=Buffer.from(String(req.headers.authorization||''));
   if(auth.length!==secret.length||!timingSafeEqual(auth,secret))return fail(res,401,'native_relay_unauthorized');
@@ -79,7 +80,8 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
    res.end();
   }catch{if(!input.signal.aborted)recordFailure('dsh_native_upstream_transport','Native model stream ended unexpectedly');fail(res,input.signal.aborted?504:502,input.signal.aborted?'native_relay_deadline':'native_relay_upstream_error');}
   finally{input.signal.removeEventListener('abort',abort);res.removeListener('close',disconnected);requests.delete(controller);}
- });
+ };
+ const server=http.createServer((req,res)=>{const work=handle(req,res);handlers.add(work);void work.finally(()=>handlers.delete(work)).catch(()=>{});});
  server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
  server.headersTimeout=10000;server.requestTimeout=0;
  await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',()=>{server.removeListener('error',reject);resolve();});});
@@ -89,11 +91,12 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
   if(closing)return closing;
   closed=true;input.signal.removeEventListener('abort',abortAll);
   for(const controller of requests)controller.abort(new Error('Native relay closed'));
-  closing=new Promise<void>(resolve=>server.close(()=>resolve()));
-  server.closeAllConnections();for(const socket of sockets)socket.destroy();return closing;
+  const socketClosed=new Promise<void>(resolve=>server.close(()=>resolve()));
+  server.closeAllConnections();for(const socket of sockets)socket.destroy();
+  closing=(async()=>{await socketClosed;while(handlers.size)await Promise.allSettled([...handlers]);})();return closing;
  }
  const abortAll=()=>{void close();};
  input.signal.addEventListener('abort',abortAll,{once:true});
  if(input.signal.aborted)await close();
- return {diagnostics:():Record<string,unknown>=>({...diagnostics,providerRequests}),provider:{apiBase:`http://127.0.0.1:${address.port}/v1`,apiKey:key},close};
+ return {diagnostics:():Record<string,unknown>=>({...diagnostics,providerRequests,handlerCount:handlers.size,handlersDrained:closed&&handlers.size===0}),provider:{apiBase:`http://127.0.0.1:${address.port}/v1`,apiKey:key},close};
 }

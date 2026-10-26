@@ -1,3 +1,4 @@
+import {noteGuiTransportDeadline}from'./gui-planning-recovery.js';
 import {groundingDeclaredFields,groundingDeclaredFieldsPolicy,type GroundingDeclaredFields} from './grounding-declared-fields.js';
 import {writeSupportingProposalDiagnostics} from './supporting-proposal-diagnostics.js';
 import {writeSemanticLabelDiagnostics} from './semantic-label-diagnostics.js';
@@ -1897,6 +1898,7 @@ export async function nativeModelTransport(llm: LlmRuntimeConfig, url: string, i
   if (!llm.chatCompletion) return chatFetchWithRetry(url, init, timeoutMs);
   const actionBudget = remainingActionMs();
   const budget = Math.min(timeoutMs, actionBudget);
+  noteGuiTransportDeadline(Date.now()+budget);
   const totalBudgetLimited = actionDeadlineAt() !== undefined && actionBudget <= timeoutMs;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

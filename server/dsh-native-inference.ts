@@ -1,3 +1,4 @@
+import {beginRegisteredGuiNativeAttempt}from'./gui-planning-recovery.js';
 import {createNativeInputCapture} from './native-input-capture.js';
 import {nativeStructuredJsonPolicyMetadata} from './native-structured-json-policy.js';
 import {persistNativeInferenceDiagnostic} from './native-inference-diagnostics.js';
@@ -105,6 +106,7 @@ export function createDshNativeInference(config:Config) {
       const budget=Math.min(options?.timeoutMs??config.timeoutMs??120000,config.timeoutMs??120000);
       if(!Number.isFinite(budget)||budget<=0)throw transportError('Native DSH deadline expired','dsh_native_timeout');
       const id=randomUUID(),startedAt=Date.now();
+      const guiAttempt=beginRegisteredGuiNativeAttempt({id,model:String(request.model),role:String(options?.roleLabel||''),effectiveDeadlineAt:startedAt+budget,request,standardProducer:!config.runnerFactory&&Boolean(options?.provider??config.provider)});
       const diagnostic:Record<string,any>={schemaVersion:1,id,roleLabel:String(options?.roleLabel||'Unspecified role').replace(/[^A-Za-z0-9 _-]/g,'').slice(0,80),model:String(request.model).slice(0,160),requestBytes:Buffer.byteLength(JSON.stringify(request)),taskBytes:Buffer.byteLength(task),messageCount:Array.isArray(request.messages)?request.messages.length:0,budgetMs:budget,maxConcurrent,startedAt,queueWaitMs:null,acquiredAt:null,executionMs:null,outcome:'pending',runnerEvents:[],modelEventCounts:{},relay:{providerRequests:0,responseBytes:0}};
       const policy=nativeStructuredJsonPolicyMetadata(request);if(policy)diagnostic.structuredJsonPolicy=policy;
       const controller=new AbortController();
@@ -162,7 +164,8 @@ export function createDshNativeInference(config:Config) {
           execution:{harness:'dsh',delivery:'native',toolsExecutedBy:'host'}};
       } catch(error) {
         diagnostic.outcome=controller.signal.aborted?'aborted':'failed';diagnostic.errorCode=String((error as any)?.code||'native_inference_failed').replace(/[^A-Za-z0-9_-]/g,'').slice(0,80);
-        const details=relay?.diagnostics();
+        const relayDetails=relay?.diagnostics();
+        const details=relayDetails?Object.fromEntries(Object.entries(relayDetails).filter(([k])=>k!=='handlersDrained'&&k!=='handlerCount')):undefined;
         if(details?.code&&!controller.signal.aborted)throw Object.assign(new Error(String(details.message)),{code:details.code,nativeInference:details});
         if(error&&typeof error==='object'&&details)Object.assign(error,{nativeInference:details});
         throw error;
@@ -173,8 +176,15 @@ export function createDshNativeInference(config:Config) {
           if(acquired)release();
           diagnostic.finishedAt=Date.now();diagnostic.queueWaitMs??=Date.now()-startedAt;diagnostic.executionMs=diagnostic.acquiredAt===null?null:Date.now()-diagnostic.acquiredAt;
           const relayMetadata=relay?.diagnostics();if(relayMetadata){const safe:Record<string,unknown>={};for(const key of ['providerRequests','upstreamStatus','responseBytes','prompt_tokens','completion_tokens','total_tokens','reasoning_tokens','contentCharacters','reasoningCharacters'])if(typeof relayMetadata[key]==='number')safe[key]=relayMetadata[key];for(const key of ['finish_reason','code'])if(typeof relayMetadata[key]==='string')safe[key]=String(relayMetadata[key]).replace(/[^A-Za-z0-9_-]/g,'').slice(0,80);diagnostic.relay=safe;}
-          await persistNativeInferenceDiagnostic(config.diagnosticRoot,id,diagnostic);
-          completions.delete(completion);markComplete();
+          try {
+          const diagnosticSaved=await persistNativeInferenceDiagnostic(config.diagnosticRoot,id,diagnostic);
+          if(guiAttempt&&diagnosticSaved){
+            const r=relay?.diagnostics()??{},settled=diagnostic.runnerEvents.filter((e:any)=>e.phase==='settled');
+            const clean=diagnostic.runnerDisposed===true&&diagnostic.workspaceRemoved===true&&r.handlersDrained===true&&r.handlerCount===0&&!controller.signal.aborted;
+            guiAttempt.completed=clean;guiAttempt.success=clean&&diagnostic.outcome==='succeeded'&&r.providerRequests===1&&r.upstreamStatus===200&&r.finish_reason==='stop';
+            guiAttempt.eligibleEof=clean&&diagnostic.outcome==='failed'&&r.code==='dsh_native_upstream_transport'&&r.providerRequests===1&&r.responseBytes===0&&['upstreamStatus','finish_reason','prompt_tokens','completion_tokens','total_tokens','reasoning_tokens'].every(k=>!Object.hasOwn(r,k))&&settled.length===1&&settled[0].exitCode===1&&settled[0].signalCode===null&&settled[0].terminationRequested===false&&settled[0].forcedKillRequested===false&&!['tool_call','tool','tool_start'].some(k=>diagnostic.modelEventCounts[k]);
+          }
+          } finally {completions.delete(completion);markComplete();}
         }}}
       }
     },
