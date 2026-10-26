@@ -182,7 +182,7 @@ export function createDshNativeInference(config:Config) {
             const r=relay?.diagnostics()??{},settled=diagnostic.runnerEvents.filter((e:any)=>e.phase==='settled');
             const clean=diagnostic.runnerDisposed===true&&diagnostic.workspaceRemoved===true&&r.handlersDrained===true&&r.handlerCount===0&&!controller.signal.aborted;
             guiAttempt.completed=clean;guiAttempt.success=clean&&diagnostic.outcome==='succeeded'&&r.providerRequests===1&&r.upstreamStatus===200&&r.finish_reason==='stop';
-            guiAttempt.eligibleEof=clean&&diagnostic.outcome==='failed'&&r.code==='dsh_native_upstream_transport'&&r.providerRequests===1&&r.responseBytes===0&&['upstreamStatus','finish_reason','prompt_tokens','completion_tokens','total_tokens','reasoning_tokens'].every(k=>!Object.hasOwn(r,k))&&settled.length===1&&settled[0].exitCode===1&&settled[0].signalCode===null&&settled[0].terminationRequested===false&&settled[0].forcedKillRequested===false&&!['tool_call','tool','tool_start'].some(k=>diagnostic.modelEventCounts[k]);
+            guiAttempt.eligibleEof=clean&&diagnostic.outcome==='failed'&&r.code==='dsh_native_upstream_transport'&&r.providerRequests===1&&r.responseBytes===0&&r.requestCancelled!==true&&r.clientDisconnected!==true&&['upstreamStatus','finish_reason','prompt_tokens','completion_tokens','total_tokens','reasoning_tokens'].every(k=>!Object.hasOwn(r,k))&&settled.length===1&&settled[0].exitCode===1&&settled[0].signalCode===null&&settled[0].terminationRequested===false&&settled[0].forcedKillRequested===false&&!['tool_call','tool','tool_start'].some(k=>diagnostic.modelEventCounts[k]);
           }
           } finally {completions.delete(completion);markComplete();}
         }}}

@@ -36,9 +36,10 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
   if(auth.length!==secret.length||!timingSafeEqual(auth,secret))return fail(res,401,'native_relay_unauthorized');
   if(req.method!=='POST'||req.url!=='/v1/chat/completions')return fail(res,404,'native_relay_route_not_found');
   const controller=new AbortController();requests.add(controller);
+  const cancelled=()=>{diagnostics.requestCancelled=true;};controller.signal.addEventListener('abort',cancelled,{once:true});
   const abort=()=>controller.abort(input.signal.reason??new Error('Native inference cancelled'));
   input.signal.addEventListener('abort',abort,{once:true});
-  const disconnected=()=>{if(!res.writableFinished)controller.abort(new Error('Native relay client disconnected'));};
+  const disconnected=()=>{if(!res.writableFinished){diagnostics.clientDisconnected=true;controller.abort(new Error('Native relay client disconnected'));}};
   res.on('close',disconnected);
   try {
    let size=0;const chunks:Buffer[]=[];
@@ -78,8 +79,8 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
     if(!res.write(chunk))await new Promise<void>((resolve,reject)=>{res.once('drain',resolve);res.once('close',()=>reject(new Error('Relay client closed')));});}}
    if(isSse&&!diagnostics.finish_reason){recordFailure('dsh_native_stream_incomplete','Native model stream ended without a finish reason');throw new Error('Native model stream ended without a finish reason');}
    res.end();
-  }catch{if(!input.signal.aborted)recordFailure('dsh_native_upstream_transport','Native model stream ended unexpectedly');fail(res,input.signal.aborted?504:502,input.signal.aborted?'native_relay_deadline':'native_relay_upstream_error');}
-  finally{input.signal.removeEventListener('abort',abort);res.removeListener('close',disconnected);requests.delete(controller);}
+  }catch{if(!input.signal.aborted){if(controller.signal.aborted)recordFailure('dsh_native_request_cancelled','Native model request was cancelled');else recordFailure('dsh_native_upstream_transport','Native model stream ended unexpectedly');}fail(res,input.signal.aborted?504:502,input.signal.aborted?'native_relay_deadline':'native_relay_upstream_error');}
+  finally{controller.signal.removeEventListener('abort',cancelled);input.signal.removeEventListener('abort',abort);res.removeListener('close',disconnected);requests.delete(controller);}
  };
  const server=http.createServer((req,res)=>{const work=handle(req,res);handlers.add(work);void work.finally(()=>handlers.delete(work)).catch(()=>{});});
  server.on('connection',socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));});
