@@ -7,7 +7,11 @@ import {projectBusinessEvidence} from './grounding-evidence.js';
 
 export type ProgressIntent={source:'host-current-command';message:string}|{source:'host-bound-current-row-action';actionId:string;targetEntity:{id:string;name:string;appRecordId?:string};eventPayloadSha256:string}|{source:'host-readonly-observation';phase:'initial_open'|'reopen'};
 export type Scope={owner:string;appId:string;actionId:string;executionId:string;intent:ProgressIntent};
-type Argument={literal:unknown}|{fromEffect:string;responsePointer:string}|{fromCurrentTarget:'id'|'appRecordId'};
+type Argument={literal:unknown}|{fromEffect:string;responsePointer:string}|{fromCurrentTarget:'id'|'appRecordId'}|{unresolvedFromEffect:string};
+export type DeferredBindingProposal={bindingId:string;receiptOrder:number;responsePointer:string};
+type BoundValue=DeferredBindingProposal&{value:unknown};
+export type GuardedCall={api:string;args:Record<string,unknown>};
+export type ProgressHostHooks={registerReadPreflightConsumer?:(consume:(scope:Scope,call:GuardedCall)=>string[])=>void;registerMutationVerifiedConsumer?:(consume:(scope:Scope,call:GuardedCall)=>string[])=>void};
 export type RequiredEffect={id:string;api:string;effect:'external_read'|'external_write'|'local_read'|'local_write';requestQuote?:string;rowActionReference?:{actionId:string;targetEntityId:string};observationReference?:'initial_open'|'reopen';arguments:Record<string,Argument>;after?:string;when?:{effect:string;responsePointer:string;equals:unknown}};
 type Capability=AppWorldToolCapability|AppStateCapability;
 type Receipt={api:string;order:number;request:unknown;response:unknown;outcome:'succeeded'|'not_started'|'unknown';source:'appworld'|'app-state'};
@@ -28,9 +32,9 @@ function at(value:any,pointer:string):unknown{
  * or semantic-verification authority. Only the real dispatcher may record receipts;
  * never hydrate this object or its private history from a model/client packet. */
 export class NativeOperationProgress{
- private readonly effects:RequiredEffect[];private readonly capabilities:Map<string,Capability>;private readonly receipts:Receipt[]=[];private readonly binding:string;
+ private readonly effects:RequiredEffect[];private readonly capabilities:Map<string,Capability>;private readonly receipts:Receipt[]=[];private readonly binding:string;private readonly bindingSlots=new Map<string,{effectId:string;argument:string;sourceEffect:string}>();private readonly pendingBindings=new Map<string,BoundValue>();private readonly boundValues=new Map<string,BoundValue>();
  readonly contractSha256:string;
- constructor(private readonly scope:Scope,effects:RequiredEffect[],external:AppWorldToolCapability[],permissions:readonly string[],local:AppStateCapability[]=[]){
+ constructor(private readonly scope:Scope,effects:RequiredEffect[],external:AppWorldToolCapability[],permissions:readonly string[],local:AppStateCapability[]=[],hostHooks:ProgressHostHooks={}){
   if([scope.owner,scope.appId,scope.actionId,scope.executionId].some(v=>typeof v!=='string'||!v.trim()))throw Error('Exact current-turn scope required');
   const intent=scope.intent;
   if(!intent||intent.source==='host-current-command'&&!intent.message.trim()||intent.source==='host-bound-current-row-action'&&(intent.actionId!==scope.actionId||!intent.targetEntity.id||!intent.targetEntity.name||!(/^[a-f0-9]{64}$/).test(intent.eventPayloadSha256))||intent.source==='host-readonly-observation'&&!['initial_open','reopen'].includes(intent.phase)||!['host-current-command','host-bound-current-row-action','host-readonly-observation'].includes(intent.source))throw Error('Trusted current event source required');
@@ -52,11 +56,54 @@ export class NativeOperationProgress{
    if(e.after!==undefined&&(typeof e.after!=='string'||!e.after))throw Error('Invalid prerequisite');
    const cap=this.capabilities.get(e.api);if(!cap)throw Error('Effect capability is not actually selected');
    const expected=(cap.source==='app-state'?'local_':'external_')+(read(cap)?'read':'write');if(e.effect!==expected)throw Error('Effect facility/method mismatch');
-   for(const dep of [e.after,e.when?.effect,...Object.values(e.arguments).map(a=>'fromEffect'in a?a.fromEffect:undefined)].filter(Boolean))if(!seen.has(dep!))throw Error('A prerequisite must name an earlier frozen effect');
-   for(const a of Object.values(e.arguments))if(!a||typeof a!=='object'||!(Object.keys(a).length===1&&(Object.hasOwn(a,'literal')||['id','appRecordId'].includes((a as any).fromCurrentTarget))||Object.keys(a).length===2&&typeof(a as any).fromEffect==='string'&&Boolean((a as any).fromEffect.trim())&&pointer((a as any).responsePointer)))throw Error('Invalid exact argument binding');
+   for(const dep of [e.after,e.when?.effect,...Object.values(e.arguments).map(a=>'fromEffect'in a?a.fromEffect:'unresolvedFromEffect'in a?a.unresolvedFromEffect:undefined)].filter(Boolean))if(!seen.has(dep!))throw Error('A prerequisite must name an earlier frozen effect');
+   for(const a of Object.values(e.arguments))if(!a||typeof a!=='object'||!(Object.keys(a).length===1&&(Object.hasOwn(a,'literal')||['id','appRecordId'].includes((a as any).fromCurrentTarget)||typeof(a as any).unresolvedFromEffect==='string'&&Boolean((a as any).unresolvedFromEffect.trim()))||Object.keys(a).length===2&&typeof(a as any).fromEffect==='string'&&Boolean((a as any).fromEffect.trim())&&pointer((a as any).responsePointer)))throw Error('Invalid exact argument binding');
+   for(const [argument,a]of Object.entries(e.arguments))if('unresolvedFromEffect'in a)this.bindingSlots.set(sha({scope:this.binding,effect:e.id,argument,sourceEffect:a.unresolvedFromEffect}),{effectId:e.id,argument,sourceEffect:a.unresolvedFromEffect});
    seen.add(e.id);
   }
   this.contractSha256=sha({scope:this.scope,effects:this.effects,capabilities:[...this.capabilities.values()]});
+  // Functions are retained only by the existing host guard control flow. No
+  // model/client approval JSON or public accept method can freeze a binding.
+  hostHooks.registerReadPreflightConsumer?.((scope,call)=>this.#acceptBindings(scope,call,true));
+  hostHooks.registerMutationVerifiedConsumer?.((scope,call)=>this.#acceptBindings(scope,call,false));
+ }
+ /** A next existing decision may propose pointers after seeing an actual query.
+  * This only stages provenance candidates; no target is frozen or call allowed. */
+ proposeBindings(scope:Scope,proposals:DeferredBindingProposal[]){
+  if(sha(scope)!==this.binding||!Array.isArray(proposals))throw Error('Binding scope mismatch');
+  const staged=new Map<string,BoundValue>();const states=this.snapshot().effects;
+  for(const proposal of proposals){
+   if(!objectKeys(proposal,['bindingId','receiptOrder','responsePointer'])||typeof proposal.bindingId!=='string'||!Number.isSafeInteger(proposal.receiptOrder)||!pointer(proposal.responsePointer)||staged.has(proposal.bindingId))throw Error('Malformed binding proposal');
+   const slot=this.bindingSlots.get(proposal.bindingId);if(!slot)throw Error('Unknown host binding slot');
+   const source=states.find(e=>e.id===slot.sourceEffect);if(source?.status!=='receipt_observed'||source.receiptOrder!==proposal.receiptOrder)throw Error('Binding source is not the actual frozen prerequisite receipt');
+   const receipt=this.receipts.find(r=>r.order===proposal.receiptOrder)!;const value=at(receipt.response,proposal.responsePointer);
+   const effect=this.effects.find(e=>e.id===slot.effectId)!;const schema=(this.capabilities.get(effect.api)!.inputSchema as any)?.properties?.[slot.argument];
+   if(!schema)throw Error('No actual request schema for the unresolved argument');validateApiValue(value,schema,slot.argument);
+   const candidate=plain({...proposal,value});const bound=this.boundValues.get(proposal.bindingId);if(bound&&wire(bound)!==wire(candidate))throw Error('Already-bound target is immutable');staged.set(proposal.bindingId,candidate);
+  }
+  for(const [id,value]of staged)this.pendingBindings.set(id,value);
+  return{staged:[...staged.keys()],frozen:false,authority:'provenance-candidate-not-authorization'};
+ }
+ #acceptBindings(scope:Scope,actualGuardedCall:GuardedCall,readGuard:boolean){
+  if(sha(scope)!==this.binding)throw Error('Guarded call scope mismatch');const call=plain(actualGuardedCall);const cap=this.capabilities.get(call.api);
+  if(!cap||read(cap)!==readGuard)throw Error('Wrong host guard for actual capability method');
+  if(!readGuard&&this.receipts.some(r=>r.outcome==='unknown'&&!read(this.capabilities.get(r.api)!)))throw Error('Unknown write remains locked');
+  if(cap.inputSchema)validateApiValue(call.args,cap.inputSchema as any,call.api);
+  const states=this.snapshot().effects;const candidates=this.effects.filter(e=>e.api===call.api).flatMap(e=>{
+   const state=states.find(s=>s.id===e.id)!;if(state.status!=='ready'&&!(state.status==='blocked'&&state.reason==='Target binding awaits an existing host guard'))return[];
+   const values:Record<string,unknown>={};const ids:string[]=[];
+   for(const [name,arg]of Object.entries(e.arguments)){
+    if('unresolvedFromEffect'in arg){const id=[...this.bindingSlots].find(([,slot])=>slot.effectId===e.id&&slot.argument===name)![0];const value=this.boundValues.get(id)??this.pendingBindings.get(id);if(!value)return[];values[name]=value.value;ids.push(id);}
+    else if(state.resolvedArguments&&Object.hasOwn(state.resolvedArguments,name))values[name]=state.resolvedArguments[name];
+    else if('literal'in arg)values[name]=arg.literal;
+    else if('fromEffect'in arg){const source=states.find(s=>s.id===arg.fromEffect);if(source?.status!=='receipt_observed')return[];values[name]=at(this.receipts.find(r=>r.order===source.receiptOrder)!.response,arg.responsePointer);}
+    else if('fromCurrentTarget'in arg&&this.scope.intent.source==='host-bound-current-row-action'){const value=this.scope.intent.targetEntity[arg.fromCurrentTarget];if(!value)return[];values[name]=value;}else return[];
+   }
+   return wire(values)===wire(call.args)?[{effect:e,ids}]:[];
+  });
+  if(candidates.length!==1)throw Error('Guarded target does not uniquely match one frozen effect');
+  const accepted:string[]=[];for(const id of candidates[0].ids){if(!this.boundValues.has(id)){const value=this.pendingBindings.get(id);if(!value)throw Error('Unresolved target');this.boundValues.set(id,plain(value));accepted.push(id);}}
+  return accepted;
  }
  /** These methods accept actual post-dispatch results, not proposed calls. Host
   * wiring must call them at the existing bridge/app-state dispatch boundary. */
@@ -86,7 +133,7 @@ export class NativeOperationProgress{
     const prior=e.after?observed.get(e.after):undefined;
     if(e.after){if(prior)dependencies.push(prior);else {const unknown=unknownEffects.get(e.after);if(!read(cap)||!unknown)throw Error('Required preceding effect not observed');dependencies.push(unknown);state.inspectionOnly=true;}}
     if(e.when){const source=observed.get(e.when.effect);if(!source)throw Error('Condition needs an actual prerequisite read');if(!read(this.capabilities.get(source.api)!))throw Error('Condition must reference an actual read');dependencies.push(source);if(wire(at(source.response,e.when.responsePointer))!==wire(e.when.equals)){state.status='not_required_by_observed_condition';states.push(state);continue;}}
-    const args=Object.fromEntries(Object.entries(e.arguments).map(([key,a])=>{if('literal'in a)return[key,a.literal];if('fromCurrentTarget'in a){if(this.scope.intent.source!=='host-bound-current-row-action')throw Error('No actual current row target');const value=this.scope.intent.targetEntity[a.fromCurrentTarget];if(!value)throw Error('Current target identity is unresolved');return[key,value];}const source=observed.get(a.fromEffect);if(!source)throw Error('Target identifier has no actual preceding receipt');dependencies.push(source);return[key,at(source.response,a.responsePointer)];}));
+    const args=Object.fromEntries(Object.entries(e.arguments).map(([key,a])=>{if('literal'in a)return[key,a.literal];if('unresolvedFromEffect'in a){const source=observed.get(a.unresolvedFromEffect);if(!source)throw Error('Target source has no actual prerequisite receipt');dependencies.push(source);const id=[...this.bindingSlots].find(([,slot])=>slot.effectId===e.id&&slot.argument===key)![0];const bound=this.boundValues.get(id);if(!bound||bound.receiptOrder!==source.order)throw Error('Target binding awaits an existing host guard');return[key,bound.value];}if('fromCurrentTarget'in a){if(this.scope.intent.source!=='host-bound-current-row-action')throw Error('No actual current row target');const value=this.scope.intent.targetEntity[a.fromCurrentTarget];if(!value)throw Error('Current target identity is unresolved');return[key,value];}const source=observed.get(a.fromEffect);if(!source)throw Error('Target identifier has no actual preceding receipt');dependencies.push(source);return[key,at(source.response,a.responsePointer)];}));
     for(const name of cap.requiredParams??[])if(!Object.hasOwn(args,name))throw Error('Required API argument unresolved');
     if(cap.inputSchema)validateApiValue(args,cap.inputSchema as any,e.api);
     state.resolvedArguments=args;
@@ -104,6 +151,6 @@ export class NativeOperationProgress{
    }catch(error){state.status='blocked';state.reason=String((error as Error).message);}
    states.push(state);
   }
-  return{schema:'native-operation-progress-candidate-v1',authority:'progress-only-not-authorization-or-semantic-success',contractSha256:this.contractSha256,currentIntentSha256:sha(this.scope.intent),effects:states,ready:states.filter(s=>s.status==='ready'),unmet:states.filter(s=>!['receipt_observed','not_required_by_observed_condition'].includes(s.status)),hasUnknownWrite:unknownWrite,allRequiredReceiptsObserved:!unknownWrite&&states.every(s=>['receipt_observed','not_required_by_observed_condition'].includes(s.status)),recordedReceiptCount:this.receipts.length};
+  return{schema:'native-operation-progress-candidate-v1',authority:'progress-only-not-authorization-or-semantic-success',contractSha256:this.contractSha256,currentIntentSha256:sha(this.scope.intent),effects:states,bindings:[...this.bindingSlots].map(([bindingId,slot])=>({bindingId,...slot,state:this.boundValues.has(bindingId)?'bound':'unresolved',...(this.boundValues.has(bindingId)?{receiptOrder:this.boundValues.get(bindingId)!.receiptOrder,responsePointer:this.boundValues.get(bindingId)!.responsePointer}: {})})),ready:states.filter(s=>s.status==='ready'),unmet:states.filter(s=>!['receipt_observed','not_required_by_observed_condition'].includes(s.status)),hasUnknownWrite:unknownWrite,allRequiredReceiptsObserved:!unknownWrite&&states.every(s=>['receipt_observed','not_required_by_observed_condition'].includes(s.status)),recordedReceiptCount:this.receipts.length};
  }
 }
