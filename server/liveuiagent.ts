@@ -20,7 +20,7 @@ import {NativeCommandReceipts,type CommandReceiptBinding} from './native-command
 import {HOST_COMMAND_ACTION,HOST_COMMAND_PREPARE,parseHostCommandPrepareEvent,parseHostCommandEvent,businessSurfaceWithoutHostCommand,appendHostCommand,assertHostCommandDescriptor,hostCommandDescriptor} from './native-host-command.js';
 import {hostCommandRoute,stageHostCommandResult} from './native-host-command-runtime.js';
 import {markNativeActionNotStarted,normalizeNativeActionId,hostNativeActionNotStartedProof} from './native-action-not-started.js';
-import { assertSurfaceContract, compileSemanticSurface, semanticSurfaceDesignPolicy, type SemanticSurfaceDesign } from './native-surface-design.js';
+import { assertSurfaceContract, compileSemanticSurface, semanticSurfaceDesignPolicy, SemanticLabelValidationError, type SemanticSurfaceDesign } from './native-surface-design.js';
 import {factorNativePlanInput} from './native-plan-factor.js';
 import {factorNativeSnapshotPaths,nativeSnapshotPathPolicy} from './native-snapshot-path-factor.js';
 import {nativeReviewEvidencePolicy} from './native-review-factor.js';
@@ -6652,6 +6652,7 @@ export async function designAppSurface(input: {
   const contract = {readonlySupporting:true as const,businessFields: input.businessFields, actions: input.actions, persistedStateFields};
   assertSurfaceContract(contract);
   let feedback = '';
+  let rejectedHeading: Record<string, unknown> | undefined;
   for (let round = 1, maxRounds = designAttempts(); round <= maxRounds; round++) {
     const startedAt = Date.now();
     let decision: unknown;
@@ -6664,6 +6665,7 @@ export async function designAppSurface(input: {
           slots: input.businessFields.map(field => ({slot: field.name, label: field.label, type: field.type || 'string', required: Boolean(field.required), ...(field.options?.length ? {choices: field.options} : {})})),
           actions: input.actions,
           ...(feedback ? {previousAttemptRejected: feedback} : {}),
+          ...(rejectedHeading ? {rejectedHeading} : {}),
         }),
       });
     } catch (error) {
@@ -6679,6 +6681,13 @@ export async function designAppSurface(input: {
       }
     } catch (error) {
       writeSemanticLabelDiagnostics(round,decision,error,input.llm?.apiKey);
+      rejectedHeading = undefined;
+      if (error instanceof SemanticLabelValidationError) {
+        const key = error.diagnostic.path === 'headings.records' ? 'records' : 'composer';
+        const value = (decision as any)?.headings?.[key];
+        // Return only the offending literal, never arbitrary model objects or reasoning.
+        rejectedHeading = {...error.diagnostic, ...(typeof value === 'string' ? {value} : {}), instruction: 'Replace this rejected heading with valid single-line human text; preserve the other strict design requirements.'};
+      }
       const reason = String((error as Error).message);
       console.warn(`[ui-designer] attempt ${round}: semantic design rejected: ${compactText(reason, 200)}, ${Date.now() - startedAt}ms`);
       feedback = `Your semantic design was REJECTED: ${reason}. Return the full strict semantic design JSON. Do not output components, bindings or events.`;

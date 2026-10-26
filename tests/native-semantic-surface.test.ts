@@ -111,3 +111,9 @@ test('legitimate all-row apps compile two or three exact row actions without inv
     assert.equal(calls,1);assert.equal(result.filter(node=>node.component==='Button').length,count);
   }
 });
+
+test('long section headings remain literal while action button text keeps its separate eighteen character contract',()=>{
+ const value={...design(),headings:{records:'Saved sessions and their recorded details',composer:'Build your playlist'}};
+ checked(value);
+ assert.throws(()=>checked(value,{...contract,actions:[{actionId:'actions.add.run',label:'x'.repeat(19)}]}),/real strict validator/);
+});
