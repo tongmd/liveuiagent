@@ -1846,7 +1846,7 @@ async function openAIOrchestratorProvider(request: OrchestratorAgentRequest): Pr
     handoffs: [
       { from: 'agents.orchestrator', to: 'agents.action', payload: 'ui_event + current visible_state + app_memory', reason: `Route ${contract.functionId} interaction to the action agent.` },
       { from: 'agents.action', to: 'agents.app', payload: 'interpreted action output + state patch request', reason: 'Update the visible app state for this turn.' },
-      { from: 'agents.app', to: 'agents.data', payload: 'verified GUI result and selection/history cache for host commit', reason: 'Preserve actual displayed results for reopen; change business records only when the current clicked action and permissions authorize that change.' },
+      { from: 'agents.app', to: 'agents.data', payload: 'verified GUI result and selection/history cache for host commit', reason: 'Cache verified display state for reopen; business writes require the clicked action and permissions.' },
       { from: 'agents.data', to: 'agents.memory', payload: 'saved record summary + user context', reason: 'Retain context for future GUI turns.' },
     ],
     schedulerClass: 'balanced',
