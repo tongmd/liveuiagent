@@ -232,7 +232,7 @@ async function githubSearch(query: string): Promise<JsonRecord> {
   const data = await fetchJson(`https://api.github.com/search/repositories?q=${encodeURIComponent(requiredText(query, 'query'))}&sort=updated&per_page=8`, 'GitHub repository search');
   if (!Array.isArray(data.items)) throw toolError('GitHub repository search returned no item array');
   return {source:'GitHub public repository API', sourceUrl:`https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=updated&per_page=8`, fetchedAt:new Date().toISOString(), query,
-    results:data.items.map((repo:any)=>({name:repo.full_name,url:repo.html_url,description:repo.description ?? '',stars:repo.stargazers_count,language:repo.language,license:repo.license?.spdx_id ?? null,updatedAt:repo.updated_at})).slice(0,8)};
+    results:data.items.map((repo:any)=>({name:repo.full_name,url:repo.html_url,homepage:typeof repo.homepage==='string'&&repo.homepage.trim()?repo.homepage:null,description:repo.description ?? '',stars:repo.stargazers_count,language:repo.language,license:repo.license?.spdx_id ?? null,updatedAt:repo.updated_at})).slice(0,8)};
 }
 
 async function arxivSearch(query: string): Promise<JsonRecord> {
