@@ -61,3 +61,26 @@ test('generation and revision naming follow user language, explicit names and ex
   const action = buildTask({ prompt: '打开记录', mode: 'action', memory: {}, context: {} });
   assert.match(action, /Do not change index.html or app.json/);
 });
+
+
+test('a plain experience request receives internal design and SDK contracts without rewriting user intent', () => {
+  const plain = 'A shared photo journal whose layout changes with each photo.';
+  for (const mode of ['generate', 'revise']) {
+    const task = buildTask({ prompt: plain, mode, memory: {}, context: {} });
+    assert(task.endsWith('CURRENT USER REQUEST\n' + plain));
+    assert.match(task, /never ask the user to write SDK instructions/);
+    assert.match(task, /do not promise an ok field/);
+    assert.match(task, /request version so a late response cannot overwrite/);
+    assert.match(task, /complete state required to recreate the current view/);
+    assert.match(task, /Never silently evict the oldest photo or record/);
+    assert.match(task, /bounded structured component tree/);
+    assert.match(task, /Do not promise VLM image analysis unless a real vision tool is supplied/);
+  }
+  const connected = buildTask({ prompt: plain, mode: 'generate', memory: {}, context: { connectedServices: services } });
+  assert.match(connected, /business success only when the host result has ok === true/);
+  const action = buildTask({ prompt: plain, mode: 'action', memory: {}, context: {} });
+  assert.doesNotMatch(action, /ORCHESTRATION RESPONSIBILITIES/);
+  assert.match(action, /Do not change index.html or app.json/);
+  assert.match(action, /Read its expected response schema/);
+  assert.match(action, /without asking the user for component IDs, code, JSON or SDK instructions/);
+});
