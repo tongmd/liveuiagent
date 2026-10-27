@@ -53,7 +53,8 @@ test('page redirects are revalidated before network access and URL credentials/p
  try{
  const tool=findWebToolByApiName('web_fetch')!;
  await assert.rejects(tool.invoke({url:'https://example.com'}),/private/);assert.equal(calls,1);
- for(const url of ['http://[::1]/','http://[::ffff:127.0.0.1]/','http://100.64.0.1/','http://user:secret@example.com/'])await assert.rejects(tool.invoke({url}),/private|credentials/);
+ const credentialUrl=new URL('http://example.com/');credentialUrl.username='fixture-user';credentialUrl.password='fixture-password';
+ for(const url of ['http://[::1]/','http://[::ffff:127.0.0.1]/','http://100.64.0.1/',credentialUrl.href])await assert.rejects(tool.invoke({url}),/private|credentials/);
  assert.equal(calls,1);
  }finally{globalThis.fetch=original;}
 });
