@@ -13,12 +13,12 @@ test('public research grants search and readable pages; explicit prohibition app
 
 test('web-only grounding actually dispatches authorized tools and exposes source evidence to independent review',async()=>{
  const original=globalThis.fetch;let networkCalls=0,steps=0,reviewed=false;
- globalThis.fetch=async(input:any)=>{networkCalls++;assert.match(String(input),/^https:\/\/api.github.com\/search\/repositories\?/);return new Response(JSON.stringify({items:[{full_name:'example/real',html_url:'https://github.com/example/real',description:'Actual HTTP fixture response',stargazers_count:7,language:'TypeScript',updated_at:'2026-10-27'}]}),{status:200});};
+ globalThis.fetch=async(input:any)=>{networkCalls++;assert.match(String(input),/^https:\/\/api.github.com\/search\/repositories\?/);return new Response(JSON.stringify({items:[{full_name:'example/real',html_url:'https://github.com/example/real',description:'Actual HTTP fixture response',stargazers_count:7,license:{spdx_id:'MIT'},language:'TypeScript',updated_at:'2026-10-27'}]}),{status:200});};
  try {
  const output=await runAppWorldGrounding({permissions:[],webPermissions:['tool.github.search'],payload:{query:'agent'},appName:'Repository watch',llm:{model:'fixture-only',chatCompletion:async(request:any)=>{
   const sys=request.messages[0].content;const input=JSON.parse(request.messages[1].content.split('\n')[0]);
   if(sys.includes('You analyze a GUI'))return reply({objective:'Find repositories',deliverables:['Actual repository links'],projectionPolicy:'replace_or_filter'});
-  if(sys.includes('You are an INDEPENDENT evaluator')){reviewed=true;assert.equal(input.apiCalls[0].requestSource,'web-tool-dispatched-arguments');assert.equal(input.apiCalls[0].response.results[0].stars,7);return reply({pass:true,deficiencies:[]});}
+  if(sys.includes('You are an INDEPENDENT evaluator')){reviewed=true;assert.equal(input.apiCalls[0].requestSource,'web-tool-dispatched-arguments');assert.equal(input.apiCalls[0].response.results[0].stars,7);assert.equal(input.apiCalls[0].response.results[0].license,'MIT');assert.match(input.apiCalls[0].response.sourceUrl,/^https:\/\/api.github.com/);assert.ok(Number.isFinite(Date.parse(input.apiCalls[0].response.fetchedAt)));return reply({pass:true,deficiencies:[]});}
   assert.match(sys,/github_search_repositories/);assert.doesNotMatch(sys,/- weather_query/);
   return ++steps===1?reply({calls:[{api:'github_search_repositories',args:{query:'agent'}}]}):reply({done:true,summary:'Found example/real on GitHub',entities:[{name:'example/real',id:'https://github.com/example/real',detail:'7 stars'}],stats:[]});
  }}});

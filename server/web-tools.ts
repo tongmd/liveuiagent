@@ -166,7 +166,7 @@ async function bingSearch(query: string): Promise<JsonRecord> {
     };
   }).filter(Boolean).slice(0, 8) as JsonRecord[];
   if (!results.length) throw toolError(`web search returned no parseable results for: ${clip(query, 80)}`);
-  return { query: clip(query, 200), results };
+  return { query: clip(query, 200), results, sourceUrl: `https://cn.bing.com/search?q=${encodeURIComponent(query)}&mkt=zh-CN&count=10`, fetchedAt: new Date().toISOString() };
 }
 
 async function fetchPage(url: string): Promise<JsonRecord> {
@@ -175,6 +175,7 @@ async function fetchPage(url: string): Promise<JsonRecord> {
   const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
   return {
     url: clip(url, 300),
+    sourceUrl: url, fetchedAt: new Date().toISOString(),
     title: clip(title ? stripHtml(title[1]) : '', 160),
     excerpt: clip(stripHtml(html), 2400),
   };
@@ -194,6 +195,7 @@ async function weatherQuery(location: string): Promise<JsonRecord> {
     'weather forecast tool',
   );
   return {
+    sourceUrl: `https://api.open-meteo.com/v1/forecast?latitude=${first.latitude}&longitude=${first.longitude}`, fetchedAt: new Date().toISOString(),
     location: [first.name, first.admin1, first.country].filter(Boolean).join(', '),
     current: forecast.current,
     daily: forecast.daily,
@@ -214,6 +216,7 @@ async function exchangeRate(args: { from: string; to: string; amount?: number })
   if (!Number.isFinite(rate)) throw toolError(`exchange rate unavailable for ${from}→${to}`);
   const amount = Number.isFinite(Number(args.amount)) ? Number(args.amount) : null;
   return {
+    sourceUrl: `https://api.frankfurter.dev/v1/latest?base=${from}&symbols=${to}`, fetchedAt: new Date().toISOString(),
     from, to, rate, date: String(data?.date || ''),
     ...(amount !== null ? { amount, converted: Math.round(amount * rate * 100) / 100 } : {}),
   };
@@ -228,8 +231,8 @@ function requiredText(value: unknown, name: string, max = 300): string {
 async function githubSearch(query: string): Promise<JsonRecord> {
   const data = await fetchJson(`https://api.github.com/search/repositories?q=${encodeURIComponent(requiredText(query, 'query'))}&sort=updated&per_page=8`, 'GitHub repository search');
   if (!Array.isArray(data.items)) throw toolError('GitHub repository search returned no item array');
-  return {source:'GitHub public repository API', fetchedAt:new Date().toISOString(), query,
-    results:data.items.map((repo:any)=>({name:repo.full_name,url:repo.html_url,description:repo.description ?? '',stars:repo.stargazers_count,language:repo.language,updatedAt:repo.updated_at})).slice(0,8)};
+  return {source:'GitHub public repository API', sourceUrl:`https://api.github.com/search/repositories?q=${encodeURIComponent(query)}&sort=updated&per_page=8`, fetchedAt:new Date().toISOString(), query,
+    results:data.items.map((repo:any)=>({name:repo.full_name,url:repo.html_url,description:repo.description ?? '',stars:repo.stargazers_count,language:repo.language,license:repo.license?.spdx_id ?? null,updatedAt:repo.updated_at})).slice(0,8)};
 }
 
 async function arxivSearch(query: string): Promise<JsonRecord> {
@@ -237,7 +240,7 @@ async function arxivSearch(query: string): Promise<JsonRecord> {
   if (!/<feed[\s>]/.test(xml)) throw toolError('arXiv search returned no Atom feed');
   const field=(entry:string,tag:string)=>stripHtml(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`).exec(entry)?.[1] ?? '');
   const entries=xml.match(/<entry>[\s\S]*?<\/entry>/g) ?? [];
-  return {source:'arXiv Atom API',fetchedAt:new Date().toISOString(),query,results:entries.slice(0,8).map(entry=>({title:field(entry,'title'),url:field(entry,'id'),published:field(entry,'published'),updated:field(entry,'updated'),summary:clip(field(entry,'summary'),1600),authors:(entry.match(/<author>[\s\S]*?<\/author>/g) ?? []).map(author=>field(author,'name'))}))};
+  return {source:'arXiv Atom API',sourceUrl:`https://export.arxiv.org/api/query?search_query=${encodeURIComponent(query)}&start=0&max_results=8&sortBy=submittedDate&sortOrder=descending`,fetchedAt:new Date().toISOString(),query,results:entries.slice(0,8).map(entry=>({title:field(entry,'title'),url:field(entry,'id'),published:field(entry,'published'),updated:field(entry,'updated'),summary:clip(field(entry,'summary'),1600),authors:(entry.match(/<author>[\s\S]*?<\/author>/g) ?? []).map(author=>field(author,'name'))}))};
 }
 
 export const webToolRegistry: WebToolSpec[] = [
@@ -273,7 +276,7 @@ export const webToolRegistry: WebToolSpec[] = [
   },
   {
     id: 'tool.github.search', apiName: 'github_search_repositories', label: 'GitHub Search Tool',
-    purpose: 'Find actual public GitHub repositories by query. Returns repository names, canonical URLs, descriptions, stars, language and update dates. No private repositories or account writes.',
+    purpose: 'Find actual public GitHub repositories by query. Returns repository names, canonical URLs, descriptions, stars, language, SPDX license (null means unknown) and update dates. No private repositories or account writes.',
     keywords: /github|开源项目|开源工具|代码仓库|repository|repositories/i,
     argsHint: 'query* (GitHub repository search syntax)',
     fromPayload: payload => ({query:requiredText(payloadQueryText(payload),'query')}),
