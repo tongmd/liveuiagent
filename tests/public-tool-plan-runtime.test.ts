@@ -1,3 +1,4 @@
+import {actionDeadlineAt,withActionDeadline} from '../server/action-deadline.js';
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';import http from 'node:http';import Database from 'better-sqlite3';
 import {createLiveUIRuntime,readServiceDocumentDeterministically} from '../server/liveuiagent.js';
 async function runtimeFixture(t:any){
@@ -27,10 +28,10 @@ test('actual Native runtime zero-model GET cache survives reopen; failed require
  const permissions=['storage.app','tool.web.fetch'];pkg.manifest.permissions=permissions;
  const action=pkg.actions.actions['refresh.run'];action.permissions=permissions;action.executionMode='public_tool_plan';action.publicToolPlan={steps:[{id:'page',toolId:'tool.web.fetch',args:{url:{field:'slot_1'}}}],outputs:[{step:'page',title:'Retrieved webpage',titlePointer:'/title',detailPointers:['/excerpt']}]};
  f.db.prepare('UPDATE agent_apps SET package_json=? WHERE app_id=?').run(JSON.stringify(pkg),'parcels');
- const original=globalThis.fetch;let calls=0,models=0;
- globalThis.fetch=(async(url:any,init:any)=>{if(String(url)==='https://example.com/public'){calls++;return new Response('<html><title>Actual public page title</title><body>Observed source content</body></html>',{status:200});}return original(url,init);})as any;t.after(()=>{globalThis.fetch=original;});
+ const original=globalThis.fetch;let calls=0,models=0;let delay=0;let observedDeadline=0;
+ globalThis.fetch=(async(url:any,init:any)=>{if(String(url)==='https://example.com/public'){calls++;observedDeadline=actionDeadlineAt()!;if(delay)await new Promise(r=>setTimeout(r,delay));return new Response('<html><title>Actual public page title</title><body>Observed source content</body></html>',{status:200});}return original(url,init);})as any;t.after(()=>{globalThis.fetch=original;});
  const invoke=(url:string)=>f.runtime.action({appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{slot_1:url},llm:{model:'fixture',chatCompletion:async()=>{models++;throw Error('NO MODEL');}}}as any);
- const result:any=await invoke('https://example.com/public');assert.equal(models,0);assert.equal(calls,1);assert.equal(result.workflowExecution.providerCalls,0);assert.equal(result.workflowExecution.committed,true);
+ const result:any=await invoke('https://example.com/public');assert.equal(models,0);assert.equal(calls,1);assert.ok(observedDeadline>Date.now()&&observedDeadline<=Date.now()+120000);assert.equal(result.workflowExecution.providerCalls,0);assert.equal(result.workflowExecution.committed,true);
  const opened:any=await f.runtime.queryState({user:'fixture-owner'});const entities=opened.apps[0].appPackage.ui.meta.a2ui.initialData.entities;assert.equal(entities[0].name,'Actual public page title');assert.match(entities[0].detail,/Observed source content/);assert.match(entities[0].detail,/Retrieved:/);
- const before=f.stored().runtime_state_json;await assert.rejects(invoke('http://127.0.0.1/private'),/private/);assert.equal(f.stored().runtime_state_json,before);assert.equal(calls,1);assert.equal(models,0);
+ const before=f.stored().runtime_state_json;await assert.rejects(invoke('http://127.0.0.1/private'),/private/);assert.equal(f.stored().runtime_state_json,before);assert.equal(calls,1);assert.equal(models,0);delay=30;await assert.rejects(withActionDeadline(Date.now()+10,()=>invoke('https://example.com/public')),/deadline/);assert.equal(f.stored().runtime_state_json,before);
 });

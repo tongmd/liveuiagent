@@ -7228,6 +7228,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
 
       const rawPayload = extractPayload(input.eventPayload);
       if (action.executionMode === 'public_tool_plan') {
+        return withActionDeadline(Date.now()+120000,async()=>{
         if (!stored.owner || stored.owner !== String(input.user || '').trim()) throw httpError('Public tool plans require the exact owned app',403);
         const manifestPermissions = requiredArray<unknown>(stored.appPackage.manifest.permissions,'missing manifest permissions').map(String);
         if (!permissions.includes('storage.app') || !manifestPermissions.includes('storage.app')) throw httpError('Public tool plans require app GUI storage permission',403);
@@ -7241,10 +7242,10 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         stored.data[collection]=[record,...requiredArray<Record<string,unknown>>(stored.data[collection],'missing records')];
         stored.runtimeState={...stored.runtimeState,entities:result.entities,entityStats:[],lastAction:actionId,lastActionAt:now,lastActionLabel:actionId,lastActionPayload:{...rawPayload,toolResults},lastVisibleResult:message,lastVisibleSummary:result.summary,intentResult:{title:String(action.label||'Public sources'),subtitle:message,value:message,sections:[],bullets:[result.summary]},recentActions:[{actionId,label:String(action.label||actionId),message,at:now,atText:now.slice(5,16).replace('T',' ')},...(Array.isArray(stored.runtimeState.recentActions)?stored.runtimeState.recentActions:[]).slice(0,8)]};
         delete stored.runtimeState.serviceDocument;
-        if(Date.now()>=result.deadlineAt)throw actionDeadlineError();
         remainingActionMs();
-        db.transaction(()=>{if(Date.now()>=result.deadlineAt)throw actionDeadlineError();remainingActionMs();saveStoredApp(db,options.registryRoot,stored);saveAudit(db,input.appId,actionId,input.eventPayload,permissions,{mode:'public-tool-plan',providerCalls:0,committed:true,partial:result.partial,toolResults});})();
+        db.transaction(()=>{remainingActionMs();saveStoredApp(db,options.registryRoot,stored);saveAudit(db,input.appId,actionId,input.eventPayload,permissions,{mode:'public-tool-plan',providerCalls:0,committed:true,partial:result.partial,toolResults});})();
         return {statePatch:{target:'app.runtimeState',op:'replace',path:'/',value:stored.runtimeState},dataPatch:{target:`app.data.${collection}`,op:'replace',path:'/',value:stored.data[collection]},toolResults,workflowExecution:{executionId:randomUUID(),status:'completed',mode:'public-tool-plan',providerCalls:0,committed:true,partial:result.partial,steps:result.receipts},appPackage:stored.appPackage,appData:stored.data,runtimeState:stored.runtimeState,messages:[message],trace:traceLog};
+        });
       }
       if (action.executionMode === 'read_document') {
         if (!stored.owner || stored.owner !== String(input.user || '').trim()) throw httpError('Document reading requires the exact owned app', 403);
