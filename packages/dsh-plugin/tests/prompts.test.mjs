@@ -74,6 +74,9 @@ test('a plain experience request receives internal design and SDK contracts with
     assert.match(task, /complete state required to recreate the current view/);
     assert.match(task, /Never silently evict the oldest photo or record/);
     assert.match(task, /bounded structured component tree/);
+    assert.match(task, /a new AI response, restored storage, history selection/);
+    assert.match(task, /Use one guarded renderer for all paths/);
+    assert.match(task, /normalize presentation at render time instead of deleting stored content/);
     assert.match(task, /Do not promise VLM image analysis unless a real vision tool is supplied/);
   }
   const connected = buildTask({ prompt: plain, mode: 'generate', memory: {}, context: { connectedServices: services } });
