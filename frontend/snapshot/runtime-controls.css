@@ -145,3 +145,29 @@ body:has(.liveui-composer) .personal-space-button{background:#fff!important;bord
 .app-sheet:not(.complete-sheet) .a2ui-action .a2ui-text{color:inherit!important;font-size:14px!important;font-weight:500!important}
 
 @media(min-width:901px){.app-sheet:not(.complete-sheet) .a2ui-column:has(>.a2ui-list~.a2ui-list){display:flex!important;flex-direction:column!important}}
+
+/* Only the 742 research workbench opts into this layout via its unique button. */
+.app-sheet:has([data-a2ui-component-id="d_delete742"]) .a2ui-row:has(> .a2ui-column > .a2ui-row > [data-a2ui-component-id="d_delete742"]) {
+  display:grid!important;
+  grid-template-columns:minmax(0,.95fr) minmax(0,1.2fr)!important;
+  align-items:start!important;
+  gap:28px!important;
+  width:100%;
+  min-width:0;
+}
+.app-sheet:has([data-a2ui-component-id="d_delete742"]) .a2ui-row:has(> .a2ui-column > .a2ui-row > [data-a2ui-component-id="d_delete742"]) > .a2ui-column {
+  min-width:0!important;
+  width:100%!important;
+  max-width:100%!important;
+}
+.app-sheet:has([data-a2ui-component-id="d_delete742"]) .a2ui-text.body {
+  white-space:pre-wrap;
+  overflow-wrap:anywhere;
+  line-height:1.65;
+}
+@media(max-width:680px) {
+  .app-sheet:has([data-a2ui-component-id="d_delete742"]) .a2ui-row:has(> .a2ui-column > .a2ui-row > [data-a2ui-component-id="d_delete742"]) {
+    grid-template-columns:minmax(0,1fr)!important;
+    gap:22px!important;
+  }
+}
