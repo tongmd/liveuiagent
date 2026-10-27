@@ -58,3 +58,38 @@ test('actual runtime opt-in commits full document, preserves rows, reopens, and 
  const before=f.stored().runtime_state_json;await assert.rejects(runtime.action({appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{entityId:'999'}}),/exact current/);assert.equal(f.stored().runtime_state_json,before);assert.equal(gets,1);
  delete pkg.actions.actions['refresh.run'].executionMode;f.db.prepare('UPDATE agent_apps SET package_json=? WHERE app_id=?').run(JSON.stringify(pkg),'parcels');await assert.rejects(invoke(),/MODEL MUST NOT RUN/);assert.ok(models>0);assert.equal(gets,1,'non-opt-in follows original model workflow rather than fastpath');
 });
+
+test('actual five-role runtime treats static persistence handoff as staged GUI cache without a business write',async t=>{
+ const f=await runtimeFixture(t);const row:any=f.db.prepare('SELECT * FROM agent_apps WHERE app_id=?').get('parcels');const pkg=JSON.parse(row.package_json);
+ const oldEdge={from:'agents.app',to:'agents.data',payload:'records to persist for the app',reason:'Persist structured state for reopen and later interactions.'};
+ const route=pkg.orchestration.routes[0];route.handoffs[2]=oldEdge;const action=pkg.actions.actions['refresh.run'];action.handoffs=route.handoffs;action.label='Compare';action.description='Read public repository information and display a comparison. Saving a business note is a separate action.';action.permissions=['storage.app','llm.call','tool.github.search'];
+ pkg.manifest.intent.sourcePrompt='Compare actual public repository information without saving a business note.';f.db.prepare('UPDATE agent_apps SET package_json=? WHERE app_id=?').run(JSON.stringify(pkg),'parcels');
+ const priorState=f.stored().runtime_state_json;const originalFetch=globalThis.fetch;let publicReads=0,businessWrites=0,groundingSteps=0,workerPlans=0,reviews=0;
+ globalThis.fetch=async(input:any,init:any)=>{
+  if(String(input).startsWith('https://api.github.com/search/repositories?')){publicReads++;return new Response(JSON.stringify({items:[{full_name:'fixture/repository',html_url:'https://github.com/fixture/repository',description:'Actual retrieved comparison evidence',stargazers_count:7,license:{spdx_id:'MIT'}}]}));}
+  if(init?.method&&!['GET','HEAD'].includes(String(init.method).toUpperCase()))businessWrites++;
+  return originalFetch(input,init);
+ };t.after(()=>{globalThis.fetch=originalFetch;});
+ const reply=(value:any)=>({choices:[{message:{content:JSON.stringify(value)}}]});
+ const model=async(request:any)=>{
+  const sys=request.messages[0].content;const input=JSON.parse(request.messages[1].content.split('\n')[0]);
+  if(input.assignedWorker&&sys.includes('one worker in a native application')){
+   workerPlans++;assert.match(sys,/Static route handoff metadata/);assert.equal(input.context.originalRequest.currentAction.label,'Compare');assert.deepEqual(input.context.permissions,['storage.app','llm.call','tool.github.search']);
+   if(input.assignedWorker.id==='agents.data'){assert.deepEqual(input.incomingHandoff,oldEdge);assert.match(sys,/host still stages that cache until independent review/);assert.match(sys,/do not reinterpret a concrete forbidden mutation as cache/);}
+   return reply({proceed:true,instructions:'Prepare actual retrieved results for staged GUI display only.',constraints:['No external or app-local business writes'],expectedOutcome:'Visible comparison from actual public evidence'});
+  }
+  if(sys.includes('You analyze a GUI'))return reply({objective:'Compare public repository evidence',deliverables:['Actual public repository result'],projectionPolicy:'replace_or_filter'});
+  if(sys.includes('You are an INDEPENDENT evaluator'))return reply({pass:true,deficiencies:[]});
+  if(sys.includes('independently verify a native app execution')){reviews++;assert.equal(input.outcome.persistencePending,true);assert.ok(input.outcome.proposedRecords.length>1);assert.ok(Object.keys(input.outcome.toolResults).some(key=>key.startsWith('public-tool#')));return reply({pass:true,reason:'Public read evidence and staged GUI result satisfy Compare; no business save claimed'});}
+  return ++groundingSteps===1?reply({calls:[{api:'github_search_repositories',args:{query:'agent research'}}]}):reply({done:true,summary:'Found fixture/repository, MIT, 7 stars',entities:[{name:'fixture/repository',id:'https://github.com/fixture/repository',detail:'MIT; 7 stars'}],stats:[{label:'Repositories',value:'1'}]});
+ };
+ const invoke=(chatCompletion=model)=>f.runtime.action({appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{subject:'agent research',scope:'Public',filter:'All'},llm:{model:'fixture-only',chatCompletion}}as any);
+ const result:any=await invoke();
+ assert.equal(workerPlans,5);assert.equal(reviews,1);assert.equal(publicReads,1);assert.equal(businessWrites,0);assert.equal(result.workflowExecution.status,'completed');assert.notEqual(f.stored().runtime_state_json,priorState);
+ const stored:any=f.db.prepare('SELECT data_json FROM agent_apps WHERE app_id=?').get('parcels');assert.equal(JSON.parse(stored.data_json).records.length,2,'Host commits its staged turn history after review');
+ const localTable=f.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='native_app_records'").get();if(localTable)assert.equal((f.db.prepare('SELECT COUNT(*) AS n FROM native_app_records').get()as any).n,0,'No app-local business records were created');
+ const reopened=await f.runtime.queryState({user:'fixture-owner'});assert.equal(reopened.apps[0].runtimeState.entities[0].name,'fixture/repository');
+ const verified=f.stored().runtime_state_json;const savedData=(f.db.prepare('SELECT data_json FROM agent_apps WHERE app_id=?').get('parcels')as any).data_json;groundingSteps=0;
+ await assert.rejects(invoke(async(request:any)=>request.messages[0].content.includes('independently verify a native app execution')?reply({pass:false,reason:'A business save was claimed without actual external write evidence'}):model(request)),/business save was claimed/);
+ assert.equal(f.stored().runtime_state_json,verified,'Independent review refusal still prevents the staged GUI commit');assert.equal((f.db.prepare('SELECT data_json FROM agent_apps WHERE app_id=?').get('parcels')as any).data_json,savedData);assert.equal(businessWrites,0);
+});
