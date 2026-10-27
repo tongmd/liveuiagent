@@ -1175,7 +1175,12 @@ function deriveFieldsFromPrompt(prompt: string, subject: string, tokens: string[
   return dedupeFieldNames([...internalFields, ...businessFields]);
 }
 
-function deriveToolCapabilities(prompt: string, tokens: string[]): ToolCapability[] {
+export function selectDeclaredAppWorldCapabilities<T extends { source: string; appName?: string }>(capabilities: T[], selectedServices: ReadonlySet<string>): T[] {
+  return capabilities.filter(tool => tool.source === 'appworld' &&
+    (selectedServices.has(String(tool.appName || '')) || (tool.appName === '__meta__' && selectedServices.size > 0)));
+}
+
+export function deriveToolCapabilities(prompt: string, tokens: string[]): ToolCapability[] {
   const text = `${prompt} ${tokens.join(' ')}`.toLowerCase();
   const capabilities: ToolCapability[] = [];
   // 公网工具能力由注册表派生:web-tools.ts 加一项(id/label/purpose/keywords)即可
@@ -1191,15 +1196,9 @@ function deriveToolCapabilities(prompt: string, tokens: string[]): ToolCapabilit
       });
     }
   }
-  if (/mcp|工具|tool|插件|外部服务|api/.test(text)) {
-    capabilities.push({
-      id: 'tool.mcp.call',
-      label: 'MCP Tool Call',
-      purpose: 'Call a declared MCP tool through the LiveUIAgent tool gateway.',
-      permission: 'tool.mcp.call',
-      source: 'prompt',
-    });
-  }
+  // Natural-language mentions (including negation) are not connector grants.
+  // Only configured, explicitly selected service capabilities below may add
+  // executable external permissions; keyless web tools retain their registry.
   return uniqueStrings(capabilities.map((item) => item.id)).map((id) => {
     const capability = capabilities.find((item) => item.id === id);
     if (!capability) throw new Error(`tool capability disappeared: ${id}`);
@@ -2304,9 +2303,7 @@ export async function planAgentApp(prompt: string, llm?: LlmRuntimeConfig, appWo
   // 域接线来自 Business Slot Agent 的 services 决策(案例:晚宴歌单曾被关键词
   // 正则接到 amazon、收租应用一个 venmo API 都没接上 —— 关键词匹配已删)。
   const relevantAppWorldApps = new Set(slotDesign.services);
-  const appWorldToolCapabilities = allAppWorldCapabilities.filter(
-    (tool) => tool.source === 'appworld' && (tool.appName === '__meta__' || relevantAppWorldApps.has(tool.appName)),
-  );
+  const appWorldToolCapabilities = selectDeclaredAppWorldCapabilities(allAppWorldCapabilities, relevantAppWorldApps);
   const toolCapabilities = uniqueStrings([
     ...promptToolCapabilities.map((tool) => tool.id),
     ...appWorldToolCapabilities.map((tool) => tool.id),
