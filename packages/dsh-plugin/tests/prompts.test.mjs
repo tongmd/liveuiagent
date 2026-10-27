@@ -77,6 +77,9 @@ test('a plain experience request receives internal design and SDK contracts with
     assert.match(task, /a new AI response, restored storage, history selection/);
     assert.match(task, /Use one guarded renderer for all paths/);
     assert.match(task, /normalize presentation at render time instead of deleting stored content/);
+    assert.match(task, /same layout rules to fresh and restored trees/);
+    assert.match(task, /short text cards use intrinsic height/);
+    assert.match(task, /Do not blindly map every sibling node to equal-width columns/);
     assert.match(task, /Do not promise VLM image analysis unless a real vision tool is supplied/);
   }
   const connected = buildTask({ prompt: plain, mode: 'generate', memory: {}, context: { connectedServices: services } });
