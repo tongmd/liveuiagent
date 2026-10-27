@@ -1,4 +1,61 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+
+/** Factor only repeated exact JSON-wire values. Unique facts, failures, historical
+ * turns and complete SQL snapshots remain present, with reversible references. */
+export function projectNativeReviewOutcome(outcome: Record<string, unknown>): Record<string, unknown> {
+  const originalWire = JSON.stringify(outcome);
+  const original = JSON.parse(originalWire);
+  const counts = new Map<string, number>();
+  let collision = false;
+  function scan(value: any) {
+    if (!value || typeof value !== 'object') return;
+    if (Object.hasOwn(value, '$nativeReviewRef') || Object.hasOwn(value, 'reviewContextReferences') || Object.hasOwn(value, 'reviewContextEncoding')) collision = true;
+    const wire = JSON.stringify(value);
+    if (wire.length >= 1024) counts.set(wire, (counts.get(wire) || 0) + 1);
+    for (const child of Object.values(value)) scan(child);
+  }
+  scan(original);
+  if (collision) return outcome;
+  const references: Record<string, any> = {};
+  const assigned = new Map<string, string>();
+  function encode(value: any): any {
+    if (!value || typeof value !== 'object') return value;
+    const wire = JSON.stringify(value);
+    if ((counts.get(wire) || 0) > 1) {
+      const known = assigned.get(wire);
+      if (known) return { $nativeReviewRef: known };
+      const id = `r${assigned.size}`; assigned.set(wire, id);
+      references[id] = Array.isArray(value) ? value.map(encode) : Object.fromEntries(Object.entries(value).map(([key, child]) => [key, encode(child)]));
+      return { $nativeReviewRef: id };
+    }
+    return Array.isArray(value) ? value.map(encode) : Object.fromEntries(Object.entries(value).map(([key, child]) => [key, encode(child)]));
+  }
+  const encoded = encode(original);
+  if (!Object.keys(references).length) return outcome;
+  const projected = { ...encoded, reviewContextReferences: references, reviewContextEncoding: {
+    version: 1, instruction: 'Every object {$nativeReviewRef:"rN"} means the COMPLETE exact JSON value at reviewContextReferences.rN. Resolve references recursively. This is lossless structural sharing, not missing evidence, truncation, a plan, or new authorization. All original facts and failures remain unchanged.',
+    originalWireSha256: createHash('sha256').update(originalWire).digest('hex'),
+  } };
+  return Buffer.byteLength(JSON.stringify(projected)) < Buffer.byteLength(originalWire) ? projected : outcome;
+}
+
+export function restoreNativeReviewOutcome(projected: Record<string, any>): Record<string, unknown> {
+  if (!projected.reviewContextEncoding) return projected;
+  const definitions = projected.reviewContextReferences;
+  function decode(value: any, ancestors = new Set<string>()): any {
+    if (!value || typeof value !== 'object') return value;
+    if (Object.hasOwn(value, '$nativeReviewRef')) {
+      const id = value.$nativeReviewRef;
+      if (Object.keys(value).length !== 1 || !Object.hasOwn(definitions, id) || ancestors.has(id)) throw new Error('Invalid native review context reference');
+      return decode(definitions[id], new Set([...ancestors, id]));
+    }
+    return Array.isArray(value) ? value.map(x => decode(x, ancestors)) : Object.fromEntries(Object.entries(value).map(([key, child]) => [key, decode(child, ancestors)]));
+  }
+  const { reviewContextEncoding: encoding, reviewContextReferences: _, ...payload } = projected;
+  const restored = decode(payload);
+  if (createHash('sha256').update(JSON.stringify(restored)).digest('hex') !== encoding.originalWireSha256) throw new Error('Native review context SHA mismatch');
+  return restored;
+}
 
 export type WorkflowNode = { id: string; role?: string; name?: string; purpose?: string; model?: string; inputs?: unknown; outputs?: unknown; stateReads?: unknown; stateWrites?: unknown };
 export type WorkflowRecord = { executionId: string; appId: string; owner: string; actionId: string; stage: string; nodeId: string; status: 'running' | 'ok' | 'failed'; input?: unknown; output?: unknown; at: string; startedAt?: string; finishedAt?: string };
@@ -119,7 +176,7 @@ export class NativeWorkflow {
   }
   async review(outcome: Record<string, unknown>) {
     const node: WorkflowNode = { id: 'agents.result-reviewer', role: 'Independent result verifier', purpose: 'Check actual observed results against the original request and worker contracts. Never infer success from a plan or hide failed tools.' };
-    const projectedOutcome = Object.hasOwn(outcome, 'proposedRuntimeState') ? projectNativeRoleContext(outcome, 'proposedRuntimeState') : outcome;
+    const projectedOutcome = projectNativeReviewOutcome(Object.hasOwn(outcome, 'proposedRuntimeState') ? projectNativeRoleContext(outcome, 'proposedRuntimeState') : outcome);
     const input = { modelInvocationId: randomUUID(), model: this.nodes[0]?.model, outcome: projectedOutcome, workerContracts: this.handoffs };
     this.record('review', node.id, 'running', input);
     try {
