@@ -1180,13 +1180,19 @@ export function selectDeclaredAppWorldCapabilities<T extends { source: string; a
     (selectedServices.has(String(tool.appName || '')) || (tool.appName === '__meta__' && selectedServices.size > 0)));
 }
 
+export function isWebCapabilityDenied(sourcePrompt: string, capability: string): boolean {
+  if (capability !== 'tool.web.search' && capability !== 'tool.web.fetch') return false;
+  // Explicit user prohibition is a host capability boundary, including old apps.
+  return /(?:不(?:要|得|允许|需要)?|禁止|无需)\s*(?:抓(?:取)?|浏览|访问|搜索|检索|打开)\s*(?:网页|网站|互联网|网络)|(?:不要|禁止|无需|不)\s*联网|\b(?:do not|don't|never|no)\s+(?:browse|search|fetch|access|use)(?:\s+the)?\s+(?:web|internet|websites?|webpages?)\b/i.test(sourcePrompt);
+}
+
 export function deriveToolCapabilities(prompt: string, tokens: string[]): ToolCapability[] {
   const text = `${prompt} ${tokens.join(' ')}`.toLowerCase();
   const capabilities: ToolCapability[] = [];
   // 公网工具能力由注册表派生:web-tools.ts 加一项(id/label/purpose/keywords)即可
   // 被生成期编排感知,无需再改这里。
   for (const tool of webToolRegistry) {
-    if (tool.keywords.test(text)) {
+    if (tool.keywords.test(text) && !isWebCapabilityDenied(prompt, tool.id)) {
       capabilities.push({
         id: tool.id,
         label: tool.label,
@@ -6644,7 +6650,7 @@ export async function designAppPreview(input: {
   throw httpError(`Preview Designer Agent failed to produce a valid preview after ${designAttempts()} attempt(s)`, 502);
 }
 
-export async function runActionTools(action: Record<string, any>, payload: Record<string, unknown>, appWorldBridge?: AppWorldBridge | null) {
+export async function runActionTools(action: Record<string, any>, payload: Record<string, unknown>, appWorldBridge?: AppWorldBridge | null, sourcePrompt = '') {
   const steps = actionToolSteps(action);
   const results: Record<string, unknown> = {};
   // These explicit AppWorld/MCP steps and web prefetches otherwise execute
@@ -6667,6 +6673,7 @@ export async function runActionTools(action: Record<string, any>, payload: Recor
     // 公网工具预取失败 = 跳过这个预取,不杀整回合:表单里没有 URL/城市/币种是常态
     // ("标记已读"回合没有链接字段),回合的真正工作在 grounding/local agent。
     // AppWorld/MCP已交给单点grounding执行器，不在这里执行。
+    if (isWebCapabilityDenied(sourcePrompt, String(step.capability))) continue;
     if (findWebTool(String(step.capability))) {
       try {
         results[String(step.capability)] = await runToolStep(step, payload, appWorldBridge);
@@ -7090,7 +7097,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       if (!action) throw httpError(`action not found: ${actionId}`, 404);
       assertToolGatewayReady(action, actionId, appWorldBridge);
       const traceLog: AgentTrace[] = [];
-      const permissions: string[] = requiredArray<unknown>(action.permissions, `action ${actionId} missing permissions`).map(String);
+      const permissions: string[] = requiredArray<unknown>(action.permissions, `action ${actionId} missing permissions`).map(String)
+        .filter(permission => !isWebCapabilityDenied(String(stored.appPackage.manifest.intent?.sourcePrompt || ''), permission));
       const rejectedPermissions = permissions.filter((permission) => !isAllowedPermission(permission));
       const safety = trace(traceLog, 'Safety Agent', 'Authorize app-scoped turn', { appId: input.appId, actionId, permissions }, {
         ok: rejectedPermissions.length === 0,
@@ -7144,7 +7152,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       nativeExecutionStarted = true;
       nativeWorkflow.record('execute', 'agents.executor', 'running', { originalRequest: rawPayload });
       remainingActionMs();
-      const toolResults = await runActionTools(action, rawPayload, appWorldBridge);
+      const toolResults = await runActionTools(action, rawPayload, appWorldBridge, String(stored.appPackage.manifest.intent?.sourcePrompt || ''));
       remainingActionMs();
       // 跨回合记忆:近 2 轮全量(输入+实体+统计)、更早压缩 —— "换一批"必须知道
       // 上一批推荐了什么,"继续"必须知道进行到哪(此前 agent_workflow_turns 只写不读)。
