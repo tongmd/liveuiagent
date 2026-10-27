@@ -100,3 +100,9 @@ body:has(.liveui-composer) .history-panel{background:#fff!important;opacity:1!im
 .concept-material.studio-shell .app-sheet .a2ui-host .a2ui-list .a2ui-badge{
   flex:0 1 auto;max-width:100%;white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere;
 }
+
+/* Native applications use a readable desktop workspace instead of a phone frame. */
+.concept-material.studio-shell .app-sheet:not(.complete-sheet){animation:none!important;filter:none!important;clip-path:none!important}
+@media(min-width:701px){.concept-material.studio-shell .app-sheet:not(.complete-sheet){width:min(720px,calc(100vw - 48px))!important;height:calc(100dvh - 64px)!important;max-height:calc(100dvh - 64px)!important}}
+.concept-material.studio-shell .app-sheet:not(.complete-sheet) .a2ui-host{font-size:15px;line-height:1.5}
+.concept-material.studio-shell .app-sheet:not(.complete-sheet) .a2ui-host input,.concept-material.studio-shell .app-sheet:not(.complete-sheet) .a2ui-host textarea{font-size:16px!important;min-height:44px}
