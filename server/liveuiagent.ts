@@ -2964,7 +2964,7 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
         return stateOptions.find((option) => option.value === raw)?.label || raw;
       })(),
       nextStep: requiredText(latest.nextStep, `A2UI state for ${plan.signature} missing draft nextStep`, 180),
-      result: requiredText(latest.result, `A2UI state for ${plan.signature} missing draft result`, 1200),
+      result: serviceDocumentText(stored.runtimeState) ?? requiredText(latest.result, `A2UI state for ${plan.signature} missing draft result`, 1200),
       slots: Object.fromEntries(plan.interaction.businessFields.map((field) => [
         field.name,
         latest[field.name] === undefined || latest[field.name] === null ? '' : String(latest[field.name]),
@@ -4812,7 +4812,7 @@ function buildWorkflowState(stored: StoredApp): Record<string, unknown> {
       context: requiredText(draft.context, `app ${stored.appId} workflow draft missing context`, 1200),
       state: requiredText(draft.state, `app ${stored.appId} workflow draft missing state`, 80),
       nextStep: requiredText(draft.nextStep, `app ${stored.appId} workflow draft missing nextStep`, 180),
-      result: requiredText(draft.result, `app ${stored.appId} workflow draft missing result`, 1200),
+      result: serviceDocumentText(stored.runtimeState) ?? requiredText(draft.result, `app ${stored.appId} workflow draft missing result`, 1200),
       slots: Object.fromEntries(businessFields.map((field) => [
         field.name,
         draft[field.name] === undefined || draft[field.name] === null ? '' : String(draft[field.name]),
@@ -5503,7 +5503,7 @@ function requireActionRoute(action: Record<string, any>, actionId: string): {
   };
 }
 
-function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Record<string, unknown>, authoritativeEntities = false) {
+function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Record<string, unknown>, authoritativeEntities = false, serviceDocument?: ServiceDocumentProjection) {
   const manifest = stored.appPackage.manifest;
   const sourcePrompt = requiredText(stored.runtimeState.sourcePrompt, `stored app ${stored.appId} missing source prompt`, 1200);
   const subject = requiredText(stored.runtimeState.subject, `stored app ${stored.appId} missing subject`, 80);
@@ -5525,7 +5525,7 @@ function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Reco
   const secondaryValue = businessValues[interaction.secondaryFieldName] || businessPayloadSummary(interaction, businessValues, 4) || entityTarget;
   const stateValue = requiredText((typeof payload.state === 'string' && payload.state.trim()) || "In progress", 'payload missing state', 80);
   const nextStepValue = requiredText((typeof payload.nextStep === 'string' && payload.nextStep.trim()) || "Continue to the next step", 'payload missing nextStep', 180);
-  const resultValue = requiredText((typeof payload.result === 'string' && payload.result.trim()) || businessPayloadSummary(interaction, businessValues, 6), 'payload missing result', 1200);
+  const resultValue = serviceDocument ? Array.from(serviceDocument.title || 'Service document').slice(0,1000).join('') : requiredText((typeof payload.result === 'string' && payload.result.trim()) || businessPayloadSummary(interaction, businessValues, 6), 'payload missing result', 1200);
   const toolResults = payload.toolResults && typeof payload.toolResults === 'object' && !Array.isArray(payload.toolResults)
     ? payload.toolResults as Record<string, unknown>
     : {};
@@ -5542,6 +5542,7 @@ function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Reco
     state: String(stateValue),
     nextStep: String(nextStepValue),
     result: String(resultValue),
+    ...(serviceDocument ? { serviceDocumentReference: { permission:serviceDocument.permission, entityId:serviceDocument.entityId, contentSha256:serviceDocument.contentSha256, historyResultIsTitleOnly:true } } : {}),
     ...businessValues,
     ...(Object.keys(toolResults).length ? { toolResults } : {}),
     focus: interaction.focus,
@@ -6650,6 +6651,65 @@ export async function designAppPreview(input: {
   throw httpError(`Preview Designer Agent failed to produce a valid preview after ${designAttempts()} attempt(s)`, 502);
 }
 
+export type ServiceDocumentProjection = { source: 'host-current-successful-get'; permission: string; identityArgument: string; entityId: string; content: string; contentSha256: string; title?: string };
+function documentIdentity(value: unknown): string | undefined {
+  return typeof value==='string'&&value.length>0 ? value : typeof value==='number'&&Number.isFinite(value) ? String(value) : undefined;
+}
+function documentPointer(value: unknown, pointer: string): unknown {
+  if (!pointer.startsWith('/') || pointer.length > 240) throw new Error('Invalid service document response path');
+  let cursor: any = value;
+  for (const raw of pointer.slice(1).split('/')) {
+    if (/~(?![01])/u.test(raw)) throw new Error('Invalid service document pointer escape');
+    const key = raw.replace(/~1/g, '/').replace(/~0/g, '~');
+    if (['__proto__','prototype','constructor'].includes(key) || !cursor || typeof cursor !== 'object' || !Object.hasOwn(cursor,key)) throw new Error('Service document response path is missing');
+    cursor = cursor[key];
+  }
+  return cursor;
+}
+export function serviceDocumentPermissions(action: Record<string, any>, permissions: string[]): string[] {
+  if(action.documentBinding===undefined)return permissions;
+  // Restriction only: a document-bound action cannot gain or dispatch writes.
+  return permissions.filter(permission=>permission!=='app_state.write'&&(!permission.startsWith('tool.')||permission==='tool.appworld.db.snapshot'||(permission.startsWith('tool.appworld.')&&permission.endsWith('_get'))));
+}
+export function resolveServiceDocument(action: Record<string, any>, permissions: string[], payload: Record<string, unknown>, currentCalls: unknown[]): ServiceDocumentProjection | undefined {
+  if (action.documentBinding === undefined) return undefined;
+  const binding=action.documentBinding;
+  if (!binding || typeof binding !== 'object' || Array.isArray(binding) || Object.keys(binding).some(key=>!['permission','responsePath','identityArgument','titlePath'].includes(key))) throw new Error('Invalid read-only document binding');
+  if (typeof binding.permission!=='string' || !permissions.includes(binding.permission) || !binding.permission.startsWith('tool.appworld.') || typeof binding.identityArgument!=='string' || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(binding.identityArgument) || typeof binding.responsePath!=='string') throw new Error('Document binding requires its existing permission and exact identity argument');
+  const entityId=Object.hasOwn(payload,'entityId')?documentIdentity(payload.entityId):undefined;
+  if(!entityId) throw new Error('Document binding requires an exact current UI entity target');
+  const calls=currentCalls.filter(call=>call&&typeof call==='object') as Record<string,any>[];
+  if(calls.some(call=>call.tool?.source==='appworld'&&String(call.tool.method).toUpperCase()!=='GET') || calls.some(call=>call.source==='app-state'&&call.ok===true&&!['read_record','list_records','list_all_records'].includes(String(call.api)))) throw new Error('Read-only document projection cannot consume a turn containing business mutations');
+  const matches=calls.filter(call=>call.tool?.source==='appworld'&&String(call.tool.method).toUpperCase()==='GET'&&call.tool.permission===binding.permission&&call.tool.id===binding.permission&&call.request&&typeof call.request==='object'&&Object.hasOwn(call.request,binding.identityArgument)&&documentIdentity(call.request[binding.identityArgument])===entityId&&call.response&&typeof call.response==='object'&&Object.hasOwn(call.response,binding.identityArgument)&&documentIdentity(call.response[binding.identityArgument])===entityId&&!Object.hasOwn(call,'error')&&call.ok!==false);
+  if(!matches.length) throw new Error('No successful current GET matches the document permission and exact target');
+  const response=matches[matches.length-1].response;
+  const content=documentPointer(response,binding.responsePath);
+  if(typeof content!=='string' || Buffer.byteLength(content)>262144) throw new Error('Service document body must be a complete string within the host display limit');
+  const titlePath=binding.titlePath===undefined?'/title':binding.titlePath;
+  if(typeof titlePath!=='string')throw new Error('Invalid document title path');
+  const title=documentPointer(response,titlePath);
+  if(typeof title!=='string') throw new Error('Service document title must come from the same successful response');
+  return {source:'host-current-successful-get',permission:binding.permission,identityArgument:binding.identityArgument,entityId,content,contentSha256:createHash('sha256').update(content).digest('hex'),title};
+}
+export function serviceDocumentText(runtimeState: Record<string, any>): string | undefined {
+  const document=runtimeState.serviceDocument;
+  if(document===undefined)return undefined;
+  if(!document||document.source!=='host-current-successful-get'||typeof document.content!=='string'||Buffer.byteLength(document.content)>262144||createHash('sha256').update(document.content).digest('hex')!==document.contentSha256)throw new Error('Stored service document projection is corrupt');
+  return document.content;
+}
+export function projectDocumentEntity(document: ServiceDocumentProjection, entities: Record<string, unknown>[]): Record<string, unknown>[] {
+  const excerpt=Array.from(document.content).slice(0,120).join('');
+  return entities.map(entity=>String(entity.id??'')===document.entityId?{...entity,name:document.title,detail:excerpt+(Array.from(document.content).length>120?'…':'')}:entity);
+}
+
+export function applyServiceDocumentProjection(runtimeState: Record<string, any>, document: ServiceDocumentProjection | undefined, previousEntities: Record<string, unknown>[] = []) {
+  if (!document) { delete runtimeState.serviceDocument; return; }
+  runtimeState.serviceDocument = document;
+  const current = Array.isArray(runtimeState.entities) ? runtimeState.entities as Record<string,unknown>[] : [];
+  const preserved = [...current, ...previousEntities.filter(prior => !current.some(entity => (String(entity.id ?? '') && String(entity.id ?? '') === String(prior.id ?? '')) || (!entity.id && !prior.id && String(entity.name ?? '') === String(prior.name ?? ''))))];
+  runtimeState.entities = projectDocumentEntity(document, preserved);
+}
+
 export const NATIVE_CURRENT_ACTION_SCOPE_POLICY = 'The host-supplied originalRequest.currentAction is the actual action clicked for THIS turn; its id, label, description and uiEvent define the current operation. The enclosing app purpose, generated agent purposes, old instructions and historical turns are background, not authorization to perform another operation. A view/read action must only retrieve and display existing service/business data; do not generate new business content or append, update or delete connected-service or business records because the app supports those separately. Read-only restricts business effects, not the host GUI cache: with the already granted storage.app permission, deriving display fields, selecting a record, and saving GUI-only display/selection/history state from actual reads is allowed. The host UI-cache commit is not a connected-service write and does not grant any AppWorld mutation or app_state.write permission; do not create or modify app-local business records under this allowance. Preserve explicit user event values and enforce the unchanged current action permissions. If an upstream worker contract conflicts with the current clicked action, report that conflict instead of executing the conflicting operation. ';
 export function currentNativeActionRequest(actionId: string, action: Record<string, any>, uiEvent: unknown) {
   return { currentAction: { id: actionId, label: String(action.label || ''), description: String(action.description || '') }, uiEvent };
@@ -7102,8 +7162,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       if (!action) throw httpError(`action not found: ${actionId}`, 404);
       assertToolGatewayReady(action, actionId, appWorldBridge);
       const traceLog: AgentTrace[] = [];
-      const permissions: string[] = requiredArray<unknown>(action.permissions, `action ${actionId} missing permissions`).map(String)
-        .filter(permission => !isWebCapabilityDenied(String(stored.appPackage.manifest.intent?.sourcePrompt || ''), permission));
+      const permissions: string[] = serviceDocumentPermissions(action, requiredArray<unknown>(action.permissions, `action ${actionId} missing permissions`).map(String)
+        .filter(permission => !isWebCapabilityDenied(String(stored.appPackage.manifest.intent?.sourcePrompt || ''), permission)));
       const rejectedPermissions = permissions.filter((permission) => !isAllowedPermission(permission));
       const safety = trace(traceLog, 'Safety Agent', 'Authorize app-scoped turn', { appId: input.appId, actionId, permissions }, {
         ok: rejectedPermissions.length === 0,
@@ -7255,6 +7315,14 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         trace(traceLog, 'App Agent', 'Execute this turn with the app-scoped agent (no external APIs for this domain)', { actionId, slots }, { result: local.result, entities: local.entities, stats: local.stats });
       }
       remainingActionMs();
+      const serviceDocument = resolveServiceDocument(action, permissions, rawPayload, Object.values(toolResults));
+      const documentPriorEntities = Array.isArray(stored.runtimeState.entities) ? [...stored.runtimeState.entities] as Record<string,unknown>[] : [];
+      if (serviceDocument) {
+        rawPayload.result = serviceDocument.content;
+        const documentPresentation: Record<string,any> = { entities: Array.isArray(rawPayload.entities) ? rawPayload.entities : [] };
+        applyServiceDocumentProjection(documentPresentation, serviceDocument, documentPriorEntities);
+        rawPayload.entities = documentPresentation.entities;
+      }
       const payload = {
         ...rawPayload,
         ...(Object.keys(toolResults).length ? { toolResults } : {}),
@@ -7264,7 +7332,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         dbChanges: appWorldTraceSummary(toolResults), toolResults,
       });
       nativeWorkflow.record('commit', 'agents.data', 'running');
-      const agentResult = trace(traceLog, 'State Agent', 'Commit orchestration turn and mutate visible state', { actionId, payload, appWorldDbChanges: appWorldTraceSummary(toolResults) }, updateStoredAgentApp(stored, actionId, payload, authoritativeEntities));
+      const agentResult = trace(traceLog, 'State Agent', 'Commit orchestration turn and mutate visible state', { actionId, payload, appWorldDbChanges: appWorldTraceSummary(toolResults) }, updateStoredAgentApp(stored, actionId, payload, authoritativeEntities, serviceDocument));
+      applyServiceDocumentProjection(stored.runtimeState, serviceDocument, documentPriorEntities);
       hydrateAppState(stored,appState);
       await nativeWorkflow.review({ originalRequest: currentActionRequest, result: rawPayload.result,
         entities: rawPayload.entities, stats: rawPayload.entityStats, toolResults,
