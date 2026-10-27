@@ -1181,7 +1181,7 @@ export function selectDeclaredAppWorldCapabilities<T extends { source: string; a
 }
 
 export function isWebCapabilityDenied(sourcePrompt: string, capability: string): boolean {
-  if (capability !== 'tool.web.search' && capability !== 'tool.web.fetch') return false;
+  if (!findWebTool(capability)) return false;
   // Explicit user prohibition is a host capability boundary, including old apps.
   return /(?:不(?:要|得|允许|需要)?|禁止|无需)\s*(?:抓(?:取)?|浏览|访问|搜索|检索|打开)\s*(?:网页|网站|互联网|网络)|(?:不要|禁止|无需|不)\s*联网|\b(?:do not|don't|never|no)\s+(?:browse|search|fetch|access|use)(?:\s+the)?\s+(?:web|internet|websites?|webpages?)\b/i.test(sourcePrompt);
 }
@@ -1192,7 +1192,7 @@ export function deriveToolCapabilities(prompt: string, tokens: string[]): ToolCa
   // 公网工具能力由注册表派生:web-tools.ts 加一项(id/label/purpose/keywords)即可
   // 被生成期编排感知,无需再改这里。
   for (const tool of webToolRegistry) {
-    if (tool.keywords.test(text) && !isWebCapabilityDenied(prompt, tool.id)) {
+    if ((tool.keywords.test(text) || (tool.id === 'tool.web.fetch' && webToolRegistry.some(candidate => candidate.id === 'tool.web.search' && candidate.keywords.test(text)))) && !isWebCapabilityDenied(prompt, tool.id)) {
       capabilities.push({
         id: tool.id,
         label: tool.label,
@@ -5848,12 +5848,12 @@ export async function runAppWorldGrounding(input: {
     && permissionSet.has(tool.permission)
     && !blockedApis.test(tool.apiName));
   const appStateCapabilities = input.appState?.capabilities ?? [];
-  if (!capabilities.length && !appStateCapabilities.length) return null;
+  const webTools = webToolRegistry.filter((tool) => (input.webPermissions ?? []).includes(tool.id));
+  if (!capabilities.length && !appStateCapabilities.length && !webTools.length) return null;
   const allCapabilities = [...capabilities, ...appStateCapabilities];
   // 该动作声明的公网工具(web_search 等)也进 grounding 目录:agent 可以在循环中
   // 主动检索/查天气/换汇,而不只靠回合开始时的盲预取。web 工具永远是 GET 语义,
   // 不参与 read-back/write-verifier 门(那些门只约束改变世界状态的 AppWorld 写)。
-  const webTools = webToolRegistry.filter((tool) => (input.webPermissions ?? []).includes(tool.id));
   // 目录必须包含该 action 允许的每一个 API —— 静默截断(旧 slice(0,60))会让 agent
   // 以为 play/pause 这类排在 openapi 末尾的能力根本不存在(点"开始播放"却只会重读歌单)。
   const catalog = capabilities.map(appWorldCatalogLine).concat(appStateCapabilities.map(tool => JSON.stringify(tool)), webToolCatalogLines(webTools)).join('\n');
@@ -7291,9 +7291,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const localPermissions=permissions.filter(permission=>permission==='storage.app'||permission==='app_state.write');
       const appState = stored.owner && stored.owner === String(input.user || '').trim()
         ? createAppStateAdapter(db,stored.owner,stored.appId,appRecordFields((stored.runtimeState.interaction as InteractionModel | undefined)?.businessFields ?? []),localPermissions) : undefined;
-      if ((appWorldBridge || appState) && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off') {
+      if ((appWorldBridge || appState || permissions.some(permission => Boolean(findWebTool(permission)))) && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off') {
         const appWorldPermissions = permissions.filter((permission) => permission.startsWith('tool.appworld.') && permission !== 'tool.appworld.db.snapshot');
-        if (appWorldPermissions.length || appState) {
+        if (appWorldPermissions.length || appState || permissions.some(permission => Boolean(findWebTool(permission)))) {
           const interactionModel = stored.runtimeState.interaction as InteractionModel | undefined;
           const grounding = await runAppWorldGrounding({
             bridge: appWorldBridge ?? undefined,
@@ -7323,6 +7323,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             grounded = true;
             grounding.calls.forEach((call, index) => { toolResults[`${call.tool.id}#${index + 1}`] = call; });
             grounding.appStateCalls.forEach((call,index)=>{toolResults[`app-state#${index+1}`]=call;});
+            grounding.attempts.filter(call => call.requestSource === 'web-tool-dispatched-arguments' && call.ok === true)
+              .forEach((call,index)=>{toolResults[`public-tool#${index+1}`]=call;});
             (rawPayload as Record<string, unknown>).result = grounding.summary;
             trace(traceLog, 'Grounding Requirement Agent', 'Analyze this GUI turn into an executable goal contract', { actionId }, grounding.goal);
             trace(traceLog, 'AppWorld Grounding Agent', 'Ground this GUI turn in real service and app-state host calls', { actionId, goal: grounding.goal, apis: grounding.calls.map((call) => call.tool.apiName) }, { summary: grounding.summary, entities: grounding.entities, attempts: grounding.attempts, appStateCalls:grounding.appStateCalls, appStateExecutionEvidence:grounding.appStateExecutionEvidence, executionEvidence: grounding.executionEvidence, dbChanges: grounding.calls.map((call) => call.dbChanges?.changedApps ?? []) });

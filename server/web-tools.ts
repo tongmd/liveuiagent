@@ -34,8 +34,9 @@ function assertPublicHttpUrl(url: string, label: string) {
   let parsed: URL;
   try { parsed = new URL(url); } catch { throw toolError(`${label} requires a valid http(s) url`, 400); }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') throw toolError(`${label} requires http(s)`, 400);
-  const host = parsed.hostname.toLowerCase();
-  if (host === 'localhost' || host === '0.0.0.0' || host === '::1' || host.endsWith('.local')
+  if (parsed.username || parsed.password) throw toolError(`${label} refuses URL credentials`, 400);
+  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host === '0.0.0.0' || host === '::1' || host === '::' || host.includes(':') || host.endsWith('.local') || host.endsWith('.localhost') || /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(host)
     || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host)
     || /^172\.(1[6-9]|2\d|3[01])\./.test(host) || /^169\.254\./.test(host)) {
     throw toolError(`${label} refuses private/loopback hosts`, 400);
@@ -44,15 +45,24 @@ function assertPublicHttpUrl(url: string, label: string) {
 
 const MAX_FETCH_BYTES = 2_000_000; // 正文上限:防止一个大文件把内存和 stripHtml 的正则烧穿。
 
-async function fetchText(url: string, label: string, timeoutMs = 12000): Promise<string> {
+async function fetchText(url: string, label: string, timeoutMs = 12000, redirects = 0): Promise<string> {
   assertPublicHttpUrl(url, label);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(url, {
       signal: controller.signal,
+      redirect: 'manual',
       headers: { 'user-agent': BROWSER_UA, 'accept-language': 'zh-CN,zh;q=0.9,en;q=0.7' },
     });
+    if ([301,302,303,307,308].includes(response.status)) {
+      await response.body?.cancel();
+      const location = response.headers.get('location');
+      if (!location || redirects >= 3) throw toolError(`${label} redirect limit exceeded`);
+      const nextUrl = new URL(location, url).href;
+      assertPublicHttpUrl(nextUrl, label);
+      return await fetchText(nextUrl, label, timeoutMs, redirects + 1);
+    }
     let text = '';
     if (response.body) {
       const reader = response.body.getReader();
@@ -209,6 +219,27 @@ async function exchangeRate(args: { from: string; to: string; amount?: number })
   };
 }
 
+function requiredText(value: unknown, name: string, max = 300): string {
+  if (typeof value !== 'string' || !value.trim()) throw toolError(`${name} must be a nonempty string`, 400);
+  if (value.length > max) throw toolError(`${name} exceeds ${max} characters`, 400);
+  return value.trim();
+}
+
+async function githubSearch(query: string): Promise<JsonRecord> {
+  const data = await fetchJson(`https://api.github.com/search/repositories?q=${encodeURIComponent(requiredText(query, 'query'))}&sort=updated&per_page=8`, 'GitHub repository search');
+  if (!Array.isArray(data.items)) throw toolError('GitHub repository search returned no item array');
+  return {source:'GitHub public repository API', fetchedAt:new Date().toISOString(), query,
+    results:data.items.map((repo:any)=>({name:repo.full_name,url:repo.html_url,description:repo.description ?? '',stars:repo.stargazers_count,language:repo.language,updatedAt:repo.updated_at})).slice(0,8)};
+}
+
+async function arxivSearch(query: string): Promise<JsonRecord> {
+  const xml = await fetchText(`https://export.arxiv.org/api/query?search_query=${encodeURIComponent(requiredText(query, 'query'))}&start=0&max_results=8&sortBy=submittedDate&sortOrder=descending`, 'arXiv search', 15000);
+  if (!/<feed[\s>]/.test(xml)) throw toolError('arXiv search returned no Atom feed');
+  const field=(entry:string,tag:string)=>stripHtml(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`).exec(entry)?.[1] ?? '');
+  const entries=xml.match(/<entry>[\s\S]*?<\/entry>/g) ?? [];
+  return {source:'arXiv Atom API',fetchedAt:new Date().toISOString(),query,results:entries.slice(0,8).map(entry=>({title:field(entry,'title'),url:field(entry,'id'),published:field(entry,'published'),updated:field(entry,'updated'),summary:clip(field(entry,'summary'),1600),authors:(entry.match(/<author>[\s\S]*?<\/author>/g) ?? []).map(author=>field(author,'name'))}))};
+}
+
 export const webToolRegistry: WebToolSpec[] = [
   {
     id: 'tool.web.search',
@@ -239,6 +270,22 @@ export const webToolRegistry: WebToolSpec[] = [
       return { url: url.trim() };
     },
     invoke: async (args) => fetchPage(String(args.url || '').trim()),
+  },
+  {
+    id: 'tool.github.search', apiName: 'github_search_repositories', label: 'GitHub Search Tool',
+    purpose: 'Find actual public GitHub repositories by query. Returns repository names, canonical URLs, descriptions, stars, language and update dates. No private repositories or account writes.',
+    keywords: /github|开源项目|开源工具|代码仓库|repository|repositories/i,
+    argsHint: 'query* (GitHub repository search syntax)',
+    fromPayload: payload => ({query:requiredText(payloadQueryText(payload),'query')}),
+    invoke: args => githubSearch(requiredText(args.query,'query')),
+  },
+  {
+    id: 'tool.arxiv.search', apiName: 'arxiv_search', label: 'arXiv Search Tool',
+    purpose: 'Search actual arXiv papers using the public Atom API, newest submitted first. Returns title, authors, canonical URL, dates and abstract. Results do not certify publication, quality or novelty.',
+    keywords: /arxiv|论文|文献|paper|preprint|research/i,
+    argsHint: 'query* (arXiv search syntax, e.g. all:agent)',
+    fromPayload: payload => ({query:requiredText(payloadQueryText(payload),'query')}),
+    invoke: args => arxivSearch(requiredText(args.query,'query')),
   },
   {
     id: 'tool.weather.query',
