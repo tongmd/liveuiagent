@@ -12,6 +12,7 @@ function pointerParts(pointer:any):string[] {
 }
 function read(v:any,pointer:string):any { for(const p of pointerParts(pointer)){ if(!own(v,p)) fail(`missing response pointer ${pointer}`); v=v[p]; } return v; }
 function scalar(v:any):boolean { return typeof v==='string'&&v.length<=2000 || typeof v==='number'&&Number.isFinite(v) || typeof v==='boolean'; }
+function displayScalar(v:any):boolean {return v===null||typeof v==='string'||typeof v==='boolean'||typeof v==='number'&&Number.isFinite(v);}
 function text(v:any):string { return v===null?'unknown': typeof v==='object'?JSON.stringify(v):String(v); }
 const argKeys:Record<string,string[]>={'tool.web.search':['query'],'tool.web.fetch':['url'],'tool.github.search':['query'],'tool.arxiv.search':['query'],'tool.weather.query':['location'],'tool.exchange.rate':['from','to','amount']};
 export async function executePublicToolPlan(plan:any,payload:Obj,actionPermissions:string[],manifestPermissions:string[], registry:WebToolSpec[]=webToolRegistry) {
@@ -68,7 +69,7 @@ async function executeBoundedPublicToolPlan(plan:any,payload:Obj,actionPermissio
       const title=o.titlePointer===undefined?o.title:text(read(item,o.titlePointer));
       const url=o.urlPointer===undefined?response.sourceUrl:text(read(item,o.urlPointer));
       let parsed:URL;try{parsed=new URL(url);}catch{fail('invalid output URL');}if(!['https:','http:'].includes(parsed!.protocol)||parsed!.username||parsed!.password)fail('output URL must be HTTP without credentials');
-      const details=[...(o.detailPointers??[]).map((p:string)=>`${p.split('/').filter(Boolean).at(-1)||'value'}: ${text(read(item,p))}`),...(o.detailFields??[]).map((f:any)=>{const v=read(item,f.pointer);if(v!==null&&!scalar(v)&&!(Array.isArray(v)&&v.every(scalar)))fail('display fields require primitive values');return `${f.label}: ${Array.isArray(v)?v.map(text).join(', '):text(v)}${f.suffix??''}`;})].join('\n');
+      const details=[...(o.detailPointers??[]).map((p:string)=>`${p.split('/').filter(Boolean).at(-1)||'value'}: ${text(read(item,p))}`),...(o.detailFields??[]).map((f:any)=>{const v=read(item,f.pointer);if(!displayScalar(v)&&!(Array.isArray(v)&&v.every(displayScalar)))fail('display fields require primitive values');return `${f.label}: ${Array.isArray(v)?v.map(text).join(', '):text(v)}${f.suffix??''}`;})].join('\n');
       if(title.length>512||details.length>8192||url.length>2048)fail('output exceeds display bounds');
       entities.push({name:title,id:url,detail:`${o.title}\n${details}\nSource: ${response.sourceUrl}\nRetrieved: ${response.fetchedAt}`,status:'retrieved',publicToolPlanSource:{step:o.step,index,sourceUrl:response.sourceUrl,fetchedAt:response.fetchedAt}});
     }
