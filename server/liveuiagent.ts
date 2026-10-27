@@ -6691,6 +6691,46 @@ export function resolveServiceDocument(action: Record<string, any>, permissions:
   if(typeof title!=='string') throw new Error('Service document title must come from the same successful response');
   return {source:'host-current-successful-get',permission:binding.permission,identityArgument:binding.identityArgument,entityId,content,contentSha256:createHash('sha256').update(content).digest('hex'),title};
 }
+export async function readServiceDocumentDeterministically(action: Record<string, any>, permissions: string[], payload: Record<string, unknown>, entities: unknown[], bridge: AppWorldBridge | null | undefined) {
+  if (action.executionMode !== 'read_document' || !action.documentBinding || !bridge || !permissions.includes('storage.app')) throw new Error('Deterministic document reading requires its explicit mode, binding, bridge and storage permission');
+  const binding = action.documentBinding;
+  const target = Object.hasOwn(payload, 'entityId') ? documentIdentity(payload.entityId) : undefined;
+  if (!target || !entities.some((row: any) => row && typeof row === 'object' && Object.hasOwn(row, 'id') && documentIdentity(row.id) === target)) throw new Error('Document target is not an exact current owned-app entity');
+  if (typeof binding.permission !== 'string' || !permissions.includes(binding.permission) || typeof binding.identityArgument !== 'string') throw new Error('Document permission or identity argument is missing');
+  const capabilities = await bridge.getCapabilities();
+  const matches = capabilities.filter(cap => cap.id === binding.permission && cap.permission === binding.permission && cap.source === 'appworld');
+  if (matches.length !== 1 || matches[0].method !== 'GET') throw new Error('Document binding requires exactly one actual GET capability');
+  const capability = matches[0];
+  const schema: any = capability.inputSchema;
+  const key = binding.identityArgument;
+  if (!schema || schema.type !== 'object' || ['$ref','oneOf','anyOf','allOf','not'].some(k => Object.hasOwn(schema,k)) || !schema.properties || typeof schema.properties !== 'object' || !Object.hasOwn(schema.properties, key)) throw new Error('Document GET lacks an exact argument schema');
+  const scalar = schema.properties[key];
+  if (!scalar || typeof scalar !== 'object' || Object.keys(scalar).some(k => !['type','title','description','default','examples','example','deprecated','enum','minimum','maximum','minLength','maxLength','pattern'].includes(k))) throw new Error('Document identity schema is unresolved');
+  if ((Array.isArray(schema.required) ? schema.required : []).some((name: unknown) => name !== key) || (capability.requiredParams || []).some(name => name !== key)) throw new Error('Document GET requires unsupported additional arguments');
+  let value: string | number;
+  if (scalar.type === 'string') value = target;
+  else if (scalar.type === 'integer' || scalar.type === 'number') {
+    // Only the API-declared scalar conversion is allowed; reject lossy numeric IDs.
+    const number = Number(target);
+    if (!Number.isFinite(number) || (scalar.type === 'integer' && !Number.isSafeInteger(number)) || String(number) !== target) throw new Error('Document target does not exactly satisfy its numeric identity schema');
+    value = number;
+  } else throw new Error('Document identity must have an explicit string or numeric schema');
+  if (Array.isArray(scalar.enum) && !scalar.enum.includes(value)) throw new Error('Document target is outside its identity enum');
+  if (typeof value === 'number' && ((typeof scalar.minimum === 'number' && value < scalar.minimum) || (typeof scalar.maximum === 'number' && value > scalar.maximum))) throw new Error('Document target is outside its identity bounds');
+  if (typeof value === 'string' && ((typeof scalar.minLength === 'number' && value.length < scalar.minLength) || (typeof scalar.maxLength === 'number' && value.length > scalar.maxLength) || (typeof scalar.pattern === 'string' && !new RegExp(scalar.pattern).test(value)))) throw new Error('Document target does not match its identity string schema');
+  // Validate the full binding before the only service dispatch, including pointer syntax.
+  if (Object.keys(binding).some(k => !['permission','responsePath','identityArgument','titlePath'].includes(k)) || typeof binding.responsePath !== 'string' || !/^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(key)) throw new Error('Invalid document binding');
+  for (const pointer of [binding.responsePath, binding.titlePath === undefined ? '/title' : binding.titlePath]) {
+    if (typeof pointer !== 'string' || !pointer.startsWith('/') || pointer.length > 240 || /~(?![01])/u.test(pointer) || pointer.split('/').slice(1).some((part: string) => ['__proto__','prototype','constructor'].includes(part.replace(/~1/g,'/').replace(/~0/g,'~')))) throw new Error('Invalid document binding pointer');
+  }
+  remainingActionMs();
+  const call = await bridge.callTool(capability.id, { [key]: value });
+  remainingActionMs();
+  const document = resolveServiceDocument(action, permissions, payload, [call]);
+  if (!document) throw new Error('Document read did not produce a verified document');
+  return { document, call };
+}
+
 export function serviceDocumentText(runtimeState: Record<string, any>): string | undefined {
   const document=runtimeState.serviceDocument;
   if(document===undefined)return undefined;
@@ -7175,6 +7215,24 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       }
 
       const rawPayload = extractPayload(input.eventPayload);
+      if (action.executionMode === 'read_document') {
+        if (!stored.owner || stored.owner !== String(input.user || '').trim()) throw httpError('Document reading requires the exact owned app', 403);
+        const priorEntities = Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities as Record<string,unknown>[] : [];
+        const { document, call } = await readServiceDocumentDeterministically(action, permissions, rawPayload, priorEntities, appWorldBridge);
+        const toolResults = { documentRead: call };
+        const payload = { ...rawPayload, entityName: document.title, result: document.content, toolResults, entities: projectDocumentEntity(document, priorEntities) };
+        const agentResult = updateStoredAgentApp(stored, actionId, payload, false, document);
+        applyServiceDocumentProjection(stored.runtimeState, document, priorEntities);
+        const now = new Date().toISOString();
+        stored.runtimeState = { ...stored.runtimeState, lastAction: actionId, lastActionAt: now, recentActions: [{actionId,label:String(action.label || actionId),message:'Document displayed',at:now,atText:now.slice(5,16).replace('T',' ')}, ...(Array.isArray(stored.runtimeState.recentActions) ? stored.runtimeState.recentActions : []).slice(0,8)] };
+        remainingActionMs();
+        db.transaction(() => {
+          remainingActionMs();
+          saveStoredApp(db, options.registryRoot, stored);
+          saveAudit(db, input.appId, actionId, input.eventPayload, permissions, {mode:'deterministic-document-read',businessGetCalls:1,providerCalls:0,committed:true,contentSha256:document.contentSha256,toolResults});
+        })();
+        return { statePatch:{target:'app.runtimeState',op:'replace',path:'/',value:stored.runtimeState}, dataPatch:{target:`app.data.${agentResult.collection}`,op:'replace',path:'/',value:agentResult.records},toolResults,toolDbChanges:appWorldTraceSummary(toolResults),workflowExecution:{executionId:randomUUID(),status:'completed',mode:'deterministic-document-read',providerCalls:0,businessGetCalls:1,committed:true,steps:[]},appPackage:stored.appPackage,appData:stored.data,runtimeState:stored.runtimeState,messages:['Document displayed'],trace:traceLog };
+      }
       // 行内实体按钮携带的精确目标(名字+id):流向 grounding 契约与执行器,
       // 后端必须按 id 恰好操作这一个对象。
       const targetEntity = typeof rawPayload.entityName === 'string' && (rawPayload.entityName as string).trim()
