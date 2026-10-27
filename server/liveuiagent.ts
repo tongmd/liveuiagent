@@ -7241,8 +7241,9 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
         stored.data[collection]=[record,...requiredArray<Record<string,unknown>>(stored.data[collection],'missing records')];
         stored.runtimeState={...stored.runtimeState,entities:result.entities,entityStats:[],lastAction:actionId,lastActionAt:now,lastActionLabel:actionId,lastActionPayload:{...rawPayload,toolResults},lastVisibleResult:message,lastVisibleSummary:result.summary,intentResult:{title:String(action.label||'Public sources'),subtitle:message,value:message,sections:[],bullets:[result.summary]},recentActions:[{actionId,label:String(action.label||actionId),message,at:now,atText:now.slice(5,16).replace('T',' ')},...(Array.isArray(stored.runtimeState.recentActions)?stored.runtimeState.recentActions:[]).slice(0,8)]};
         delete stored.runtimeState.serviceDocument;
+        if(Date.now()>=result.deadlineAt)throw actionDeadlineError();
         remainingActionMs();
-        db.transaction(()=>{remainingActionMs();saveStoredApp(db,options.registryRoot,stored);saveAudit(db,input.appId,actionId,input.eventPayload,permissions,{mode:'public-tool-plan',providerCalls:0,committed:true,partial:result.partial,toolResults});})();
+        db.transaction(()=>{if(Date.now()>=result.deadlineAt)throw actionDeadlineError();remainingActionMs();saveStoredApp(db,options.registryRoot,stored);saveAudit(db,input.appId,actionId,input.eventPayload,permissions,{mode:'public-tool-plan',providerCalls:0,committed:true,partial:result.partial,toolResults});})();
         return {statePatch:{target:'app.runtimeState',op:'replace',path:'/',value:stored.runtimeState},dataPatch:{target:`app.data.${collection}`,op:'replace',path:'/',value:stored.data[collection]},toolResults,workflowExecution:{executionId:randomUUID(),status:'completed',mode:'public-tool-plan',providerCalls:0,committed:true,partial:result.partial,steps:result.receipts},appPackage:stored.appPackage,appData:stored.data,runtimeState:stored.runtimeState,messages:[message],trace:traceLog};
       }
       if (action.executionMode === 'read_document') {

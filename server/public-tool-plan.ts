@@ -1,5 +1,5 @@
 import { webToolRegistry, type WebToolSpec } from './web-tools.js';
-import { remainingActionMs, actionDeadlineError } from './action-deadline.js';
+import { remainingActionMs, actionDeadlineError, withActionDeadline, actionDeadlineAt } from './action-deadline.js';
 type Obj = Record<string, any>;
 const own = (v:any,k:string) => v !== null && typeof v === 'object' && Object.prototype.hasOwnProperty.call(v,k);
 function fail(message:string):never { throw Object.assign(new Error(`Public tool plan: ${message}`),{status:400}); }
@@ -15,6 +15,9 @@ function scalar(v:any):boolean { return typeof v==='string'&&v.length<=2000 || t
 function text(v:any):string { return v===null?'unknown': typeof v==='object'?JSON.stringify(v):String(v); }
 const argKeys:Record<string,string[]>={'tool.web.search':['query'],'tool.web.fetch':['url'],'tool.github.search':['query'],'tool.arxiv.search':['query'],'tool.weather.query':['location'],'tool.exchange.rate':['from','to','amount']};
 export async function executePublicToolPlan(plan:any,payload:Obj,actionPermissions:string[],manifestPermissions:string[], registry:WebToolSpec[]=webToolRegistry) {
+  return withActionDeadline(Date.now()+120000,()=>executeBoundedPublicToolPlan(plan,payload,actionPermissions,manifestPermissions,registry));
+}
+async function executeBoundedPublicToolPlan(plan:any,payload:Obj,actionPermissions:string[],manifestPermissions:string[],registry:WebToolSpec[]) {
   if(process.env.LIVEUIAGENT_APPWORLD_GROUNDING==='off')fail('external tools are disabled');
   if(!object(plan)||!Array.isArray(plan.steps)||plan.steps.length<1||plan.steps.length>6||!Array.isArray(plan.outputs)||plan.outputs.length<1||plan.outputs.length>6) fail('requires 1–6 steps and outputs');
   const seen=new Set<string>(); const specs=new Map<string,WebToolSpec>();
@@ -73,7 +76,7 @@ export async function executePublicToolPlan(plan:any,payload:Obj,actionPermissio
   if(entities.length>30||Buffer.byteLength(JSON.stringify(entities))>96*1024)fail('output exceeds total display bounds');
   for(const receipt of receipts) if(receipt.ok) receipt.publicPlanCards=entities.filter(e=>e.publicToolPlanSource.step===receipt.step);
   remainingActionMs();
-  return {receipts,entities,partial:receipts.some(r=>!r.ok),summary:receipts.map(r=>`${r.step}: ${r.ok?'retrieved':`unavailable (${r.error})`}`).join('\n')};
+  return {deadlineAt:actionDeadlineAt()!,receipts,entities,partial:receipts.some(r=>!r.ok),summary:receipts.map(r=>`${r.step}: ${r.ok?'retrieved':`unavailable (${r.error})`}`).join('\n')};
 }
 
 export function publicPlanCardFromRuntime(item:Obj,state:Obj):{name:string,id:string,detail:string}|null {
