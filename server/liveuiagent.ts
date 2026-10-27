@@ -1,3 +1,4 @@
+import { executePublicToolPlan, publicPlanCardFromRuntime } from './public-tool-plan.js';
 import { bindPublicCard, prefetchReceipt, publicPrefetchEvidence, publicCardFromRuntime } from './public-tool-evidence.js';
 import { writeGroundingDiagnostics, type GroundingDiagnosticsReceipt } from './grounding-diagnostics.js';
 import { stateDisplayPaths, stateDisplayFields, stateDisplayValues } from './native-state-display.js';
@@ -2904,7 +2905,7 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
     .filter((item) => item && typeof item === 'object' && String(item.name || '').trim())
     .slice(0, 30)
     .map((item) => {
-      const publicCard = publicCardFromRuntime(item, stored.runtimeState);
+      const publicCard = publicPlanCardFromRuntime(item, stored.runtimeState) ?? publicCardFromRuntime(item, stored.runtimeState);
       const bareName = String(item.name);
       // grounding 写的 group 有两种含义:真正的分类(播放列表 / Produce),或者这条记录
       // 所属的容器 —— 而那个容器往往就是应用本身或这一行自己。后者重复显示只是噪声
@@ -5188,7 +5189,7 @@ export function buildPreviewWidget(stored: StoredApp) {
   const items = rawEntities
     .filter((item) => item && typeof item === 'object' && String(item.name || '').trim())
     .slice(0, 6)
-    .map((item) => { const publicCard = publicCardFromRuntime(item, stored.runtimeState); return ({
+    .map((item) => { const publicCard = publicPlanCardFromRuntime(item, stored.runtimeState) ?? publicCardFromRuntime(item, stored.runtimeState); return ({
       id: publicCard?.id ?? (item.id === undefined || item.id === null ? '' : compactText(String(item.id), 24)),
       name: publicCard?.name ?? compactText(String(item.name), 60),
       detail: publicCard?.detail ?? compactText(typeof item.detail === 'string' ? item.detail : '', 80),
@@ -7226,6 +7227,24 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       }
 
       const rawPayload = extractPayload(input.eventPayload);
+      if (action.executionMode === 'public_tool_plan') {
+        if (!stored.owner || stored.owner !== String(input.user || '').trim()) throw httpError('Public tool plans require the exact owned app',403);
+        const manifestPermissions = requiredArray<unknown>(stored.appPackage.manifest.permissions,'missing manifest permissions').map(String);
+        if (!permissions.includes('storage.app') || !manifestPermissions.includes('storage.app')) throw httpError('Public tool plans require app GUI storage permission',403);
+        const result = await executePublicToolPlan(action.publicToolPlan,rawPayload,permissions,manifestPermissions);
+        const toolResults = Object.fromEntries(result.receipts.map((r:any)=>[r.step,r]));
+        const { collection } = firstModel(stored.appPackage);
+        const now = new Date().toISOString();
+        const message = result.partial ? 'Partially retrieved; unavailable sources are listed below.' : 'Public sources retrieved.';
+        const originalFields=Object.fromEntries(requireStoredInteraction(stored).businessFields.filter((field:any)=>Object.prototype.hasOwnProperty.call(rawPayload,field.name)&&['string','number','boolean'].includes(typeof rawPayload[field.name])).map((field:any)=>[field.name,rawPayload[field.name]]));
+        const record = {...originalFields,id:stableId('turn'),prompt:String(rawPayload.prompt || action.label || actionId),context:String(rawPayload.context || result.summary),state:result.partial?'Partial':'Retrieved',nextStep:'View retrieved sources',result:result.summary,actionId,createdAt:now,updatedAt:now,toolResults};
+        stored.data[collection]=[record,...requiredArray<Record<string,unknown>>(stored.data[collection],'missing records')];
+        stored.runtimeState={...stored.runtimeState,entities:result.entities,entityStats:[],lastAction:actionId,lastActionAt:now,lastActionLabel:actionId,lastActionPayload:{...rawPayload,toolResults},lastVisibleResult:message,lastVisibleSummary:result.summary,intentResult:{title:String(action.label||'Public sources'),subtitle:message,value:message,sections:[],bullets:[result.summary]},recentActions:[{actionId,label:String(action.label||actionId),message,at:now,atText:now.slice(5,16).replace('T',' ')},...(Array.isArray(stored.runtimeState.recentActions)?stored.runtimeState.recentActions:[]).slice(0,8)]};
+        delete stored.runtimeState.serviceDocument;
+        remainingActionMs();
+        db.transaction(()=>{remainingActionMs();saveStoredApp(db,options.registryRoot,stored);saveAudit(db,input.appId,actionId,input.eventPayload,permissions,{mode:'public-tool-plan',providerCalls:0,committed:true,partial:result.partial,toolResults});})();
+        return {statePatch:{target:'app.runtimeState',op:'replace',path:'/',value:stored.runtimeState},dataPatch:{target:`app.data.${collection}`,op:'replace',path:'/',value:stored.data[collection]},toolResults,workflowExecution:{executionId:randomUUID(),status:'completed',mode:'public-tool-plan',providerCalls:0,committed:true,partial:result.partial,steps:result.receipts},appPackage:stored.appPackage,appData:stored.data,runtimeState:stored.runtimeState,messages:[message],trace:traceLog};
+      }
       if (action.executionMode === 'read_document') {
         if (!stored.owner || stored.owner !== String(input.user || '').trim()) throw httpError('Document reading requires the exact owned app', 403);
         const priorEntities = Array.isArray(stored.runtimeState.entities) ? stored.runtimeState.entities as Record<string,unknown>[] : [];
