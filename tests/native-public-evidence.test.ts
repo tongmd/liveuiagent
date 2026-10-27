@@ -36,3 +36,8 @@ test('actual HTTP producer response survives done normalization and JSON reopen 
  }}});assert.equal(httpCalls,1);assert.equal(reviewed,true);assert.equal(out.executionEvidence.successfulApiCalls,1);assert.equal(out.evaluation.pass,true);const reopened=JSON.parse(JSON.stringify(out.entities));assert.equal(reopened[0].name,title);assert.match(reopened[0].detail,/https:\/\/arxiv.org\/abs\/2610.12345v1/);assert.match(reopened[0].detail,/Code: https:\/\/github.com\/example\/project/);
  }finally{globalThis.fetch=original;await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
+
+test('same-name local and explicit conflicting business identity never become public IDs',()=>{
+ for(const item of [{name:title,id:'123',appRecordId:'record-1'},{name:title,id:'123'},{name:title,id:123},{name:title,id:0},{name:title,appRecordId:'record-1'},{name:title,url:'https://example.com/not-the-source'}]){assert.equal(bindPublicCard(item,[fact([source])]),null);}
+ assert.equal(bindPublicCard({name:title,id:'arXiv:2610.12345v1'},[fact([source])])?.id,source.url);
+});

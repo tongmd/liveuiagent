@@ -1,4 +1,4 @@
-import { bindPublicCard, prefetchReceipt, publicPrefetchEvidence } from './public-tool-evidence.js';
+import { bindPublicCard, prefetchReceipt, publicPrefetchEvidence, publicCardFromRuntime } from './public-tool-evidence.js';
 import { writeGroundingDiagnostics, type GroundingDiagnosticsReceipt } from './grounding-diagnostics.js';
 import { stateDisplayPaths, stateDisplayFields, stateDisplayValues } from './native-state-display.js';
 import {resolveControlPreparation} from './gui-interaction-planner.js';
@@ -2904,6 +2904,7 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
     .filter((item) => item && typeof item === 'object' && String(item.name || '').trim())
     .slice(0, 30)
     .map((item) => {
+      const publicCard = publicCardFromRuntime(item, stored.runtimeState);
       const bareName = String(item.name);
       // grounding 写的 group 有两种含义:真正的分类(播放列表 / Produce),或者这条记录
       // 所属的容器 —— 而那个容器往往就是应用本身或这一行自己。后者重复显示只是噪声
@@ -2914,19 +2915,19 @@ function makeA2uiState(plan: A2uiPlan, stored: Pick<StoredApp, 'data' | 'runtime
         ? stored.runtimeState.appRecords.find((record: any) => record.recordId === item.appRecordId) : undefined;
       return {
         // group 以可见前缀呈现(Produce · Bananas):无渲染器手术的诚实分组显示。
-        name: compactText([informativeGroup, bareName].filter(Boolean).join(' · '), 60),
+        name: publicCard?.name ?? compactText([informativeGroup, bareName].filter(Boolean).join(' · '), 60),
         // 只保留 grounding 写的人类可读描述。原来还拼了 `id 654`,那是数据库主键,
         // 对用户没有意义,却占掉了行里最宝贵的一段横向空间。
-        detail: compactText(typeof item.detail === 'string' && item.detail.trim() ? item.detail : "Created", 100),
+        detail: publicCard?.detail ?? compactText(typeof item.detail === 'string' && item.detail.trim() ? item.detail : "Created", 100),
         // 行级动作按钮的身份载体:entityName 是未折叠原名(display name 带 group 前缀
         // 且可能截断,不能当身份),id 供后端精确寻址。旧设计不绑这两个路径,惰性无害。
-        entityName: compactText(bareName, 64),
-        id: item.id === undefined || item.id === null ? '' : compactText(String(item.id), 24),
+        entityName: publicCard?.name ?? compactText(bareName, 64),
+        id: publicCard?.id ?? (item.id === undefined || item.id === null ? '' : compactText(String(item.id), 24)),
         // Badge 用的分组标签:grounding 已经写了 group,以前只被折进 name 前缀里。
         // 没有 group 的记录给空串 —— Hl 对 null/缺失会抛错,空串则安全地渲染为无徽章。
         tag: informativeGroup ? compactText(informativeGroup, 18) : '',
         // 未带 group 前缀的裸名字:Row 里既要 badge 又要标题时,name 会重复显示分组。
-        title: compactText(bareName, 60),
+        title: publicCard?.name ?? compactText(bareName, 60),
         ...(typeof item.appRecordId === 'string' ? {appRecordId:item.appRecordId} : {}),
         appState: stateDisplayValues(plan.interaction.businessFields, localRecord?.values),
       };
@@ -5187,12 +5188,12 @@ export function buildPreviewWidget(stored: StoredApp) {
   const items = rawEntities
     .filter((item) => item && typeof item === 'object' && String(item.name || '').trim())
     .slice(0, 6)
-    .map((item) => ({
-      id: item.id === undefined || item.id === null ? '' : compactText(String(item.id), 24),
-      name: compactText(String(item.name), 60),
-      detail: compactText(typeof item.detail === 'string' ? item.detail : '', 80),
+    .map((item) => { const publicCard = publicCardFromRuntime(item, stored.runtimeState); return ({
+      id: publicCard?.id ?? (item.id === undefined || item.id === null ? '' : compactText(String(item.id), 24)),
+      name: publicCard?.name ?? compactText(String(item.name), 60),
+      detail: publicCard?.detail ?? compactText(typeof item.detail === 'string' ? item.detail : '', 80),
       group: typeof item.group === 'string' && item.group ? compactText(item.group, 30) : undefined,
-    }));
+    }); });
   const stats = rawStats
     .filter((item) => item && String(item.label || '').trim())
     .slice(0, 4)
@@ -5899,6 +5900,7 @@ export async function runAppWorldGrounding(input: {
       'Bind every deliverable to the service whose object model fits its semantics: anything the user will check off, complete, or track progress on = individual todoist tasks (a note that merely lists the items is NOT that deliverable); playable music = spotify; money owed = the expense/payment service. Classify money intent from the full current submission: a NEW bill, shared cost, debt, or request for someone to pay creates an expense or payment-request object supported by the service; it does NOT assert that money has already changed hands. Record a PAYMENT only when the user explicitly reports an actual repayment or instructs an actual transfer. Future reimbursement language such as asking someone to pay back does not establish a completed repayment. Name an API family only when its documented semantics match that intent. Every money turn additionally delivers the visible PER-PERSON balance list (one entry per member INCLUDING settled ones, read from the balance API after the write). When a container (project/playlist/group) is a deliverable, its content items are SEPARATE deliverables living INSIDE that container. Container nesting: when the user names both an umbrella (a project/board name) and subgroups (per-meeting, per-category), the umbrella is ONE project and each subgroup is a SECTION inside it — never a sibling project per subgroup.',
       'projectionPolicy describes UI coverage only, never business authorization. Choose retain_existing for ordinary additions or marking/updating a tracked unit: untouched primary units must remain visible. Choose replace_or_filter only when the current user explicitly requests replacing, clearing, deleting from, or filtering the visible collection; otherwise unspecified if coverage intent cannot be determined. Do not infer new business obligations from UI metadata.',
       'expectedNumbers: compute every number the request implies but does not state — a bill split share = total ÷ ALL participants INCLUDING the payer (e.g. "186.45 / 3 = 62.15 per person"). Label each derived number with its scope (this event share, repayment amount, or final cumulative balance) and show its arithmetic in the value. A new event share is an INCREMENT, not the final cumulative balance; derive a final balance only from a fresh existing balance plus the signed change. Never assume the existing balance is zero. Use [] when nothing is derived.',
+      'For public retrieved cards, use the complete source title and original source URL, arXiv identifier, or repository full name as id. Never invent reference IDs such as r19; appRecordId belongs only to real local records. Retrieval failures are per-attempt: earlier prefetch failure can coexist with a later successful call.',
       'When a targetEntity is given, the contract is about exactly that one object: the objective and deliverables must reference it by its name/id, never a broader batch.',
     ].join('\n'),
     user: JSON.stringify({ userRequest, prefetchEvidence: input.prefetchEvidence ?? [], ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}) }),
@@ -5998,6 +6000,7 @@ export async function runAppWorldGrounding(input: {
           'A user submitted a GUI form. Ground their request in REAL API calls against the available APIs below, then summarize.',
           'Respond ONLY with JSON: {"calls": [{"api": "<apiName>", "args": {...}}, ...]} to make the next API call(s) — BATCH every independent call you can already determine into ONE array (e.g. the create plus one add per song); one call per turn wastes the user\'s time.',
           'or {"done": true, "summary": "<one user-facing sentence naming the exact concrete entities now created or fetched>", "entities": [{"name": "<entity name>", "id": "<id if any>", "detail": "<one short user-facing fact>", "group": "<optional section this item belongs to, e.g. Produce / coast morning / a person name>"}], "stats": [{"label": "<aggregate the user should see>", "value": "<computed value>"}]} to finish. stats are the COMPUTED aggregates the request implies — cumulative per-person totals across ALL existing records (read them back first), remaining/unchecked counts per group, days-until dates computed from the world date — each verified against the numbers you actually read. Return AT LEAST ONE stat whenever the turn touched any quantity (durations, prices, counts, amounts, dates): it becomes the app\'s headline figure. An empty stats array is only acceptable when the turn genuinely produced nothing quantifiable.',
+          ...(webTools.length ? ['For public research cards only, copy the original complete title. id must be the actual source canonical URL, original arXiv identifier, or repository full name present in a successful public response. Never invent r19-style reference IDs or attach an appRecordId. Source matching is strict and cannot be replaced by a plausible name.'] : []),
           'The entities array is the CURRENT content the user should now see (e.g. every track now in the playlist) — the app renders exactly this list, replacing what was shown before. Model entities as the units the user TRACKS: one row per person with their current balance for debt/split apps (settled people stay listed, marked settled), one row per task for checklists, one row per item for collections — not raw transaction records. Fetch that FULL list with a read call before finishing: an entry you just completed or deleted must not appear as still present, and older entries must not silently vanish just because this turn did not touch them. Each primary row identity and fact must trace to actual API response evidence and fit the declared row unit; supporting objects do not become rows merely because they exist; NEVER restate the user\'s own form inputs as entities, and never process notes: each detail must be a user-facing fact (artist, duration, date), not words like 已检索到/已确认展示/已标注.',
           'Rules: authentication is handled automatically — never call account, auth, or verification APIs.',
           'If the user asks to build, create, save, add, or update something, you MUST call the corresponding write API (POST/PATCH create/add/record) — finishing with only read-only lookups is a failure. Before writing, resolve required identifiers, existing targets, current values and API prerequisites with the necessary reads. Naming an object does not waive discovery or schema requirements. Once prerequisites are known, write promptly; do not repeat unproductive searches.',
@@ -6030,7 +6033,7 @@ export async function runAppWorldGrounding(input: {
           goal,
           ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities,
           ...(input.targetEntity ? { targetEntity: input.targetEntity } : {}),
-          prefetchEvidence: input.prefetchEvidence ?? [], previousCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls),
+          prefetchEvidence: input.prefetchEvidence ?? [], publicCardIdentityRule: 'Use the complete actual source title and original URL/arXiv identifier/repository full name. Never invent r19-style identifiers or use a local appRecordId for public rows.', previousCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls),
           ...(input.recentTurns?.length ? { previousTurns: input.recentTurns } : {}),
           ...(feedback.length ? { evaluatorDeficiencies: feedback, instruction: 'An independent evaluator found these deficiencies. Fix only the remaining gaps, reusing ids and confirmed successful writes in previousCalls. Do not replay successful creates or retry an unknown write outcome. Missing required real values must be reported, never invented. Then finish with an updated summary and the FULL entities list for the whole turn.' } : {}),
           ...(mustFinish ? { instruction: 'You must finish NOW with {"done": true, "summary": ..., "entities": [...]} naming the concrete entities.' } : {}),
@@ -6121,7 +6124,7 @@ export async function runAppWorldGrounding(input: {
                 'DUPLICATE & TURN-SCOPE gate: reject the batch with {"approved": false, "reject": true, "reason": "<why>"} when (a) previousCalls already show a successful create of the same object (same bill/record, matching amounts or title) and the batch re-creates it WITHOUT first deleting the stale copy, or (b) the batch DELETES or re-records an object whose id does NOT trace to a create in previousCalls (i.e. it predates this turn) and the user request does not explicitly ask to remove or correct that record, or (c) the batch COMPLETES/closes/checks-off an item whose name is NOT mentioned in the user request or targetEntity — completing unmentioned siblings corrupts per-item state. Also reject when the API family contradicts explicit intent (for example recording an actual payment for a new bill, debt or future payment request), or when fixing the call would require changing the API family or inventing missing business values. Return approved:false, reject:true with the concrete reason so the executor can re-plan; do not disguise an intent error as an argument correction.',
                 'Otherwise respond ONLY with JSON: {"approved": true} only when the API intent and all args are right, or {"approved": false, "correctedCalls": [{"api": "<same api>", "args": {...fixed args...}}, ...], "reason": "<what you fixed>"}. Use correctedCalls only for evidenced argument corrections within an already-correct API family; keep the SAME apis in the SAME order. For a wrong API family return reject:true instead of correctedCalls.',
               ].join('\n'),
-              user: JSON.stringify({ userRequest, goal, prefetchEvidence: input.prefetchEvidence ?? [], ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, previousCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), proposedCalls: rawCalls }),
+              user: JSON.stringify({ userRequest, goal, prefetchEvidence: input.prefetchEvidence ?? [], ...(input.viewContext ? { viewContext: input.viewContext } : {}), ...(input.priorProjection ? { priorProjection: input.priorProjection } : {}), appStateCapabilities, publicCardIdentityRule: 'Use the complete actual source title and original URL/arXiv identifier/repository full name. Never invent r19-style identifiers or use a local appRecordId for public rows.', previousCalls: groundingEvidenceHistory(historyLog), appStateCalls: groundingEvidenceHistory(appStateCalls), mailRecipientEvidence: mailEvidence.facts(), proposedCalls: rawCalls }),
             }) as Record<string, any>;
           } catch (error) {
             if (attempt >= 2) historyLog.push({ ok: false, api: '(write-verifier)', error: compactText((error as Error).message, 160) });
@@ -7394,7 +7397,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       }
       const payload = {
         ...rawPayload,
-        ...(Object.keys(toolResults).length ? { toolResults } : {}),
+        // This host-owned slot must never inherit client/model-supplied receipt claims.
+        toolResults,
       };
       nativeWorkflow.record('execute', 'agents.executor', 'ok', undefined, {
         result: rawPayload.result, entities: rawPayload.entities,
