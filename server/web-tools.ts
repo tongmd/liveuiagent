@@ -119,10 +119,10 @@ function clip(input: string, max: number): string {
 
 // 表单里所有非簿记字段拼成查询文本(与旧 queryTextFromPayload 同语义)。
 export function payloadQueryText(payload: JsonRecord): string {
-  return Object.entries(payload)
-    .filter(([key]) => !['sourceComponentId', 'entityId', 'entityName', 'toolResults'].includes(key))
+  return [...new Set(Object.entries(payload)
+    .filter(([key]) => !['sourceComponentId', 'entityId', 'entityName', 'toolResults', 'state', 'nextStep', 'result'].includes(key))
     .map(([, value]) => (typeof value === 'string' ? value.trim() : ''))
-    .filter(Boolean)
+    .filter(Boolean))]
     .join(' ');
 }
 
