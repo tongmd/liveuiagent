@@ -23,3 +23,8 @@ test('conditional unmount on collapse and remount on restore is a valid disclosu
  const html=`<html><body><main id="app"></main><script>function render(open){document.getElementById('app').innerHTML='<button type="button" aria-expanded="'+open+'" aria-controls="panel">编辑</button>'+(open?'<section id="panel">A real editor</section>':'');document.querySelector('button').onclick=()=>render(!open);}render(true);</script></body></html>`;
  const r=await validateBrowserDelivery(html);assert.equal(r.ok,true,JSON.stringify(r));assert.equal(r.layoutChecks.length,2);
 });
+
+test('unmount disclosure performs collapse and restore at both viewports rather than skipping its control',async()=>{
+ const html=`<html><body><main id="app"></main><script>let clicks=0;function render(open){document.getElementById('app').innerHTML='<button type="button" aria-expanded="'+open+'" aria-controls="panel">编辑</button>'+(open?'<section id="panel">A real editor</section>':'');document.querySelector('button').onclick=()=>{clicks++;render(!open)};}render(true);window.addEventListener('resize',()=>{if(innerWidth===390&&clicks!==2)throw Error('Desktop collapse and restore were skipped: '+clicks);if(innerWidth===1280&&clicks!==4)throw Error('Mobile collapse and restore were skipped: '+clicks);});</script></body></html>`;
+ const r=await validateBrowserDelivery(html);assert.equal(r.ok,true,JSON.stringify(r));assert.equal(r.layoutChecks.length,2);
+});
