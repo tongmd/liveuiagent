@@ -12,7 +12,7 @@ async function serve(t, app) {
   return `http://127.0.0.1:${server.address().port}`;
 }
 
-test('complete-app execution requests English defaults without changing original local chat or user data', async t => {
+test('complete-app execution preserves the current request language without changing original local chat or user data', async t => {
   const appId = '12345678-1234-1234-1234-123456789abc';
   const metadata = {id: appId, name: 'Notes', description: 'Your notes', revision: 1, createdAt: '2026-01-01'};
   const calls = [];
@@ -59,12 +59,13 @@ test('complete-app execution requests English defaults without changing original
   const pkg=merged.apps[0].appPackage;
   assert.equal(pkg.ui.meta.agentWorkflow[0].actionRoutes[0].actionId,'agent.invoke');
   assert.ok(pkg.actions.actions['agent.invoke']);
-  const original = 'Build a notes app. Keep the sample title “日记” unchanged.';
+  const original = '做一个周末出行清单，保留我的标题“日记”。';
   assert.equal((await post('/agent/run', {completeApp: true, delivery: 'html', prompt: original})).status, 200);
   assert.deepEqual(db.prepare('SELECT prompt, label FROM chat_history').get(), {prompt: original, label: 'Create: ' + original.slice(0, 60)});
-  assert.match(calls[0].body.prompt, /^LiveUIAgent output preference: use English/);
-  assert.match(calls[0].body.prompt, /unless the original request explicitly asks for another language/);
+  assert.match(calls[0].body.prompt, /^LiveUIAgent output preference: preserve the language of the original user request/);
+  assert.match(calls[0].body.prompt, /unless that request explicitly asks for another language/);
   assert.ok(calls[0].body.prompt.endsWith('\n\nOriginal user request:\n' + original));
+  assert.doesNotMatch(calls[0].body.prompt, /use English for the app UI/);
 
   const revision = 'Add a search field. Please use French for the interface.';
   const revised = await post('/agent/patch-app', {appId: 'dsh_' + appId, prompt: revision});
@@ -77,7 +78,7 @@ test('complete-app execution requests English defaults without changing original
   const eventPayload = {payload: {note: '原文 must remain unchanged'}};
   assert.equal((await post('/agent/action', {appId: 'dsh_' + appId, prompt: action, eventPayload})).status, 202);
   assert.ok(calls[2].body.prompt.endsWith(action));
-  assert.match(calls[2].body.prompt, /^LiveUIAgent output preference: use English/);
+  assert.match(calls[2].body.prompt, /^LiveUIAgent output preference: preserve the language of the original user request/);
   assert.deepEqual(calls[2].body.context.eventPayload, eventPayload);
 
   const before = calls.length;

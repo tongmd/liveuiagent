@@ -13,7 +13,7 @@ import { runtimeError, type HarnessId } from './runtime-settings.js';
 const PREFIX = 'dsh_';
 const internalId = (id: string) => /^dsh_[a-f0-9-]{36}$/.test(id) ? id.slice(4) : '';
 const error = (message: string, status = 400) => Object.assign(new Error(message), {status});
-const OUTPUT_LANGUAGE_REQUEST = 'LiveUIAgent output preference: use English for the app UI, metadata, and replies unless the original request explicitly asks for another language. Preserve user content and proper names.\n\nOriginal user request:\n';
+const OUTPUT_LANGUAGE_REQUEST = 'LiveUIAgent output preference: preserve the language of the original user request for the app UI, metadata, and replies unless that request explicitly asks for another language. Preserve user content and proper names.\n\nOriginal user request:\n';
 function withOutputLanguage(prompt: unknown) {
   if (typeof prompt !== 'string' || !prompt.trim()) throw error('Describe what you want to do');
   if (OUTPUT_LANGUAGE_REQUEST.length + prompt.length > 16000) throw error(`Keep your request within ${16000 - OUTPUT_LANGUAGE_REQUEST.length} characters`);
