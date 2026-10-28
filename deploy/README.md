@@ -84,3 +84,48 @@ sudo nginx -t
 ```
 
 Run `npm run deploy -- --help` for all options. Verify the public app, model selection, and evaluator downloads after deployment.
+
+## Codex through an existing ChatGPT login
+
+The optional Codex harness uses a relay on the machine where Codex is already logged in. The relay uses the local Codex Responses transport for JSON inference and the installed `codex app-server` only to refresh that login. It supplies no model tools, skills, private conversation history, or filesystem context. LiveUIAgent continues to own planning, tool execution, and application data.
+
+Requirements: Python 3.11+, an installed Codex CLI with a working ChatGPT login, and a private connection between the relay and the LiveUIAgent server. API-key login is not supported by this relay. The internal Codex Responses endpoint can change; request failures are reported without switching providers or silently retrying inference.
+
+Create a private bearer token file outside the repository, then run:
+
+```sh
+python3 deploy/codex-relay/relay.py \
+  --token-file /private/liveui-codex-token \
+  --model gpt-6-astra --effort high --port 19503
+```
+
+`--codex` selects a CLI executable when it is not on `PATH`; `--auth-file` defaults to `~/.codex/auth.json`. `LIVEUI_CODEX_PROXY` can supply an HTTPS proxy URL if required. The relay binds only to `127.0.0.1`; both `/health` and `/v1/chat/completions` require its bearer token.
+
+For a remote LiveUIAgent host, forward its loopback port back to the logged-in machine. Run the relay and tunnel under your process supervisor:
+
+```sh
+ssh -NT -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+  -R 127.0.0.1:19503:127.0.0.1:19503 YOUR_SSH_HOST
+```
+
+Set these in the private LiveUIAgent server environment:
+
+```dotenv
+LIVEUIAGENT_CODEX_BASE_URL=http://127.0.0.1:19503/v1
+LIVEUIAGENT_CODEX_TOKEN=YOUR_RELAY_BEARER_TOKEN
+LIVEUIAGENT_CODEX_ALLOWED_USERS=YOUR_LIVEUI_ACCOUNT
+LIVEUIAGENT_CODEX_MODEL=gpt-6-astra
+LIVEUIAGENT_CODEX_TIMEOUT_MS=180000
+LIVEUIAGENT_CODEX_MAX_CONCURRENT=2
+```
+
+Keep the OAuth login on its original machine; only the separate relay bearer belongs on the server. Leave the allowlist empty to disable access. The relay machine must stay online and connected, and its Codex account must have available capacity. Existing Native and DSH choices remain available.
+
+The relay accepts ordered textual messages and optional JSON schemas, requires valid JSON output, and rejects model tool output. Each inference has its own subprocess, cleaned up when the request finishes, times out, or disconnects. It admits at most four requests concurrently, limits request bodies to 2 MiB, and defaults to a 180-second deadline including authentication refresh. Client deadlines can shorten that limit. It does not log prompts, response bodies, or credentials.
+
+Run the transport checks without making model calls:
+
+```sh
+python3 -m unittest discover -s deploy/codex-relay -v
+```
