@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from 'node:util';
 import { generateStructuredUi } from './structured-ui.js';
+import { buildUiExperienceContext } from './ui-experience-context.js';
 import { normalizeDisplayEnvironment } from './display-environment.js';
 import { usesHtmlDelivery } from './native-harness.js';
 import { withActionDeadline, remainingActionMs } from './action-deadline.js';
@@ -302,8 +303,10 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       // Resolve the account's existing provider for this HTML app; never select another model.
       const previousAppId=req.body.appId;req.body.appId=appId;
       let llm:any;try{llm=llmOf(req);}finally{if(previousAppId===undefined)delete req.body.appId;else req.body.appId=previousAppId;}
-      const owner=userOf(req),job=hostActions.createUi(owner,appId,String(llm?.model||selected.model));
-      void generateStructuredUi(String(body.prompt||''),body.context,llm).then(result=>hostActions.finishUi(owner,job,result),failure=>hostActions.finishUi(owner,job,null,failure)).catch(()=>{console.error('Could not persist structured UI job outcome: '+job.id);});
+      const owner=userOf(req);
+      const experience=buildUiExperienceContext({app:saved.app,memories:personal.recall(owner,appId)});
+      const job=hostActions.createUi(owner,appId,String(llm?.model||selected.model));
+      void generateStructuredUi(String(body.prompt||''),body.context,llm,experience).then(result=>hostActions.finishUi(owner,job,result),failure=>hostActions.finishUi(owner,job,null,failure)).catch(()=>{console.error('Could not persist structured UI job outcome: '+job.id);});
       return job;
     }
 
