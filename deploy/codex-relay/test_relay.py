@@ -5,14 +5,19 @@ from codex_response import make_payload,parse_events
 
 FAKE='''import sys,json,time,os,pathlib
 pid=pathlib.Path(sys.argv[2]);tmp=pid.with_suffix('.new');tmp.write_text(str(os.getpid()));tmp.replace(pid)
-json.loads(sys.stdin.readline())
+request=json.loads(sys.stdin.readline())
 mode=sys.argv[1]
+if mode=='format':assert request['response_format']=='json_object'
 if mode=='hang':time.sleep(30)
 if mode in ('tool','error'):
  print(json.dumps({'error':'tool_output_rejected' if mode=='tool' else 'response_failed'}),flush=True);sys.exit(1)
 print(json.dumps({'content':'{"ok":true}','model':'test-model'}),flush=True)
 '''
 class WireTests(unittest.TestCase):
+ def test_explicit_json_object_format_reaches_responses_payload(self):
+  p=make_payload('test-model',[{'role':'user','content':'Return JSON'}],None,'high',True)
+  self.assertEqual(p['text'],{'format':{'type':'json_object'}})
+  self.assertEqual(p['tools'],[])
  def test_ordered_roles_no_tools_or_private_context(self):
   messages=[{'role':'system','content':'host instruction'},{'role':'user','content':'request'},{'role':'assistant','content':'prior response'},{'role':'user','content':'followup'}]
   p=make_payload('test-model',messages,None,'high')
@@ -57,9 +62,11 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
  async def start(self,mode,timeout=2):
   relay=Relay(self.runner(mode),'x'*40,model='test-model',timeout=timeout)
   s=await asyncio.start_server(relay.handle,'127.0.0.1',0);self.servers.append(s);return s.sockets[0].getsockname()[1],relay
- async def request(self,port,token=True,keep_open=False):
+ async def request(self,port,token=True,keep_open=False,response_format=None):
   r,w=await asyncio.open_connection('127.0.0.1',port)
-  data=json.dumps({'messages':[{'role':'user','content':'test'}]}).encode();auth='x'*40 if token else 'wrong'
+  body={'messages':[{'role':'user','content':'test'}]}
+  if response_format:body['response_format']={'type':response_format}
+  data=json.dumps(body).encode();auth='x'*40 if token else 'wrong'
   w.write(f'POST /v1/chat/completions HTTP/1.1\r\nAuthorization: Bearer {auth}\r\nContent-Length: {len(data)}\r\n\r\n'.encode()+data);await w.drain()
   if keep_open:return r,w
   out=await r.read();w.close();await w.wait_closed();return out
@@ -80,4 +87,6 @@ class ProcessTests(unittest.IsolatedAsyncioTestCase):
   relay.active=4;out=await self.request(port);self.assertIn(b'429',out);self.assertFalse((self.p/'pid').exists());relay.active=0
  async def test_http_response_contract(self):
   port,_=await self.start('ok');out=await self.request(port);body=json.loads(out.split(b'\r\n\r\n',1)[1]);self.assertEqual(json.loads(body['choices'][0]['message']['content']),{'ok':True});self.assertEqual(body['liveui']['toolsExecuted'],0)
+ async def test_http_json_format_reaches_real_child(self):
+  port,_=await self.start('format');out=await self.request(port,response_format='json_object');body=json.loads(out.split(b'\r\n\r\n',1)[1]);self.assertEqual(json.loads(body['choices'][0]['message']['content']),{'ok':True});self.assert_dead()
 if __name__=='__main__':unittest.main()

@@ -65,20 +65,20 @@ async def refresh_auth(executable,auth_file,expected_generation=None):
 class ResponsesRunner:
  def __init__(self,executable,auth_file,effort='high',command_factory=None):
   self.executable,self.auth_file,self.effort=executable,pathlib.Path(auth_file),effort;self.command_factory=command_factory
- async def infer(self,model,messages,schema=None):
+ async def infer(self,model,messages,schema=None,response_format=None):
   # Only a definite authentication rejection warrants refresh plus one retry.
   generation=AUTH_GENERATIONS.get(str(self.auth_file.resolve()),0)
-  try:return await self._infer_once(model,messages,schema)
+  try:return await self._infer_once(model,messages,schema,response_format)
   except RelayError as failure:
    if failure.code!='codex_http_401':raise
   await refresh_auth(self.executable,self.auth_file,expected_generation=generation)
-  return await self._infer_once(model,messages,schema)
- async def _infer_once(self,model,messages,schema=None):
+  return await self._infer_once(model,messages,schema,response_format)
+ async def _infer_once(self,model,messages,schema=None,response_format=None):
   env={k:v for k,v in os.environ.items() if k in ('PATH','HOME','USER','LANG','TMPDIR','LIVEUI_CODEX_PROXY')}
   cmd=self.command_factory() if self.command_factory else [sys.executable,str(pathlib.Path(__file__).with_name('codex_response.py')),str(self.auth_file)]
   proc=await asyncio.create_subprocess_exec(*cmd,env=env,stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL,start_new_session=True,limit=3*1024*1024)
   try:
-   proc.stdin.write((json.dumps({'model':model,'messages':messages,'schema':schema,'effort':self.effort},ensure_ascii=False)+'\n').encode());await proc.stdin.drain();proc.stdin.close()
+   proc.stdin.write((json.dumps({'model':model,'messages':messages,'schema':schema,'effort':self.effort,'response_format':response_format},ensure_ascii=False)+'\n').encode());await proc.stdin.drain();proc.stdin.close()
    line=await proc.stdout.readline();await proc.wait()
    try:result=json.loads(line)
    except Exception:raise RelayError('codex_transport_failed','Codex returned an invalid transport response')
@@ -123,7 +123,8 @@ class Relay:
     except ValueError: raise RelayError('invalid_timeout','Invalid timeout',400)
     timeout=max(.05,min(self.timeout,requested))
     self.active+=1;admitted=True;start=time.monotonic()
-    work=asyncio.create_task(self.runner.infer(model,messages,schema)); disconnect=asyncio.create_task(reader.read(1))
+    response_format=(body.get('response_format') or {}).get('type')
+    work=asyncio.create_task(self.runner.infer(model,messages,schema,response_format='json_object')) if response_format=='json_object' else asyncio.create_task(self.runner.infer(model,messages,schema)); disconnect=asyncio.create_task(reader.read(1))
     try:
      done,_=await asyncio.wait([work,disconnect],timeout=timeout,return_when=asyncio.FIRST_COMPLETED)
      if disconnect in done: raise RelayError('client_disconnected','Client disconnected',499)

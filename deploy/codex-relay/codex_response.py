@@ -8,12 +8,13 @@ ENDPOINT='https://chatgpt.com/backend-api/codex/responses'
 SOCKET_TIMEOUT_SECONDS=300
 INSTRUCTIONS='You are liveUI JSON inference. Follow the ordered system/developer/user/assistant conversation supplied below. Return exactly the JSON object or value requested, without markdown. You have no tools. Do not execute commands, access files, contact services, or perform business actions; the liveUI host owns all such actions.'
 
-def make_payload(model,messages,schema,effort):
+def make_payload(model,messages,schema,effort,json_object=False):
  # Preserve roles and order. Responses calls use developer for system policies.
  # No private session, skill catalog, environment, or filesystem context is added.
  payload={'model':model,'instructions':INSTRUCTIONS,'input':[{'role':'developer' if m['role']=='system' else m['role'],'content':m['content']} for m in messages],
           'tools':[],'tool_choice':'none','parallel_tool_calls':False,'stream':True,'store':False,'reasoning':{'effort':effort}}
  if schema is not None:payload['text']={'format':{'type':'json_schema','name':'liveui_result','schema':schema,'strict':True}}
+ elif json_object:payload['text']={'format':{'type':'json_object'}}
  return payload
 
 def parse_events(lines,expected_model=None,metadata=None):
@@ -54,7 +55,7 @@ def main():
  if auth.get('auth_mode')!='chatgpt':raise RuntimeError('chatgpt_login_required')
  tokens=auth.get('tokens',{})
  if not tokens.get('access_token') or not tokens.get('account_id'):raise RuntimeError('login_required')
- payload=make_payload(request['model'],request['messages'],request.get('schema'),request['effort'])
+ payload=make_payload(request['model'],request['messages'],request.get('schema'),request['effort'],request.get('response_format')=='json_object')
  headers={'Authorization':'Bearer '+tokens['access_token'],'ChatGPT-Account-Id':tokens['account_id'],'Content-Type':'application/json','Accept':'text/event-stream','originator':'codex_cli_rs'}
  proxy=os.environ.get('LIVEUI_CODEX_PROXY','')
  opener=urllib.request.build_opener(urllib.request.ProxyHandler({'https':proxy} if proxy else {}))
