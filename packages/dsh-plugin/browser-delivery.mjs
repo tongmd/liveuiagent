@@ -97,6 +97,7 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       await page.setViewport(size);
       await new Promise(resolve => setTimeout(resolve, 50));
       const measured = await frame.evaluate(measureDeliveryLayout);
+      measured.violations.push(...await verifyExplicitDisclosures(frame));
       layoutChecks.push({...size,...measured});
       for (const violation of measured.violations) add('browser_layout', `${size.width}x${size.height}: ${violation}`);
     }
@@ -270,4 +271,56 @@ function measureDeliveryLayout() {
   });
   if(oversized) violations.push(`Long text uses ${getComputedStyle(oversized).fontSize} type. Use readable semantic heading/body sizes on every render path, including restored views.`);
   return {iframeWidth:width,iframeHeight:height,scrollWidth:Math.max(document.documentElement.scrollWidth,document.body.scrollWidth),violations};
+}
+
+async function verifyExplicitDisclosures(frame) {
+  // Only explicit disclosure buttons. Never submit, invoke a host action or
+  // follow a link. Resolve again after each click: React may replace the DOM.
+  const targets = await frame.evaluate(() => [...new Set([...document.querySelectorAll('[aria-expanded][aria-controls]')].map(n=>n.getAttribute('aria-controls')?.trim()).filter(t=>t&&!/\s/.test(t)))]);
+  const violations=[];let checked=0;
+  for(const target of targets) {
+    const initial=await frame.evaluateHandle(resolveDisclosureControl,target),button=initial.asElement();
+    if(!button){await initial.dispose();continue;}
+    if(checked++>=3){await initial.dispose();break;}
+    const expanded=await button.evaluate(n=>n.getAttribute('aria-expanded'));
+    try {
+      if(expanded==='true')await button.click();
+      const result=await frame.evaluate(settleDisclosurePanel,target);
+      const current=await frame.evaluateHandle(resolveDisclosureControl,target);
+      const now=await current.asElement()?.evaluate(n=>n.getAttribute('aria-expanded'));
+      await current.dispose();
+      if(now!=='false')violations.push(`Disclosure for #${target} did not collapse after its explicit toggle.`);
+      else if(!result.hidden)violations.push(`Disclosure for #${target} reports aria-expanded=false but its controlled panel remains visible (display:${result.display}, ${Math.round(result.width)}x${Math.round(result.height)}). Hide the controlled panel when collapsed and keep the toggle state consistent.`);
+    } finally {
+      if(expanded==='true') {
+        const current=await frame.evaluateHandle(resolveDisclosureControl,target),restore=current.asElement();
+        if(restore&&await restore.evaluate(n=>n.getAttribute('aria-expanded')==='false')) {
+          await restore.click();await frame.evaluate(settleDisclosurePanel,target);
+        }
+        await current.dispose();
+      }
+      await initial.dispose();
+    }
+  }
+  return violations;
+}
+function resolveDisclosureControl(target) {
+  if([...document.querySelectorAll('[id]')].filter(n=>n.id===target).length!==1)return null;
+  const controls=[...document.querySelectorAll('[aria-expanded][aria-controls]')].filter(node=>{
+    const role=node.getAttribute('role'),safeButton=node.tagName==='BUTTON'
+      ? node.getAttribute('type')==='button'&&(!role||role==='button')
+      : role==='button'&&node.tagName!=='INPUT'&&!node.hasAttribute('href');
+    const r=node.getBoundingClientRect(),s=getComputedStyle(node);
+    return safeButton&&node.getAttribute('aria-controls')?.trim()===target&&/^(true|false)$/.test(node.getAttribute('aria-expanded'))&&r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&!node.closest('[data-liveui-action]')&&!node.disabled&&node.getAttribute('aria-disabled')!=='true';
+  });
+  return controls.length===1?controls[0]:null;
+}
+async function settleDisclosurePanel(target) {
+  await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+  const panel=document.getElementById(target);
+  if(!panel)return {hidden:true};
+  const animations=panel.getAnimations().filter(a=>a.playState==='running'&&Number.isFinite(a.effect?.getComputedTiming()?.endTime));
+  await Promise.all(animations.map(a=>a.finished.catch(()=>{})));
+  const r=panel.getBoundingClientRect(),s=getComputedStyle(panel);
+  return {hidden:s.display==='none'||s.visibility==='hidden'||s.contentVisibility==='hidden'||s.opacity==='0'||(parseFloat(s.maxHeight)===0&&['hidden','clip'].includes(s.overflowY))||r.width===0||r.height===0||panel.getClientRects().length===0,display:s.display,width:r.width,height:r.height};
 }
