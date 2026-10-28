@@ -3,7 +3,7 @@ import { normalizeDeliveryViewport } from './delivery-viewport.mjs';
 /** Instructions shared by every real DSH coding task. */
 export const APP_INSTRUCTIONS = `Build or improve a real personal web application for the user's request.
 Write the finished application to index.html in the current task directory and its metadata to app.json in the current task directory.
-Use your actual filesystem and command tools. Read existing files first when modifying an app.
+Use your actual filesystem and command tools. Before writing or editing an existing file, use the actual file-read tool on that exact path; reading through bash cat/sed does not register the write tool guard. If writing says the file has not been read, call the read tool immediately and retry the same prepared write, rather than searching for SDK source or restarting the task.
 
 DELIVERY ORDER
 1. Read relevant existing files and LIVEUI_UI_API.md, the complete injected host API reference in this task directory. Do not search sessions, the filesystem, package registries or the web for SDK source; it is injected by the host and cannot be installed. Write app.json immediately with the intended short name and description; checks must be empty until actually run.

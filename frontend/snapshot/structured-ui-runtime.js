@@ -1,7 +1,7 @@
 // Self-contained: bootstrap embeds this function's toString into the sandbox iframe.
 window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
   'use strict';
-  const generations = new WeakMap(), active = new WeakSet();
+  const generations = new WeakMap(), active = new WeakSet(), richSaveQueues = new WeakMap();
   function validateRich(raw) {
  const bad=m=>{throw Error('Invalid rich component: '+m);};
  const obj=x=>x&&typeof x==='object'&&!Array.isArray(x);
@@ -45,6 +45,17 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
     }
     return result;
   }
+  async function flushRichSaves(callback, queue) {
+    if(queue.running)return;queue.running=true;
+    try {
+      while(queue.pending.size){
+        const [key,entry]=queue.pending.entries().next().value;queue.pending.delete(key);
+        if(!entry.active())continue;
+        try { await callback(key,entry.view); }
+        catch(error){if(entry.active())entry.host.dispatchEvent(new CustomEvent('liveui:error',{bubbles:true,detail:{message:String(error.message||error)}}));}
+      }
+    } finally {queue.running=false;if(queue.pending.size)void flushRichSaves(callback,queue);}
+  }
   function renderRich(raw,doc,options) {
     const host=doc.createElement('section');host.style.cssText='position:relative;min-width:0;overflow:hidden;border:1px solid #dce4ee;border-radius:18px;background:#f8fafc;color:#172033;';
     const data=raw.scene||raw.plot||raw.diagram;
@@ -83,7 +94,9 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
     const pLoc=gl.getAttribLocation(program,'p'),cLoc=gl.getAttribLocation(program,'c'),pb=gl.createBuffer(),cb=gl.createBuffer();
     const key=JSON.stringify(data.objects.map(o=>o.id));let view={yaw:.55,pitch:-.35,zoom:1,spread:1,...(options.richState?.[key]||{})};
     for(const k of ['yaw','pitch','zoom','spread'])if(!Number.isFinite(view[k]))view[k]={yaw:.55,pitch:-.35,zoom:1,spread:1}[k];view.zoom=Math.max(.4,Math.min(2.5,view.zoom));view.spread=Math.max(.3,Math.min(2.5,view.spread));spread.value=String(view.spread);
-    const emit=()=>{host.dataset.view=JSON.stringify(view);if(typeof options.onRichStateChange==='function')Promise.resolve(options.onRichStateChange(key,{...view})).catch(e=>host.dispatchEvent(new CustomEvent('liveui:error',{bubbles:true,detail:{message:String(e.message||e)}})));};
+    const callback=options.onRichStateChange;let saveQueue=null;
+    if(typeof callback==='function'){saveQueue=richSaveQueues.get(callback);if(!saveQueue){saveQueue={running:false,pending:new Map()};richSaveQueues.set(callback,saveQueue);}}
+    const emit=()=>{host.dataset.view=JSON.stringify(view);if(disposed||!saveQueue)return;saveQueue.pending.set(key,{view:{...view},host,active:()=>!disposed});void flushRichSaves(callback,saveQueue);};
     function mesh(shape){const verts=[];const tri=(a,b,c)=>verts.push([a,b,c]);
       if(shape==='box'){const v=[[-.5,-.5,-.5],[.5,-.5,-.5],[.5,.5,-.5],[-.5,.5,-.5],[-.5,-.5,.5],[.5,-.5,.5],[.5,.5,.5],[-.5,.5,.5]];for(const q of [[0,3,2,1],[4,5,6,7],[0,1,5,4],[2,3,7,6],[1,2,6,5],[3,0,4,7]]){tri(v[q[0]],v[q[1]],v[q[2]]);tri(v[q[0]],v[q[2]],v[q[3]]);}}
       else{const torus=shape==='torus',sphere=shape==='sphere',N=20,M=sphere?12:torus?10:1;const at=(i,j)=>{const u=i/N*Math.PI*2,v=j/M*Math.PI*2;if(torus)return[(.65+.22*Math.cos(v))*Math.cos(u),.22*Math.sin(v),(.65+.22*Math.cos(v))*Math.sin(u)];if(sphere){const a=j/M*Math.PI;return[.6*Math.sin(a)*Math.cos(u),.6*Math.cos(a),.6*Math.sin(a)*Math.sin(u)];}const r=shape==='cone'?(1-j)*.6:.5;return[r*Math.cos(u),j-.5,r*Math.sin(u)];};for(let i=0;i<N;i++)for(let j=0;j<M;j++){const a=at(i,j),b=at(i+1,j),c=at(i+1,j+1),d=at(i,j+1);tri(a,b,c);tri(a,c,d);}if(!sphere&&!torus)for(let i=0;i<N;i++){tri([0,-.5,0],at(i+1,0),at(i,0));tri([0,.5,0],at(i,1),at(i+1,1));}}
@@ -102,7 +115,7 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
     // Detached build renders once at a conservative size; connection/resize refines resolution without a perpetual animation loop.
     draw();let ro=null,mo=null,disposed=false;
     canvas.__liveuiMount=()=>{if(disposed)return;draw();if(!ro&&typeof ResizeObserver==='function'){ro=new ResizeObserver(()=>{if(host.isConnected&&!disposed)draw();});ro.observe(canvas);}if(!mo&&typeof MutationObserver==='function'){mo=new MutationObserver(()=>{if(!host.isConnected)canvas.__liveuiDispose();});mo.observe(doc.documentElement,{childList:true,subtree:true});}};
-    canvas.__liveuiDispose=()=>{if(disposed)return;disposed=true;ro?.disconnect();mo?.disconnect();gl.deleteBuffer(pb);gl.deleteBuffer(cb);gl.deleteProgram(program);gl.getExtension('WEBGL_lose_context')?.loseContext();canvas.dataset.disposed='true';};
+    canvas.__liveuiDispose=()=>{if(disposed)return;disposed=true;if(saveQueue?.pending.get(key)?.host===host)saveQueue.pending.delete(key);ro?.disconnect();mo?.disconnect();gl.deleteBuffer(pb);gl.deleteBuffer(cb);gl.deleteProgram(program);gl.getExtension('WEBGL_lose_context')?.loseContext();canvas.dataset.disposed='true';};
 
     return host;
   }

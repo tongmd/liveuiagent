@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 export const HOST_UI_REFERENCE = `# liveUI maintained UI API
-This is the complete host contract. Read this file; do not search the filesystem, sessions, package managers or the web for SDK source. There is no npm package or import to install. The host injects window.liveuiagent and its ui API into the sandbox iframe. Write the application files in this work directory only.
+This is the complete host contract. Read this file; do not search the filesystem, sessions, package managers or the web for SDK source. There is no npm package or import to install. The host injects window.liveuiagent and its ui API into the sandbox iframe. Write the application files in this work directory only. Before the write/edit tool changes an existing file, call the actual file-read tool on its exact path. Bash cat/sed does not satisfy the tracked-read guard. If the write tool reports file-not-read, immediately use the read tool and retry the same prepared write; do not search for SDK source or restart.
 
 ## Entry point
 For generated UI include <meta name="liveui-ui-protocol" content="liveui-tree-v1"> in head. Plain inline JavaScript uses const sdk=window.liveuiagent; const ui=sdk.ui. Do not redeclare, replace or reimplement SDK/ui methods. Never call fetch or an external model API.
