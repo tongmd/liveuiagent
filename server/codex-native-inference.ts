@@ -34,10 +34,21 @@ export function createCodexNativeInference(env: NodeJS.ProcessEnv = process.env)
         body:JSON.stringify({...request, model, stream:false, tools:[], tool_choice:'none'}),
       });
       if (!response.ok) {
-        // Relay bodies may contain provider diagnostics. Never echo secrets,
-        // internal addresses, or private prompt fragments to the browser.
-        await response.body?.cancel();
-        throw failure(`Codex inference failed (HTTP ${response.status})`, 'codex_upstream_error', response.status === 429 ? 429 : 502);
+        // Inspect only a bounded envelope and return a closed known code. Relay
+        // messages, unknown codes and arbitrary bodies never reach jobs or UI.
+        const known = new Set(['auth_required','auth_refresh_failed','codex_http_401','codex_http_429','codex_transport_failed','timeout','busy','invalid_json']);
+        let safeCode: string | undefined;
+        const reader=response.body?.getReader();
+        if(reader) {
+          const chunks:Uint8Array[]=[];let bytes=0;
+          try {
+            for(;;){const part=await reader.read();if(part.done)break;bytes+=part.value.byteLength;if(bytes>4096){await reader.cancel();break;}chunks.push(part.value);}
+            if(bytes<=4096){const envelope=JSON.parse(Buffer.concat(chunks).toString('utf8'));const code=envelope?.error?.code;if(typeof code==='string'&&known.has(code))safeCode=code;}
+          } catch { /* Preserve the generic HTTP failure for unreadable bodies. */ }
+          finally { reader.releaseLock(); }
+        }
+        const code=safeCode?(safeCode.startsWith('codex_')?safeCode:'codex_'+safeCode):'codex_upstream_error';
+        throw failure(`Codex inference failed (HTTP ${response.status}${safeCode?'; '+safeCode:''})`, code, response.status === 429 ? 429 : 502);
       }
       let result: any;
       try { result = await response.json(); }

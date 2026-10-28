@@ -90,3 +90,14 @@ test('appearance generation uses Codex while retaining validated saved settings'
   assert.equal(response.status,200);const result:any=await response.json();
   assert.equal(result.appearance.model,'gpt-6-astra');assert.equal(result.appearance.layout,'focus');assert.equal(calls.length,1);
 });
+
+test('bounded relay failures expose only the closed safe diagnosis and keep one dispatch',async t=>{
+ let code='auth_required';const {adapter,calls}=await relay(t,(_b,_q,res)=>{res.writeHead(503);res.end(JSON.stringify({error:{code,message:'private-prompt test-relay-secret'},private:'not-for-ui'}));});
+ for(const [input,expected] of [['auth_required','codex_auth_required'],['auth_refresh_failed','codex_auth_refresh_failed'],['codex_http_401','codex_http_401'],['codex_http_429','codex_http_429']]){code=input;await assert.rejects(adapter.chatCompletion({messages:[]},{timeoutMs:1000}),(e:any)=>e.code===expected&&e.status===502&&e.message.includes(input)&&!/private|test-relay-secret|not-for-ui/.test(e.message));}
+ assert.equal(calls.length,4);
+});
+test('unknown, misleading and oversized relay bodies remain generic HTTP failures',async t=>{
+ let body:any;const {adapter,calls}=await relay(t,(_b,_q,res)=>{res.writeHead(503);res.end(JSON.stringify(body));});
+ for(const candidate of [{error:{code:'private-token',message:'auth_required'}},{error:{code:'auth_required\nsecret'}},{error:{code:'auth_required'},padding:'private'.repeat(1000)}]){body=candidate;await assert.rejects(adapter.chatCompletion({messages:[]},{timeoutMs:1000}),(e:any)=>e.code==='codex_upstream_error'&&e.message==='Codex inference failed (HTTP 503)');}
+ assert.equal(calls.length,3);
+});
