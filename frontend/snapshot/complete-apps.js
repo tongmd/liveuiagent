@@ -1,7 +1,7 @@
 (() => {
   const stages = {'等待开始':'Queued','DSH 正在理解需求':'DSH is preparing your app','任务完成':'Complete','应用已更新':'App updated','本次任务未完成':'Task failed','服务已停止':'Service stopped','服务重启，请重新提交':'Service restarted. Please submit again.'};
   const stageLabel = value => stages[value] || (/[\u3400-\u9fff]/.test(value || '') ? 'Working…' : value || 'Working…');
-  const api=async(route,method='GET',body)=>{const path='/agent/complete/'+route;const r=await fetch(window.__liveuiPath?window.__liveuiPath(path):path,{method,headers:{...(method!=='GET'?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{})});const d=await r.json();if(!r.ok)throw Error(d.error||'Request failed');return d;};
+  const api=async(route,method='GET',body,signal)=>{const path='/agent/complete/'+route;let r;try{r=await fetch(window.__liveuiPath?window.__liveuiPath(path):path,{method,headers:{...(method!=='GET'?{'Content-Type':'application/json'}:{})},...(body!==undefined?{body:JSON.stringify(body)}:{}),...(signal?{signal}:{})});}catch(error){throw Object.assign(error,{transport:true});}let d;try{d=await r.json();}catch(error){if(!r.ok)throw Object.assign(Error('Request failed ('+r.status+')'),{status:r.status});if(error?.name==='TypeError')throw Object.assign(error,{transport:true});throw error;}if(!r.ok)throw Object.assign(Error(d.error||'Request failed'),{status:r.status});return d;};
   const channel=()=>Array.from(crypto.getRandomValues(new Uint8Array(24)),x=>x.toString(16).padStart(2,'0')).join('');
   function bootstrap(initial,key){
     const values=Object.assign(Object.create(null),initial),pending=new Map(),touched=new Set();let seq=0;
@@ -23,7 +23,7 @@
     const R=window.__liveuiagentReact,h=R.createElement,[data,setData]=R.useState(null),[status,setStatus]=R.useState('Opening…'),[prompt,setPrompt]=R.useState(''),[job,setJob]=R.useState(null),frame=R.useRef(null),key=R.useRef(channel()),writes=R.useRef(Promise.resolve()),alive=R.useRef(true),jobRef=R.useRef(null);
     const appId=app.appId;
     const load=async()=>{const d=await api('apps/'+appId);if(!alive.current)return;key.current=channel();setData(d);setStatus('');};
-    const wait=async(id)=>{for(;;){const j=await api('jobs/'+id);if(!['queued','running'].includes(j.status)){if(j.status!=='done')throw Error(j.error||'Task cancelled');return j;}if(alive.current){setStatus(stageLabel(j.stage));setJob(j);}await new Promise(r=>setTimeout(r,2000));}};
+    const wait=async(id)=>{const deadline=Date.now()+900000;let failures=0;const unconfirmed=cause=>{const failure=Object.assign(Error('Task '+id+' status is unconfirmed. It was not resubmitted. '+cause),{jobUnconfirmed:true,jobId:id});jobRef.current={...(jobRef.current||{}),id,statusUnconfirmed:true};if(alive.current){setStatus(failure.message);setJob({...jobRef.current,stage:failure.message});}return failure;};for(;;){if(Date.now()>=deadline)throw unconfirmed('Polling time limit reached.');let j;try{j=await api('jobs/'+id,'GET',undefined,AbortSignal.timeout(Math.max(1,deadline-Date.now())));failures=0;}catch(error){const recoverable=error.transport||[502,503,504].includes(error.status);if(!recoverable)throw error;if(++failures>=6||Date.now()>=deadline)throw unconfirmed(error.message);await new Promise(r=>setTimeout(r,Math.min(2000,Math.max(0,deadline-Date.now()))));continue;}if(!['queued','running'].includes(j.status)){if(j.status!=='done')throw Error(j.error||'Task cancelled');return j;}if(alive.current){setStatus(stageLabel(j.stage));setJob(j);}await new Promise(r=>setTimeout(r,Math.min(2000,Math.max(0,deadline-Date.now()))));}};
     R.useEffect(()=>{alive.current=true;load().catch(e=>setStatus(e.message));return()=>{alive.current=false;};},[appId]);
     R.useEffect(()=>{
       const handler=async e=>{
@@ -39,11 +39,11 @@
             if(jobRef.current)throw Error('Wait for the current task to finish');
             const j=await api('apps/'+appId+'/action','POST',{prompt:e.data.prompt,context:e.data.context??{}});jobRef.current=j;setJob(j);const result=await wait(j.id);reply(result.result);jobRef.current=null;if(alive.current){setJob(null);setStatus('');}
           }
-        }catch(err){reply(null,err.message);if(alive.current){setStatus(err.message);if(type==='ai'){jobRef.current=null;setJob(null);}}}
+        }catch(err){reply(null,err.message);if(alive.current){setStatus(err.message);if(type==='ai'&&!err.jobUnconfirmed){jobRef.current=null;setJob(null);}}}
       };
       addEventListener('message',handler);return()=>removeEventListener('message',handler);
     },[appId]);
-    const revise=async e=>{e.preventDefault();if(!prompt.trim()||jobRef.current)return;setStatus('Preparing changes…');jobRef.current={pending:true};setJob({stage:'Preparing changes…'});try{await writes.current;const j=await api('apps/'+appId+'/revise','POST',{prompt,displayEnvironment:{browserViewport:{width:innerWidth,height:innerHeight},appViewport:frame.current?{width:frame.current.clientWidth,height:frame.current.clientHeight}:null}});jobRef.current=j;setJob(j);await wait(j.id);setPrompt('');await load();window.__liveuiagentRefresh?.();}catch(err){setStatus(err.message);}finally{jobRef.current=null;setJob(null);}};
+    const revise=async e=>{e.preventDefault();if(!prompt.trim()||jobRef.current)return;setStatus('Preparing changes…');jobRef.current={pending:true};setJob({stage:'Preparing changes…'});try{await writes.current;const j=await api('apps/'+appId+'/revise','POST',{prompt,displayEnvironment:{browserViewport:{width:innerWidth,height:innerHeight},appViewport:frame.current?{width:frame.current.clientWidth,height:frame.current.clientHeight}:null}});jobRef.current=j;setJob(j);await wait(j.id);setPrompt('');await load();window.__liveuiagentRefresh?.();}catch(err){setStatus(err.message);}finally{if(!jobRef.current?.statusUnconfirmed){jobRef.current=null;setJob(null);}}};
     const download=()=>{const u=URL.createObjectURL(new Blob([data.html],{type:'text/html;charset=utf-8'})),a=document.createElement('a');a.href=u;a.download=app.name+'.html';a.click();setTimeout(()=>URL.revokeObjectURL(u),10000);};
     const src=R.useMemo(()=>data?documentFor(data.html,data.store,key.current):'', [data]);
     return h('div',{className:'complete-app-host'},
