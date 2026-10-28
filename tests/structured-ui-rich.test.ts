@@ -11,6 +11,7 @@ const tree:any={type:'Stack',children:[scene,plot,diagram]};
 test('bounded rich component schema accepts geometry/data and rejects executable or nonfinite payloads',()=>{
  assert.deepEqual(validateStructuredUiTree(tree,context),tree);
  for(const bad of [{...scene,scene:{...scene.scene,url:'javascript:alert(1)'}},{...scene,scene:{objects:[{...scene.scene.objects[0],scale:[1,0,1]}]}},{...scene,scene:{objects:Array(49).fill(scene.scene.objects[0])}},{...plot,plot:{...plot.plot,series:[{name:'x',color:'#000000',points:[[0,Infinity]]}]}},{...diagram,diagram:{...diagram.diagram,edges:[{from:'a',to:'absent'}]}}])assert.throws(()=>validateStructuredUiTree(bad,context));
+ assert.throws(()=>validateStructuredUiTree({type:'Stack',children:Array(5).fill(scene)},context),/at most 4/);
  assert.throws(()=>validateStructuredUiTree(tree,{...context,records:[{id:'r1',text:'preserve me'}]}),/omitted/);
 });
 test('configured one-call generation receives rich protocol and returns validated rich tree',async()=>{

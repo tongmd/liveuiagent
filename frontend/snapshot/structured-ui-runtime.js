@@ -65,7 +65,11 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
       }else{
         const nodes=new Map(data.nodes.map(n=>[n.id,n]));for(const e of data.edges){const a=nodes.get(e.from),b=nodes.get(e.to);svg.append(svgEl('line',{x1:50+a.x*540,y1:40+a.y*280,x2:50+b.x*540,y2:40+b.y*280,stroke:'#a0adbd','stroke-width':2}));if(e.label)tx(50+(a.x+b.x)*270,35+(a.y+b.y)*140,e.label);}
         for(const n of data.nodes){const g=svgEl('g',{tabindex:0,role:'button','aria-label':n.label});g.style.cursor='pointer';g.append(svgEl('circle',{cx:50+n.x*540,cy:40+n.y*280,r:22,fill:n.color}));const t=svgEl('text',{x:50+n.x*540,y:76+n.y*280,'text-anchor':'middle','font-size':14,'font-family':'system-ui',fill:'#172033'});t.textContent=n.label;g.append(t);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();g.dispatchEvent(new MouseEvent('click'));}});g.addEventListener('click',()=>{for(const el of svg.querySelectorAll('circle'))el.setAttribute('stroke','none');g.firstChild.setAttribute('stroke','#172033');g.firstChild.setAttribute('stroke-width','4');});svg.append(g);}
-      }return host;
+      }
+      let resize=null,unmount=null,disposed=false;
+      const fitLabels=()=>{const w=svg.getBoundingClientRect().width||480;for(const text of svg.querySelectorAll('text')){const base=Number(text.dataset.baseFont||text.getAttribute('font-size')||13);text.dataset.baseFont=String(base);text.setAttribute('font-size',String(Math.min(28,base*Math.max(1,640/w))));}};
+      svg.__liveuiMount=()=>{if(disposed)return;fitLabels();if(typeof ResizeObserver==='function'&&!resize){resize=new ResizeObserver(fitLabels);resize.observe(svg);}if(typeof MutationObserver==='function'&&!unmount){unmount=new MutationObserver(()=>{if(!host.isConnected)svg.__liveuiDispose();});unmount.observe(doc.documentElement,{childList:true,subtree:true});}};
+      svg.__liveuiDispose=()=>{disposed=true;resize?.disconnect();unmount?.disconnect();};return host;
     }
     const canvas=doc.createElement('canvas');canvas.setAttribute('aria-label',data.title||(zh?'可交互三维场景':'Interactive 3D scene'));canvas.setAttribute('role','img');canvas.tabIndex=0;canvas.style.cssText='width:100%;height:330px;display:block;touch-action:none;cursor:grab';host.append(canvas);
     const controls=doc.createElement('div');controls.style.cssText='display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:12px 16px;background:#fff;font:14px system-ui';
@@ -75,9 +79,9 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
     const gl=canvas.getContext('webgl',{antialias:true,preserveDrawingBuffer:true});if(!gl){const msg=label(zh?'此设备暂不支持三维渲染。':'3D rendering is unavailable on this device.');host.append(msg);return host;}
     host.dataset.renderer='webgl';
     const shader=(kind,src)=>{const s=gl.createShader(kind);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))fail('3D shader');return s;};
-    const program=gl.createProgram();gl.attachShader(program,shader(gl.VERTEX_SHADER,'attribute vec3 p;attribute vec3 c;varying vec3 col;void main(){gl_Position=vec4(p,1.0);col=c;}'));gl.attachShader(program,shader(gl.FRAGMENT_SHADER,'precision mediump float;varying vec3 col;void main(){gl_FragColor=vec4(col,1.0);}'));gl.linkProgram(program);if(!gl.getProgramParameter(program,gl.LINK_STATUS))fail('3D program');gl.useProgram(program);
+    const program=gl.createProgram();const vertex=shader(gl.VERTEX_SHADER,'attribute vec3 p;attribute vec3 c;varying vec3 col;void main(){gl_Position=vec4(p,1.0);col=c;}');const fragment=shader(gl.FRAGMENT_SHADER,'precision mediump float;varying vec3 col;void main(){gl_FragColor=vec4(col,1.0);}');gl.attachShader(program,vertex);gl.attachShader(program,fragment);gl.linkProgram(program);gl.deleteShader(vertex);gl.deleteShader(fragment);if(!gl.getProgramParameter(program,gl.LINK_STATUS))fail('3D program');gl.useProgram(program);
     const pLoc=gl.getAttribLocation(program,'p'),cLoc=gl.getAttribLocation(program,'c'),pb=gl.createBuffer(),cb=gl.createBuffer();
-    const key=data.objects.map(o=>o.id).join('|');let view={yaw:.55,pitch:-.35,zoom:1,spread:1,...(options.richState?.[key]||{})};
+    const key=JSON.stringify(data.objects.map(o=>o.id));let view={yaw:.55,pitch:-.35,zoom:1,spread:1,...(options.richState?.[key]||{})};
     for(const k of ['yaw','pitch','zoom','spread'])if(!Number.isFinite(view[k]))view[k]={yaw:.55,pitch:-.35,zoom:1,spread:1}[k];view.zoom=Math.max(.4,Math.min(2.5,view.zoom));view.spread=Math.max(.3,Math.min(2.5,view.spread));spread.value=String(view.spread);
     const emit=()=>{host.dataset.view=JSON.stringify(view);if(typeof options.onRichStateChange==='function')Promise.resolve(options.onRichStateChange(key,{...view})).catch(e=>host.dispatchEvent(new CustomEvent('liveui:error',{bubbles:true,detail:{message:String(e.message||e)}})));};
     function mesh(shape){const verts=[];const tri=(a,b,c)=>verts.push([a,b,c]);
@@ -98,7 +102,7 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
     // Detached build renders once at a conservative size; connection/resize refines resolution without a perpetual animation loop.
     draw();let ro=null,mo=null,disposed=false;
     canvas.__liveuiMount=()=>{if(disposed)return;draw();if(!ro&&typeof ResizeObserver==='function'){ro=new ResizeObserver(()=>{if(host.isConnected&&!disposed)draw();});ro.observe(canvas);}if(!mo&&typeof MutationObserver==='function'){mo=new MutationObserver(()=>{if(!host.isConnected)canvas.__liveuiDispose();});mo.observe(doc.documentElement,{childList:true,subtree:true});}};
-    canvas.__liveuiDispose=()=>{if(disposed)return;disposed=true;ro?.disconnect();mo?.disconnect();gl.deleteBuffer(pb);gl.deleteBuffer(cb);gl.deleteProgram(program);canvas.dataset.disposed='true';};
+    canvas.__liveuiDispose=()=>{if(disposed)return;disposed=true;ro?.disconnect();mo?.disconnect();gl.deleteBuffer(pb);gl.deleteBuffer(cb);gl.deleteProgram(program);gl.getExtension('WEBGL_lose_context')?.loseContext();canvas.dataset.disposed='true';};
 
     return host;
   }
@@ -107,7 +111,7 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
     json(tree, 64000);
     const records = references(options.records || [], 'records'), photos = references(options.photos || [], 'photos');
     const seenRecords = new Set(), seenPhotos = new Set();
-    let count = 0, textLength = 0;
+    let count = 0, textLength = 0, sceneCount = 0;
     const richRoots=[];
     const doc = options.document || document;
     function recordContent(record, checklist) {
@@ -143,6 +147,7 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
     }
     function visit(raw, depth, checklist = false) {
       if (++count > 200 || depth > 10 || !plain(raw) || !types.has(raw.type)) fail('unsupported node or tree limit');
+      if(raw.type==='Scene3D'&&++sceneCount>4)fail('at most 4 Scene3D views per tree');
       const allowed = new Set(['type','style','recordId']);
       if (containers.has(raw.type)) allowed.add('children');
       if(raw.type==='Scene3D')allowed.add('scene');if(raw.type==='Plot')allowed.add('plot');if(raw.type==='Diagram')allowed.add('diagram');
@@ -207,8 +212,8 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
     if ([...records.keys()].some(id=>!seenRecords.has(id)) || [...photos.keys()].some(id=>!seenPhotos.has(id))) fail('omitted source content');
     return root;}catch(error){for(const rich of richRoots)disposeRich(rich);throw error;}
   }
-  function mountRich(root){for(const canvas of root.querySelectorAll('canvas'))canvas.__liveuiMount?.();}
-  function disposeRich(root){for(const canvas of root.querySelectorAll('canvas'))canvas.__liveuiDispose?.();}
+  function mountRich(root){for(const canvas of root.querySelectorAll('canvas,svg'))canvas.__liveuiMount?.();}
+  function disposeRich(root){for(const canvas of root.querySelectorAll('canvas,svg'))canvas.__liveuiDispose?.();}
   function render(container, tree, options = {}) {
     if (!container || typeof container.replaceChildren !== 'function') fail('invalid container');
     const root = build(tree,{...options,document:container.ownerDocument});
