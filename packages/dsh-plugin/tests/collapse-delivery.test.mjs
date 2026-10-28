@@ -18,3 +18,8 @@ test('a disclosure that replaces its toggle and animates collapse still passes a
  const html=`<html><body><main id="app"></main><script>function render(open){document.getElementById('app').innerHTML=(open?'':'<div>Changed sibling structure</div>')+'<button id="toggle" type="button" aria-expanded="'+open+'" aria-controls="panel">编辑</button><section id="panel" style="overflow:hidden;height:'+(open?'100':'0')+'px">A real editor</section>';document.getElementById('toggle').onclick=()=>render(!open);if(!open)document.getElementById('panel').animate([{height:'100px'},{height:'0px'}],{duration:80});}render(true);</script></body></html>`;
  const r=await validateBrowserDelivery(html);assert.equal(r.ok,true,JSON.stringify(r));assert.equal(r.layoutChecks.length,2);
 });
+
+test('conditional unmount on collapse and remount on restore is a valid disclosure',async()=>{
+ const html=`<html><body><main id="app"></main><script>function render(open){document.getElementById('app').innerHTML='<button type="button" aria-expanded="'+open+'" aria-controls="panel">编辑</button>'+(open?'<section id="panel">A real editor</section>':'');document.querySelector('button').onclick=()=>render(!open);}render(true);</script></body></html>`;
+ const r=await validateBrowserDelivery(html);assert.equal(r.ok,true,JSON.stringify(r));assert.equal(r.layoutChecks.length,2);
+});

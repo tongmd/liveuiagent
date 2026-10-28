@@ -286,16 +286,19 @@ async function verifyExplicitDisclosures(frame) {
     try {
       if(expanded==='true')await button.click();
       const result=await frame.evaluate(settleDisclosurePanel,target);
-      const current=await frame.evaluateHandle(resolveDisclosureControl,target);
+      const current=await frame.evaluateHandle(resolveDisclosureControl,target,false);
       const now=await current.asElement()?.evaluate(n=>n.getAttribute('aria-expanded'));
       await current.dispose();
       if(now!=='false')violations.push(`Disclosure for #${target} did not collapse after its explicit toggle.`);
       else if(!result.hidden)violations.push(`Disclosure for #${target} reports aria-expanded=false but its controlled panel remains visible (display:${result.display}, ${Math.round(result.width)}x${Math.round(result.height)}). Hide the controlled panel when collapsed and keep the toggle state consistent.`);
     } finally {
       if(expanded==='true') {
-        const current=await frame.evaluateHandle(resolveDisclosureControl,target),restore=current.asElement();
+        const current=await frame.evaluateHandle(resolveDisclosureControl,target,false),restore=current.asElement();
         if(restore&&await restore.evaluate(n=>n.getAttribute('aria-expanded')==='false')) {
           await restore.click();await frame.evaluate(settleDisclosurePanel,target);
+          const restored=await frame.evaluateHandle(resolveDisclosureControl,target);
+          if(!restored.asElement()||!await restored.asElement().evaluate(n=>n.getAttribute('aria-expanded')==='true'))violations.push(`Disclosure for #${target} could not restore its original expanded control and panel.`);
+          await restored.dispose();
         }
         await current.dispose();
       }
@@ -304,8 +307,9 @@ async function verifyExplicitDisclosures(frame) {
   }
   return violations;
 }
-function resolveDisclosureControl(target) {
-  if([...document.querySelectorAll('[id]')].filter(n=>n.id===target).length!==1)return null;
+function resolveDisclosureControl(target, requireTarget=true) {
+  const count=[...document.querySelectorAll('[id]')].filter(n=>n.id===target).length;
+  if(count>1||(requireTarget&&count!==1))return null;
   const controls=[...document.querySelectorAll('[aria-expanded][aria-controls]')].filter(node=>{
     const role=node.getAttribute('role'),safeButton=node.tagName==='BUTTON'
       ? node.getAttribute('type')==='button'&&(!role||role==='button')
