@@ -1,3 +1,4 @@
+import { normalizeDisplayEnvironment } from './display-environment.js';
 import { usesHtmlDelivery } from './native-harness.js';
 import { withActionDeadline, remainingActionMs } from './action-deadline.js';
 import type express from 'express';
@@ -242,7 +243,8 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       servicePlan=await planAppWorldServices(planningPrompt,llmOf(req),toolBridge);
     }
     const services=servicePlan && toolBridge ? (await toolBridge.getAppDescriptions()).filter(service=>servicePlan!.services.includes(service.name)) : [];
-    const context = {...await contextual(req,appId),...(servicePlan?dshServiceContext(services):{})};
+    const displayEnvironment = normalizeDisplayEnvironment(req.body?.displayEnvironment);
+    const context = {...await contextual(req,appId),...(servicePlan?dshServiceContext(services):{}),displayEnvironment,...(displayEnvironment.appViewport ? {hostViewport:displayEnvironment.appViewport} : {})};
     const job = await dsh(req,'generate','POST',{prompt:withOutputLanguage(prompt),...(appId ? {appId:internalId(appId)} : {}),context,...selected});
     if(servicePlan && internalId(PREFIX+job.appId))serviceBindings.save(userOf(req),PREFIX+job.appId,job.id,servicePlan,planningPrompt);
     return {...job, execution:{harness:'dsh',model:job.model || selected.model}};

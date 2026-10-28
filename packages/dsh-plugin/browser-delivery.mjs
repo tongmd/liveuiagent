@@ -1,3 +1,5 @@
+import { normalizeDeliveryViewport } from './delivery-viewport.mjs';
+export { normalizeDeliveryViewport } from './delivery-viewport.mjs';
 import fs from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
 import puppeteer from 'puppeteer-core';
@@ -11,7 +13,7 @@ async function executable(explicit) {
 }
 
 // Deliberately a startup gate, not a claim that business workflows pass.
-export async function validateBrowserDelivery(html, { chrome, signal, settleMs = 350, requireAgentAction = false } = {}) {
+export async function validateBrowserDelivery(html, { chrome, signal, settleMs = 350, requireAgentAction = false, viewport } = {}) {
   let browser;
   let actionPhase = false;
   let outcome = 'failure';
@@ -22,6 +24,8 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
   const serviceSuccess = {ok:true,status:'succeeded',text:`Observed service result: delivery-success-${token}`,data:{entities:[{id:`delivery-${token}`,name:`Observed entity ${token}`,detail:`Observed detail ${token}`,group:`unknown-group-${token}`},{name:`Second entity ${token}`,detail:`Second detail ${token}`,group:`other-group-${token}`}],stats:[{label:`Observed count ${token}`,value:'1'}],evaluation:{pass:true,deficiencies:[]}}};
   let actionVerification;
   const errors = [];
+  const layoutChecks = [];
+  const requestedViewport = normalizeDeliveryViewport(viewport);
   const add = (code, message) => { if (errors.length < 12 && !errors.some(e => e.code === code && e.message === message)) errors.push({ code, message: String(message).slice(0, 600) }); };
   const stop = () => browser?.process()?.kill('SIGKILL');
   const budgetMs = requireAgentAction ? 40000 : 25000;
@@ -86,6 +90,17 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       return [...body.querySelectorAll('*')].some(e => { const r = e.getBoundingClientRect(); const s = getComputedStyle(e); return r.width > 0 && r.height > 0 && s.display !== 'none' && s.visibility !== 'hidden' && (e.textContent?.trim() || /^(INPUT|TEXTAREA|SELECT|CANVAS|SVG|IMG)$/.test(e.tagName)); });
     });
     if (!visible) add('browser_empty_page', 'Application has no visible content after startup');
+    // Measure the app iframe, not the outer host page. Reuse this same browser,
+    // SDK policy and total deadline; resizing never calls real AI or services.
+    const viewports = [requestedViewport ?? {width:1280,height:900}, {width:390,height:844}];
+    for (const size of viewports.filter((v,i,a)=>a.findIndex(x=>x.width===v.width&&x.height===v.height)===i)) {
+      await page.setViewport(size);
+      await new Promise(resolve => setTimeout(resolve, 50));
+      const measured = await frame.evaluate(measureDeliveryLayout);
+      layoutChecks.push({...size,...measured});
+      for (const violation of measured.violations) add('browser_layout', `${size.width}x${size.height}: ${violation}`);
+    }
+    await page.setViewport(requestedViewport ?? {width:1280,height:900});
     if (requireAgentAction && !errors.length) {
       try {
         const failure = await verifyAgentAction(frame, syntheticRequest, serviceError, agentCalls, () => { actionPhase = true; });
@@ -113,7 +128,7 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       try { await browser.close(); } catch { stop(); } finally { clearTimeout(timer); }
     }
   }
-  return { ok: errors.length === 0, errors, scope: requireAgentAction ? 'browser-agent-action-contract' : 'browser-startup', businessBehaviorVerified: false, ...(actionVerification ? { agentAction: actionVerification } : {}) };
+  return { ok: errors.length === 0, errors, scope: requireAgentAction ? 'browser-agent-action-contract' : 'browser-startup', businessBehaviorVerified: false, layoutChecks, ...(actionVerification ? { agentAction: actionVerification } : {}) };
 }
 
 
@@ -232,4 +247,25 @@ async function verifyDomainProjection(frame, entities) {
     return entities.flatMap((entity, index) => ['name','detail','group'].filter(key => entity[key] != null && entity[key] !== '' && !texts.some(text => text.includes(String(entity[key]).replace(/\s+/g, ' ')))).map(key => `entity ${index + 1} ${key}`));
   }, entities);
   if (missing.length) throw Error('The host returned actual entities but the visible domain record surface omitted ' + missing.join(', ') + '. Render all returned name/detail/group in a data-liveui-view="records" collection outside the core host result. Keep unknown groups with a generic record fallback; do not require unpromised service fields.');
+}
+
+
+function measureDeliveryLayout() {
+  const width = document.documentElement.clientWidth, height = innerHeight;
+  const violations = [], nodes = [...document.body.querySelectorAll('*')];
+  const shown = node => { const r=node.getBoundingClientRect(),s=getComputedStyle(node); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; };
+  if (document.documentElement.scrollWidth > width + 3 || document.body.scrollWidth > width + 3)
+    violations.push(`Horizontal page overflow: content ${Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)}px exceeds iframe ${width}px. Wrap text and collapse columns; do not hide content.`);
+  for (const node of nodes.filter(shown)) {
+    const rect=node.getBoundingClientRect(), style=getComputedStyle(node);
+    if (/^(INPUT|TEXTAREA|SELECT|BUTTON)$/.test(node.tagName) && (rect.left < -3 || rect.right > width+3)) {
+      violations.push(`Control ${node.tagName.toLowerCase()} extends outside iframe width. Make the control and its parent responsive.`); break;
+    }
+  }
+  const oversized = nodes.filter(shown).find(node => {
+    const text=[...node.childNodes].filter(n=>n.nodeType===3).map(n=>n.textContent).join('').trim();
+    return text.length>=24 && parseFloat(getComputedStyle(node).fontSize)>64;
+  });
+  if(oversized) violations.push(`Long text uses ${getComputedStyle(oversized).fontSize} type. Use readable semantic heading/body sizes on every render path, including restored views.`);
+  return {iframeWidth:width,iframeHeight:height,scrollWidth:Math.max(document.documentElement.scrollWidth,document.body.scrollWidth),violations};
 }

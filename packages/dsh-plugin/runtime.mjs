@@ -186,7 +186,7 @@ async function verifyDelivery(work, job, context) {
   const controller = new AbortController();
   running.set(job.id, controller);
   try {
-    const browser = await validateBrowserDelivery(delivery.html, { chrome: config.chrome, signal: controller.signal, requireAgentAction: Array.isArray(context?.connectedServices) && context.connectedServices.length > 0 });
+    const browser = await validateBrowserDelivery(delivery.html, { chrome: config.chrome, signal: controller.signal, viewport: context?.hostViewport, requireAgentAction: Array.isArray(context?.connectedServices) && context.connectedServices.length > 0 });
     job.browserValidation = browser;
     (job.browserValidationAttempts ??= []).push(browser);
     return browser.ok ? delivery : { ok: false, errors: browser.errors };
