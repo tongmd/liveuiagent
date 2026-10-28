@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { createRichWorkspaces } from './rich-workspaces.js';
 import { createCodexNativeInference } from './codex-native-inference.js';
 import { createDshNativeInference } from './dsh-native-inference.js';
 import { createNativeHarnessBindings } from './native-harness.js';
@@ -100,6 +101,8 @@ const runtimeSettings=createRuntimeSettings(db,{
   },
 });
 runtimeSettings.install(app);
+const richWorkspaces=createRichWorkspaces(db,{userOf:requestUser,harnessFor:req=>runtimeSettings.forRequest(req),codexOf:req=>{if(!nativeCodex?.allowsUser(requestUser(req)))throw Object.assign(new Error('Codex is not available for this account'),{status:403});return nativeCodex.config();},bindHarness:(owner,appId)=>nativeHarnessBindings.save(owner,appId,'codex'),recall:(owner,appId,prompt)=>personal.recall(owner,appId)});
+richWorkspaces.install(app);
 completeApps.install(app);
 
 // 每次请求解析一次 LLM 配置(见 llm-settings.ts 的优先级说明):
@@ -340,12 +343,12 @@ app.post('/agent/remove-app', async (req, res, next) => {
 app.post('/agent/query-state', async (req, res, next) => {
   try {
     const body = requireBody(req);
-    res.json(personal.decorate(requestUser(req), await completeApps.merge(req,await agentGateway.queryState({
+    res.json(personal.decorate(requestUser(req), richWorkspaces.merge(req,await completeApps.merge(req,await agentGateway.queryState({
       userId: body.userId,
       sessionId: body.sessionId,
       deadlineMs: body.deadlineMs,
       user: requestUser(req),
-    }))));
+    })))));
   } catch (e) { next(e); }
 });
 

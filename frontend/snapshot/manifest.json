@@ -1,14 +1,14 @@
 {
   "formatVersion": 2,
   "file": "index.html",
-  "sha256": "ba845c7b8587377b199a84ca211cd0183fe8bf86a26722386bbdcd75c2fd4b17",
+  "sha256": "8e94a0f151416c42457261126a518f2a07cadc465fbcf8d02126cf5b2b7bf29a",
   "captured": "2026-10-21",
   "deployedRevisionDate": "2026-10-16",
   "resources": [
     {
       "file": "index.html",
-      "sha256": "ba845c7b8587377b199a84ca211cd0183fe8bf86a26722386bbdcd75c2fd4b17",
-      "bytes": 1394711
+      "sha256": "8e94a0f151416c42457261126a518f2a07cadc465fbcf8d02126cf5b2b7bf29a",
+      "bytes": 1394945
     },
     {
       "file": "complete-apps.js",
@@ -67,8 +67,18 @@
     },
     {
       "file": "structured-ui-runtime.js",
-      "sha256": "e66cb1a66828f867122b79ea5b94a7149e816c8f8aa4fcd7d2332422c097aaba",
-      "bytes": 30168
+      "sha256": "c65ee8d5379d4812ad381f09a1eee7caa027f3e6d6a8584d924e9e3c0ef753ab",
+      "bytes": 70788
+    },
+    {
+      "file": "rich-workspaces.js",
+      "sha256": "2eadf087b74acd5ca07e797dbfb30bf0d17e11778f96a2aab00aea42b5d66906",
+      "bytes": 8582
+    },
+    {
+      "file": "rich-workspaces.css",
+      "sha256": "ec71dda7e75819675a3c5b5b1f26ea580131a2d268265adb0b7ded12f35d487e",
+      "bytes": 2337
     }
   ]
 }
