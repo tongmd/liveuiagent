@@ -253,6 +253,8 @@ async function verifyDomainProjection(frame, entities) {
 function measureDeliveryLayout() {
   const width = document.documentElement.clientWidth, height = innerHeight;
   const violations = [], nodes = [...document.body.querySelectorAll('*')];
+  const leakedHidden = nodes.find(node => node.hasAttribute('hidden') && !(node.tagName === 'INPUT' && node.type === 'hidden') && getComputedStyle(node).display !== 'none');
+  if (leakedHidden) violations.push(`Element ${leakedHidden.tagName.toLowerCase()}${leakedHidden.id ? '#'+leakedHidden.id : ''} has the hidden attribute but CSS overrides it with display:${getComputedStyle(leakedHidden).display}. Preserve hidden-state behavior, for example with [hidden]{display:none !important}; do not show collapsed editors or remove the hidden state.`);
   const shown = node => { const r=node.getBoundingClientRect(),s=getComputedStyle(node); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; };
   if (document.documentElement.scrollWidth > width + 3 || document.body.scrollWidth > width + 3)
     violations.push(`Horizontal page overflow: content ${Math.max(document.documentElement.scrollWidth,document.body.scrollWidth)}px exceeds iframe ${width}px. Wrap text and collapse columns; do not hide content.`);
