@@ -43,7 +43,7 @@
       };
       addEventListener('message',handler);return()=>removeEventListener('message',handler);
     },[appId]);
-    const revise=async e=>{e.preventDefault();if(!prompt.trim()||jobRef.current)return;setStatus('Preparing changes…');jobRef.current={pending:true};setJob({stage:'Preparing changes…'});try{await writes.current;const j=await api('apps/'+appId+'/revise','POST',{prompt});jobRef.current=j;setJob(j);await wait(j.id);setPrompt('');await load();window.__liveuiagentRefresh?.();}catch(err){setStatus(err.message);}finally{jobRef.current=null;setJob(null);}};
+    const revise=async e=>{e.preventDefault();if(!prompt.trim()||jobRef.current)return;setStatus('Preparing changes…');jobRef.current={pending:true};setJob({stage:'Preparing changes…'});try{await writes.current;const j=await api('apps/'+appId+'/revise','POST',{prompt,displayEnvironment:{browserViewport:{width:innerWidth,height:innerHeight},appViewport:frame.current?{width:frame.current.clientWidth,height:frame.current.clientHeight}:null}});jobRef.current=j;setJob(j);await wait(j.id);setPrompt('');await load();window.__liveuiagentRefresh?.();}catch(err){setStatus(err.message);}finally{jobRef.current=null;setJob(null);}};
     const download=()=>{const u=URL.createObjectURL(new Blob([data.html],{type:'text/html;charset=utf-8'})),a=document.createElement('a');a.href=u;a.download=app.name+'.html';a.click();setTimeout(()=>URL.revokeObjectURL(u),10000);};
     const src=R.useMemo(()=>data?documentFor(data.html,data.store,key.current):'', [data]);
     return h('div',{className:'complete-app-host'},
