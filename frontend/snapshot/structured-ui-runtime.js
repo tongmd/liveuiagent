@@ -387,7 +387,18 @@ function createWorkspace(sdk, ui, options) {
     if(history){if(history.version!==1||!Array.isArray(history.snapshots))throw Error('Saved snapshot history is invalid');historyValue(history.snapshots);const ids=new Set();for(const item of history.snapshots){if(!plain(item)||typeof item.id!=='string'||!item.id||ids.has(item.id)||typeof item.label!=='string'||!item.label||item.label.length>160||typeof item.createdAt!=='string'||!Number.isFinite(Date.parse(item.createdAt))||!['source','initial','generated'].includes(item.origin)||!plain(item.tree)||typeof item.recordsFingerprint!=='string'||typeof item.photosFingerprint!=='string'||!plain(item.preferences)||!plain(item.richState)||typeof item.draft!=='string')throw Error('Saved snapshot history is invalid');clone(item.tree,64000);clone(item.preferences,6000);clone(item.richState,100000);ids.add(item.id);}snapshots=history.snapshots;}
   } catch(failure){historyError=String(failure.message||failure);report(failure);}
   const onInput = () => { clearTimeout(draftTimer); draftTimer = setTimeout(() => { void saveDraft(requestInput.value).catch(() => {}); }, 200); };
-  const onGenerate = event => { event.preventDefault(); void generate().catch(() => {}); };
+  const onGenerate = event => {
+    event.preventDefault();
+    const submitted = String(requestInput?.value ?? draft);
+    void generate().then(() => {
+      if (disposed || String(requestInput?.value ?? draft) !== submitted) return;
+      if (![generateButton, requestInput, doc.body, null].includes(doc.activeElement)) return;
+      const bounds = container.getBoundingClientRect();
+      if (bounds.top < 0 || bounds.top > doc.defaultView.innerHeight * .5) {
+        container.scrollIntoView({block:'start',behavior:'instant'});
+      }
+    }).catch(() => {});
+  };
   if (generateButton) generateButton.disabled = false;
   requestInput?.addEventListener('input', onInput); generateButton?.addEventListener('click', onGenerate);
   return Object.freeze({ getRecords: () => clone(records), getPhotos: () => clone(photos), getPreferences: () => clone(preferences), getTree: () => tree && clone(tree, 64000), setRecords, setPhotos, setPreferences, generate, saveSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot, get state() { return state(); }, dispose() { disposed = true; clearTimeout(draftTimer); requestInput?.removeEventListener('input', onInput); generateButton?.removeEventListener('click', onGenerate); } });
