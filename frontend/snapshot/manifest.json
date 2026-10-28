@@ -1,19 +1,19 @@
 {
   "formatVersion": 2,
   "file": "index.html",
-  "sha256": "7a80bb7c333df69ba58e5099cfdedefd0780e5af5395003c6552131907375fcc",
+  "sha256": "ba845c7b8587377b199a84ca211cd0183fe8bf86a26722386bbdcd75c2fd4b17",
   "captured": "2026-10-21",
   "deployedRevisionDate": "2026-10-16",
   "resources": [
     {
       "file": "index.html",
-      "sha256": "7a80bb7c333df69ba58e5099cfdedefd0780e5af5395003c6552131907375fcc",
-      "bytes": 1394654
+      "sha256": "ba845c7b8587377b199a84ca211cd0183fe8bf86a26722386bbdcd75c2fd4b17",
+      "bytes": 1394711
     },
     {
       "file": "complete-apps.js",
-      "sha256": "19b4954841a9ec0e0e75d53ccc1d74d9713e9453eee0c55d1be0dfb1ecd0ebda",
-      "bytes": 9520
+      "sha256": "f17c32d69de753c0beb3466f6680a61b33f051091a57c133c214dc3d06564bd8",
+      "bytes": 11755
     },
     {
       "file": "complete-apps.css",
@@ -64,6 +64,11 @@
       "file": "native-drafts.js",
       "sha256": "017ed5d6af96afde27a053c27785669be5487034717f19366f623418ce0ac10b",
       "bytes": 10079
+    },
+    {
+      "file": "structured-ui-runtime.js",
+      "sha256": "19359eb8f9a8a46a1ce56759a2bfa229eb1b3317dd838c12fa44dcf771d1e0ce",
+      "bytes": 12187
     }
   ]
 }

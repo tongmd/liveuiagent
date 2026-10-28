@@ -61,8 +61,10 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
     const policy = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'; frame-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'">';
     // Match the host's opaque-origin storage API. AI is unavailable during startup
     // checks: a real request must happen through an explicit user action later.
+    const structuredRuntime = await fs.readFile(new URL('../../frontend/snapshot/structured-ui-runtime.js', import.meta.url),'utf8');
     const bootstrap = `<script>(${installDeliverySdk.toString()})(${JSON.stringify(channel)},${JSON.stringify(requireAgentAction)});</script>`;
-    const injected = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, match => match + policy + bootstrap) : policy + bootstrap + html;
+    const runtimeBootstrap='<script>'+structuredRuntime+';window.liveuiagent.save=async(k,v)=>{window.liveuiagent.storage.setItem(k,v);return {ok:true};};window.liveuiagent.ui=window.__liveuiStructuredRuntime(window.liveuiagent);</script>';
+    const injected = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, match => match + policy + bootstrap + runtimeBootstrap) : policy + bootstrap + runtimeBootstrap + html;
     const loadApp = async () => {
       await page.setContent('<!doctype html><html><body style="margin:0"><iframe id="app" sandbox="allow-scripts allow-forms allow-modals allow-downloads" style="width:100vw;height:100vh;border:0"></iframe></body></html>');
       await page.evaluate(({ html, channel }) => {

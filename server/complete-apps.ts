@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util';
+import { generateStructuredUi } from './structured-ui.js';
 import { normalizeDisplayEnvironment } from './display-environment.js';
 import { usesHtmlDelivery } from './native-harness.js';
 import { withActionDeadline, remainingActionMs } from './action-deadline.js';
@@ -58,6 +60,15 @@ export function createHostActionStore(db: Database.Database) {
         execution:{harness:'dsh',actionRuntime:'host-appworld',model},selectedServices:services,...(executionFailure?{executionFailure}:{})};
       db.prepare('INSERT INTO complete_host_actions VALUES (?,?,?,?,?)').run(owner,job.id,appId,JSON.stringify(job),createdAt);
       return job;
+    },
+    createUi(owner:string,appId:string,model:string) {
+      const createdAt=new Date().toISOString();
+      const job={id:'host_'+randomUUID(),appId,status:'running',stage:'Generating interface',createdAt,execution:{harness:'dsh',actionRuntime:'structured-ui',model}};
+      db.prepare('INSERT INTO complete_host_actions VALUES (?,?,?,?,?)').run(owner,job.id,appId,JSON.stringify(job),createdAt);return job;
+    },
+    finishUi(owner:string,job:any,result:any,failure?:any) {
+      const finished={...job,status:failure?'error':'done',finishedAt:new Date().toISOString(),...(failure?{error:String(failure.message||failure)}:{result})};
+      db.prepare('UPDATE complete_host_actions SET result_json=? WHERE owner=? AND job_id=?').run(JSON.stringify(finished),owner,job.id);return finished;
     },
     load(owner:string,id:string) {
       const row=db.prepare('SELECT result_json FROM complete_host_actions WHERE owner=? AND job_id=?').get(owner,id) as {result_json:string}|undefined;
@@ -163,6 +174,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     if(route.startsWith('jobs/host_')){
       const job=hostActions.load(owner,route.slice(5));
       if(!job)throw error('Task not found',404);
+      if(method!=='GET')throw error('This host task cannot be cancelled; its result remains available by job ID',409);
       return job;
     }
     if (!apiBase) throw Object.assign(error('Complete app service is not configured', 503), {code:'dsh_config_required',requiredConfig:['LIVEUIAGENT_DSH_API_BASE']});
@@ -285,6 +297,15 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     const groundingPayload=dshGroundingPayload(String(body?.prompt||body?.actionId||''),body?.context,body?.eventPayload);
     const saved=await dsh(req,'apps/'+id);
     const selected = await execution(req);
+    if(body?.context?.uiProtocol==='liveui-tree-v1') {
+      if(!String(saved.html||'').includes('liveui-tree-v1'))throw error('This app does not support structured UI generation',409);
+      // Resolve the account's existing provider for this HTML app; never select another model.
+      const previousAppId=req.body.appId;req.body.appId=appId;
+      let llm:any;try{llm=llmOf(req);}finally{if(previousAppId===undefined)delete req.body.appId;else req.body.appId=previousAppId;}
+      const owner=userOf(req),job=hostActions.createUi(owner,appId,String(llm?.model||selected.model));
+      void generateStructuredUi(String(body.prompt||''),body.context,llm).then(result=>hostActions.finishUi(owner,job,result),failure=>hostActions.finishUi(owner,job,null,failure)).catch(()=>{console.error('Could not persist structured UI job outcome: '+job.id);});
+      return job;
+    }
 
     if(toolBridge && process.env.LIVEUIAGENT_APPWORLD_GROUNDING !== 'off') {
       const llm=llmOf(req);
@@ -319,6 +340,16 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     return {...job,execution:{harness:'dsh',model:job.model || selected.model}};
   }
   function checkAppHarness(req: express.Request, appId: string) { options.harnessFor?.(req,appId); }
+  const storeWrites=new Map<string,Promise<unknown>>();
+  function writeStore(req:express.Request,id:string,store:any,expected?:any) {
+    const key=userOf(req)+':'+id;
+    const prior=storeWrites.get(key)||Promise.resolve();
+    const write=prior.catch(()=>{}).then(async()=>{
+      if(expected!==undefined){const current=await dsh(req,'apps/'+id);if(!isDeepStrictEqual(current.store,expected))throw error('Saved data changed in another window. Reopen before saving this result.',409);}
+      return dsh(req,'apps/'+id+'/store','PUT',store);
+    });
+    storeWrites.set(key,write);void write.finally(()=>{if(storeWrites.get(key)===write)storeWrites.delete(key);}).catch(()=>{});return write;
+  }
   function install(app: express.Express) {
     app.use('/agent/complete',(req,res,next)=>{const origin=req.header('origin');if(origin&&new URL(origin).host!==req.header('host')){res.status(403).json({error:'Invalid request origin'});return;}next();});
     app.post('/agent/run',(req,res,next)=>{
@@ -338,7 +369,8 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     app.get('/agent/complete/jobs/:id',async(req,res,next)=>{try{res.json(await dsh(req,'jobs/'+req.params.id))}catch(e){next(e)}});
     app.delete('/agent/complete/jobs/:id',async(req,res,next)=>{try{res.json(await dsh(req,'jobs/'+req.params.id,'DELETE'))}catch(e){next(e)}});
     app.get('/agent/complete/apps/:id',async(req,res,next)=>{try{const id=internalId(String(req.params.id));if(!id)throw error('App not found',404);res.json(await dsh(req,'apps/'+id))}catch(e){next(e)}});
-    app.put('/agent/complete/apps/:id/store',async(req,res,next)=>{try{const id=internalId(String(req.params.id));if(!id)throw error('App not found',404);res.json(await dsh(req,'apps/'+id+'/store','PUT',req.body))}catch(e){next(e)}});
+    app.put('/agent/complete/apps/:id/store',async(req,res,next)=>{try{const id=internalId(String(req.params.id));if(!id)throw error('App not found',404);res.json(await writeStore(req,id,req.body))}catch(e){next(e)}});
+    app.post('/agent/complete/apps/:id/store-commit',async(req,res,next)=>{try{const id=internalId(String(req.params.id));if(!id)throw error('App not found',404);if(!req.body.expected||!req.body.store)throw error('Missing saved-state comparison');res.json(await writeStore(req,id,req.body.store,req.body.expected));}catch(e){next(e)}});
     app.post('/agent/complete/apps/:id/revise',async(req,res,next)=>{try{const id=String(req.params.id);checkAppHarness(req,id);if(!internalId(id))throw error('App not found',404);req.body.appId=id;res.status(202).json(await start(req,id))}catch(e){next(e)}});
     app.post('/agent/complete/apps/:id/action',async(req,res,next)=>{try{const appId=String(req.params.id);checkAppHarness(req,appId);res.status(202).json(await action(req,appId))}catch(e){next(e)}});
     app.post('/agent/complete/apps/:id/interaction',async(req,res,next)=>{try{
@@ -352,7 +384,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     app.post('/agent/remove-app',async(req,res,next)=>{if(!internalId(String(req.body?.appId)))return next();try{const id=internalId(req.body.appId),a=await dsh(req,'apps/'+id);await dsh(req,'apps/'+id,'DELETE');db.prepare('DELETE FROM complete_apps WHERE owner=? AND app_id=?').run(userOf(req),req.body.appId);res.json({type:'app_removed',appId:req.body.appId,name:a.app.name,trace:[]})}catch(e){next(e)}});
   }
   async function loadApp(req:express.Request,appId:string){const id=internalId(appId);if(!id)throw error('App not found',404);return dsh(req,'apps/'+id);}
-  async function saveStore(req:express.Request,appId:string,store:unknown){const id=internalId(appId);if(!id)throw error('App not found',404);return dsh(req,'apps/'+id+'/store','PUT',store);}
+  async function saveStore(req:express.Request,appId:string,store:unknown){const id=internalId(appId);if(!id)throw error('App not found',404);return writeStore(req,id,store);}
   async function evaluateAction(req:express.Request,appId:string,prompt:string,context:unknown){
     const deadline=Date.now()+actionTimeoutMs;const job=await action(req,appId,{prompt,context},deadline);let current=job;
     while(['queued','running'].includes(current.status)){

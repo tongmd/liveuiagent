@@ -1,0 +1,78 @@
+{
+  "tree": {
+    "type": "Stack",
+    "style": {
+      "direction": "column",
+      "gap": 16,
+      "padding": 16
+    },
+    "children": [
+      {
+        "type": "Card",
+        "style": {
+          "tone": "accent",
+          "padding": 16
+        },
+        "children": [
+          {
+            "type": "Text",
+            "text": "\u91cd\u70b9"
+          },
+          {
+            "type": "Checklist",
+            "recordId": "rmvrm25nygg9dj4",
+            "checked": false,
+            "children": []
+          }
+        ]
+      },
+      {
+        "type": "Card",
+        "style": {
+          "tone": "default",
+          "padding": 16
+        },
+        "children": [
+          {
+            "type": "Text",
+            "text": "\u5f85\u529e\u6e05\u5355"
+          },
+          {
+            "type": "Checklist",
+            "children": [
+              {
+                "type": "Checklist",
+                "recordId": "rmvrm26lctuhohw",
+                "checked": false,
+                "children": []
+              },
+              {
+                "type": "Checklist",
+                "recordId": "rmvrm27fwgxtsfr",
+                "checked": false,
+                "children": []
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "records": [
+    {
+      "id": "rmvrm25nygg9dj4",
+      "text": "0",
+      "checked": false
+    },
+    {
+      "id": "rmvrm26lctuhohw",
+      "text": "1",
+      "checked": false
+    },
+    {
+      "id": "rmvrm27fwgxtsfr",
+      "text": "2",
+      "checked": false
+    }
+  ]
+}
