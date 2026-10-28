@@ -67,8 +67,8 @@
     },
     {
       "file": "structured-ui-runtime.js",
-      "sha256": "6597b92dbbd1403f38641bb38e59b7c2bfdd144c76028e164c31da9944be6b32",
-      "bytes": 74499
+      "sha256": "c5d89c76af7427590f86c3bc6f904370ba10286f4df33f926d9dc19b6eea6d4f",
+      "bytes": 74994
     },
     {
       "file": "rich-workspaces.js",
