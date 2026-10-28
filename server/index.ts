@@ -343,7 +343,7 @@ app.post('/agent/remove-app', async (req, res, next) => {
 app.post('/agent/query-state', async (req, res, next) => {
   try {
     const body = requireBody(req);
-    res.json(personal.decorate(requestUser(req), richWorkspaces.merge(req,await completeApps.merge(req,await agentGateway.queryState({
+    res.json(richWorkspaces.merge(req,personal.decorate(requestUser(req), await completeApps.merge(req,await agentGateway.queryState({
       userId: body.userId,
       sessionId: body.sessionId,
       deadlineMs: body.deadlineMs,
