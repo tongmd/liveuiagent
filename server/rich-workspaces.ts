@@ -62,7 +62,7 @@ export function createRichWorkspaces(db:Database.Database,options:{userOf:(req:e
   db.transaction(()=>{saveJob(owner,job);if(requestId)db.prepare('INSERT INTO rich_workspace_requests VALUES (?,?,?,?)').run(owner,requestId,signature,job.id);})();active.set(lock,job.id);inferenceCount++;
   void (async()=>{const began=Date.now();try{
    const memories=await options.recall?.(owner,appId,prompt);const experience=buildUiExperienceContext({app:initial.app,memories});
-   const workspaceLlm:LlmRuntimeConfig={...llm,chatCompletion:(request,inferenceOptions)=>llm.chatCompletion!({...request,messages:request.messages.map((message:any,index:number)=>index===0?{...message,content:message.content+'\n'+WORKSPACE_GUIDANCE}:message)},inferenceOptions)};
+   const workspaceLlm:LlmRuntimeConfig={...llm,chatCompletion:(request,inferenceOptions)=>llm.chatCompletion!({...request,messages:(request.messages as any[]).map((message:any,index:number)=>index===0?{...message,content:message.content+'\n'+WORKSPACE_GUIDANCE}:message)},inferenceOptions)};
    const result=await generateStructuredUi(prompt,context(initial,viewport),workspaceLlm,experience,{timeoutMs:120000,maxTokens:6144});
    const name=workspaceName(initial.app.description,result.data.tree,snapshot?.app.name);
    const updatedAt=new Date().toISOString();
