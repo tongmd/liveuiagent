@@ -6,6 +6,7 @@ import { buildTask } from './prompts.mjs';
 import { seedConnectedApp } from './host-action-starter.mjs';
 import { validateDelivery } from './delivery.mjs';
 import { validateBrowserDelivery } from './browser-delivery.mjs';
+import { presentationContractForRequest } from './presentation-contract.mjs';
 import { resolveJobModel } from './model-config.mjs';
 
 /** Create one operator's LiveUIAgent application service; the Cordis entry owns HTTP authentication. */
@@ -186,7 +187,7 @@ async function verifyDelivery(work, job, context) {
   const controller = new AbortController();
   running.set(job.id, controller);
   try {
-    const browser = await validateBrowserDelivery(delivery.html, { chrome: config.chrome, signal: controller.signal, viewport: context?.hostViewport, requireAgentAction: Array.isArray(context?.connectedServices) && context.connectedServices.length > 0 });
+    const browser = await validateBrowserDelivery(delivery.html, { chrome: config.chrome, signal: controller.signal, viewport: context?.hostViewport, presentationContract: context?.presentationContract, requireAgentAction: Array.isArray(context?.connectedServices) && context.connectedServices.length > 0 });
     job.browserValidation = browser;
     (job.browserValidationAttempts ??= []).push(browser);
     return browser.ok ? delivery : { ok: false, errors: browser.errors };
@@ -200,6 +201,8 @@ async function execute({ a, job, context, provider }) {
     Object.assign(job, { status: 'running', stage: 'DSH is reviewing your request', updatedAt: new Date().toISOString() }); await save(a);
     await fs.mkdir(work, { recursive: true, mode: 0o700 }); await fs.mkdir(home, { recursive: true, mode: 0o700 });
     const previous = a.state.apps.find(app => app.id === job.appId);
+    // Derived inside the host; caller context cannot disable or invent this requirement.
+    context={...context,presentationContract:job.mode==='action'?undefined:presentationContractForRequest(job.prompt,previous?.history)};
     if (previous) {
       await fs.copyFile(path.join(appDir(a, job.appId), 'index.html'), path.join(work, 'index.html'));
       await writeJson(path.join(work, 'app.json'), previous);

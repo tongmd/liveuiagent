@@ -1,3 +1,4 @@
+import { validatePresentationContract } from './presentation-contract.mjs';
 import { normalizeDeliveryViewport } from './delivery-viewport.mjs';
 export { normalizeDeliveryViewport } from './delivery-viewport.mjs';
 import fs from 'node:fs/promises';
@@ -13,7 +14,8 @@ async function executable(explicit) {
 }
 
 // Deliberately a startup gate, not a claim that business workflows pass.
-export async function validateBrowserDelivery(html, { chrome, signal, settleMs = 350, requireAgentAction = false, viewport } = {}) {
+export async function validateBrowserDelivery(html, { chrome, signal, settleMs = 350, requireAgentAction = false, viewport, presentationContract } = {}) {
+  const presentation=validatePresentationContract(presentationContract);
   let browser;
   let actionPhase = false;
   let outcome = 'failure';
@@ -22,7 +24,8 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
   const syntheticRequest = `Process this current user request: delivery-check-${token}`;
   const serviceError = `Connected service unavailable: delivery-error-${token}`;
   const serviceSuccess = {ok:true,status:'succeeded',text:`Observed service result: delivery-success-${token}`,data:{entities:[{id:`delivery-${token}`,name:`Observed entity ${token}`,detail:`Observed detail ${token}`,group:`unknown-group-${token}`},{name:`Second entity ${token}`,detail:`Second detail ${token}`,group:`other-group-${token}`}],stats:[{label:`Observed count ${token}`,value:'1'}],evaluation:{pass:true,deficiencies:[]}}};
-  let actionVerification;
+  let actionVerification, presentationVerification;
+  let presentationCalls=0;
   const errors = [];
   const layoutChecks = [];
   const requestedViewport = normalizeDeliveryViewport(viewport);
@@ -58,19 +61,25 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       if (agentCalls.length > 1) add('agent_action_contract', `A single primary submit invoked window.liveuiagent.ai ${agentCalls.length} times on the ${outcome} probe. Use one host SDK invocation per submit; compose multiple service API operations inside that host action.`);
       return outcome === 'success' ? serviceSuccess : { ok: false, text: serviceError, error: serviceError, data: { ok: false, error: serviceError } };
     });
+    if(presentation)await page.exposeFunction('__deliveryPresentationAction',(key,prompt,context)=>{
+      if(key!==channel||context?.uiProtocol!=='liveui-tree-v1'||typeof prompt!=='string'||!prompt.includes('delivery-ui-'))throw Error('Invalid presentation bridge request');
+      const variant=++presentationCalls;
+      return{text:'Controlled geometry',requestId:context.requestId,data:{tree:{type:'Stack',children:[{type:'Scene3D',scene:{title:'Geometry '+variant,grid:true,objects:[{id:'probe-'+token+'-'+variant,shape:variant===1?'box':'torus',position:[0,0,0],scale:[1,1,1],color:variant===1?'#6366f1':'#10b981'}]}},...(context.records||[]).map(r=>({type:'List',recordId:r.id,children:[]})),...(context.photos||[]).map(p=>({type:'Image',photoId:p.id}))]}}};
+    });
     const policy = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'; frame-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'">';
     // Match the host's opaque-origin storage API. AI is unavailable during startup
     // checks: a real request must happen through an explicit user action later.
     const structuredRuntime = await fs.readFile(new URL('../../frontend/snapshot/structured-ui-runtime.js', import.meta.url),'utf8');
-    const bootstrap = `<script>(${installDeliverySdk.toString()})(${JSON.stringify(channel)},${JSON.stringify(requireAgentAction)});</script>`;
-    const runtimeBootstrap='<script>'+structuredRuntime+';window.liveuiagent.save=async(k,v)=>{window.liveuiagent.storage.setItem(k,v);return {ok:true};};window.liveuiagent.ui=window.__liveuiStructuredRuntime(window.liveuiagent);</script>';
+    const bootstrap = `<script>(${installDeliverySdk.toString()})(${JSON.stringify(channel)},${JSON.stringify(requireAgentAction)},${JSON.stringify(Boolean(presentation))});</script>`;
+    const runtimeBootstrap='<script>'+structuredRuntime+`;(()=>{let saveCount=0;window.liveuiagent.save=async(k,v)=>{window.liveuiagent.storage.setItem(k,v);saveCount++;return {ok:true};};Object.defineProperty(window,'__deliveryUiSaveCount',{value:()=>saveCount,writable:false});const ui=window.__liveuiStructuredRuntime(window.liveuiagent);const originalGenerate=ui.generate;let generationCount=0;Object.defineProperty(ui,'generate',{value:async function(...args){generationCount++;return originalGenerate.apply(ui,args);},writable:false});Object.defineProperty(window,'__deliveryUiGenerationCount',{value:()=>generationCount,writable:false});Object.defineProperty(window.liveuiagent,'ui',{value:Object.freeze(ui),writable:false});})();</script>`;
     const injected = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, match => match + policy + bootstrap + runtimeBootstrap) : policy + bootstrap + runtimeBootstrap + html;
     const loadApp = async () => {
       await page.setContent('<!doctype html><html><body style="margin:0"><iframe id="app" sandbox="allow-scripts allow-forms allow-modals allow-downloads" style="width:100vw;height:100vh;border:0"></iframe></body></html>');
       await page.evaluate(({ html, channel }) => {
         const iframe = document.querySelector('#app');
         addEventListener('message', event => { if (event.source !== iframe.contentWindow || event.data?.channel !== channel) return;
-          if (event.data.type === 'agent') {
+          if(event.data.type==='presentation'){const {id,prompt,context}=event.data;window.__deliveryPresentationAction(channel,prompt,context).then(value=>iframe.contentWindow?.postMessage({channel,id,type:'agent-reply',value},'*'),error=>iframe.contentWindow?.postMessage({channel,id,type:'agent-reply',error:error.message},'*'));}
+          else if (event.data.type === 'agent') {
             const { id, prompt, context, primaryAction } = event.data;
             window.__deliveryAgentAction(channel, prompt, context, primaryAction).then(value => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', value }, '*'), error => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', error: error.message }, '*'));
           } else void window.__deliveryViolation(channel, event.data.violation); });
@@ -104,6 +113,7 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       for (const violation of measured.violations) add('browser_layout', `${size.width}x${size.height}: ${violation}`);
     }
     await page.setViewport(requestedViewport ?? {width:1280,height:900});
+    if(presentation&&!errors.length){try{presentationVerification=await verifyPresentation(frame);}catch(error){add('browser_presentation_contract',error.message);}}
     if (requireAgentAction && !errors.length) {
       try {
         const failure = await verifyAgentAction(frame, syntheticRequest, serviceError, agentCalls, () => { actionPhase = true; });
@@ -131,19 +141,50 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       try { await browser.close(); } catch { stop(); } finally { clearTimeout(timer); }
     }
   }
-  return { ok: errors.length === 0, errors, scope: requireAgentAction ? 'browser-agent-action-contract' : 'browser-startup', businessBehaviorVerified: false, layoutChecks, ...(actionVerification ? { agentAction: actionVerification } : {}) };
+  return { ok: errors.length === 0, errors, scope: requireAgentAction ? 'browser-agent-action-contract' : 'browser-startup', businessBehaviorVerified: false, layoutChecks, ...(actionVerification ? { agentAction: actionVerification } : {}),...(presentationVerification?{presentation:presentationVerification}:{}) };
 }
 
 
-function installDeliverySdk(channel, agentEnabled) {
+async function verifyPresentation(frame){
+  const target=await frame.evaluate(()=>{
+    const visible=n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';};
+    if(document.querySelector('meta[name="liveui-ui-protocol"]')?.content!=='liveui-tree-v1')throw Error('Declare liveui-tree-v1 through the host protocol meta tag; a custom Canvas2D renderer is not the requested maintained 3D component.');
+    const inputs=[...document.querySelectorAll('input[data-liveui-ui-request],textarea[data-liveui-ui-request]')].filter(visible);
+    const buttons=[...document.querySelectorAll('button[data-liveui-action="ui.generate"],input[type="submit"][data-liveui-action="ui.generate"]')].filter(visible);
+    if(inputs.length!==1||buttons.length!==1||buttons[0].disabled||inputs[0].disabled)throw Error('Provide one visible editable data-liveui-ui-request input and one enabled data-liveui-action="ui.generate" button, connected to await window.liveuiagent.ui.generate.');
+    inputs[0].setAttribute('data-delivery-ui-input','true');buttons[0].setAttribute('data-delivery-ui-button','true');return true;
+  });
+  if(!target)throw Error('Structured UI controls are unavailable');
+  const states=[];
+  for(let variant=1;variant<=2;variant++){
+    const previous=await frame.evaluate(()=>({generations:window.__deliveryUiGenerationCount(),saves:window.__deliveryUiSaveCount()}));
+    await frame.$eval('[data-delivery-ui-input="true"]',(node,value)=>{const proto=node.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(node,value);node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));},'delivery-ui-'+variant+' generate a new interactive 3D scene');
+    await frame.click('[data-delivery-ui-button="true"]');
+    await frame.waitForFunction(({previous,variant})=>{
+      const component=[...document.querySelectorAll('[data-liveui-component="Scene3D"]')].find(n=>n.textContent.includes('Geometry '+variant));
+      if(!component||window.__deliveryUiGenerationCount()!==previous.generations+1||window.__deliveryUiSaveCount()<=previous.saves)return false;
+      const canvas=component.querySelector('section[data-renderer="webgl"] canvas');if(!canvas)return false;const r=canvas.getBoundingClientRect();return r.width>=160&&r.height>=100&&r.top<innerHeight&&r.bottom>0;
+    },{timeout:4000}, {previous,variant});
+    const result=await frame.evaluate(variant=>{
+      const component=[...document.querySelectorAll('[data-liveui-component="Scene3D"]')].find(n=>n.textContent.includes('Geometry '+variant));const canvas=component.querySelector('canvas'),gl=canvas.getContext('webgl');
+      if(!gl||gl.isContextLost())throw Error('Scene3D has no live WebGL context');const pixels=new Uint8Array(canvas.width*canvas.height*4);gl.readPixels(0,0,canvas.width,canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+      let changed=0;for(let i=4;i<pixels.length;i+=4)if(Math.abs(pixels[i]-pixels[0])+Math.abs(pixels[i+1]-pixels[1])+Math.abs(pixels[i+2]-pixels[2])>20)changed++;
+      if(changed<100)throw Error('Scene3D must render nonempty geometry, not an empty canvas or text label');
+      return{variant,pixelsChanged:changed,canvasWidth:canvas.width,canvasHeight:canvas.height,view:component.querySelector('[data-renderer]').dataset.view};
+    },variant);states.push(result);
+  }
+  return{scope:'controlled-presentation-variants',generationCalls:2,storageAcknowledgements:true,realProviderCalls:0,realBusinessCalls:0,variants:states};
+}
+
+function installDeliverySdk(channel, agentEnabled, presentationEnabled) {
   const values = Object.create(null), pending = new Map(); let sequence = 0, primaryAction = false;
   addEventListener('click', event => { if (event.isTrusted && event.target.closest?.('[data-delivery-primary="true"]')) primaryAction = true; }, true);
   const storage = { getItem: k => Object.hasOwn(values, String(k)) ? values[String(k)] : null, setItem: (k, v) => { values[String(k)] = String(v); }, removeItem: k => { delete values[k]; }, clear: () => { for (const k of Object.keys(values)) delete values[k]; }, key: i => Object.keys(values)[i] ?? null, get length() { return Object.keys(values).length; } };
   Object.defineProperty(window, 'localStorage', { value: storage });
   window.liveuiagent = { storage, ai: (prompt, context) => {
-    if (!agentEnabled) return Promise.reject(Error('AI actions require a user action; unavailable during delivery startup verification'));
+    if (!agentEnabled&&!(presentationEnabled&&context?.uiProtocol==='liveui-tree-v1')) return Promise.reject(Error('AI actions require a user action; unavailable during delivery startup verification'));
     const id = ++sequence;
-    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); parent.postMessage({ channel, id, type: 'agent', prompt, context, primaryAction }, '*'); });
+    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); parent.postMessage({ channel, id, type: presentationEnabled&&context?.uiProtocol==='liveui-tree-v1'?'presentation':'agent', prompt, context, primaryAction }, '*'); });
   }, download: () => { throw Error('Downloads require a user action during delivery verification'); } };
   addEventListener('message', event => {
     if (event.source !== parent || event.data?.channel !== channel || event.data?.type !== 'agent-reply') return;
