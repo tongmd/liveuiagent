@@ -36,7 +36,7 @@ export function createCodexNativeInference(env: NodeJS.ProcessEnv = process.env)
       if (!response.ok) {
         // Inspect only a bounded envelope and return a closed known code. Relay
         // messages, unknown codes and arbitrary bodies never reach jobs or UI.
-        const known = new Set(['auth_required','auth_refresh_failed','codex_http_401','codex_http_429','codex_transport_failed','timeout','request_timeout','busy','invalid_json']);
+        const known = new Set(['auth_required','auth_refresh_failed','chatgpt_login_required','login_required','codex_http_400','codex_http_401','codex_http_403','codex_http_408','codex_http_429','codex_http_500','codex_http_502','codex_http_503','codex_http_504','codex_transport_failed','timeout','request_timeout','busy','invalid_json','invalid_sse','tool_output_rejected','output_too_large','response_failed','incomplete_response','model_mismatch']);
         let safeCode: string | undefined;
         const reader=response.body?.getReader();
         if(reader) {
