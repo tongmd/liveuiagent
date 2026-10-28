@@ -41,8 +41,8 @@ async function writeJson(file, value) {
 }
 function fail(status, message) { throw Object.assign(new Error(message), { status }); }
 function publicJob(job) {
-  const { id, appId, status, stage, createdAt, updatedAt, finishedAt, prompt, mode, error, toolCalls, tools, result, elapsedMs, model } = job;
-  return { id, appId, status, stage, createdAt, updatedAt, finishedAt, prompt, mode, error, toolCalls, tools, result, elapsedMs, model };
+  const { id, appId, status, stage, createdAt, updatedAt, finishedAt, prompt, mode, error, toolCalls, tools, result, elapsedMs, model, reusedDeliveryFrom } = job;
+  return { id, appId, status, stage, createdAt, updatedAt, finishedAt, prompt, mode, error, toolCalls, tools, result, elapsedMs, model, ...(reusedDeliveryFrom ? { reusedDeliveryFrom } : {}) };
 }
 function mergeMemory(a, raw, prompt) {
   const updates = Array.isArray(raw) ? raw : Array.isArray(raw?.entries) ? raw.entries : [];
@@ -197,7 +197,7 @@ async function verifyDelivery(work, job, context) {
 async function execute({ a, job, context, provider }) {
   const work = path.join(a.dir, 'runs', job.id, 'work');
   const home = path.join(a.dir, 'runs', job.id, 'dsh-home');
-  let pendingFile;
+  let pendingFile, revalidatedReuse = false;
   try {
     Object.assign(job, { status: 'running', stage: 'DSH is reviewing your request', updatedAt: new Date().toISOString() }); await save(a);
     await fs.mkdir(work, { recursive: true, mode: 0o700 }); await fs.mkdir(home, { recursive: true, mode: 0o700 });
@@ -210,7 +210,10 @@ async function execute({ a, job, context, provider }) {
     } else if (job.recoverFrom) {
       const source = path.join(a.dir, 'runs', job.recoverFrom, 'work');
       for (const file of ['index.html', 'app.json', 'memory-updates.json']) {
-        try { await fs.copyFile(path.join(source, file), path.join(work, file)); }
+        try {
+          const input = path.join(source, file), stat = await fs.lstat(input);
+          if (stat.isFile() && !stat.isSymbolicLink()) await fs.copyFile(input, path.join(work, file));
+        }
         catch (error) { if (error.code !== 'ENOENT') throw error; }
       }
     }
@@ -223,13 +226,25 @@ async function execute({ a, job, context, provider }) {
     if (job.mode === 'action') {
       await invokeDsh(a, job, work, home, task, provider);
     } else {
-      job.phase = 'generate'; job.stage = '生成可运行版本'; await save(a);
-      let generationError;
-      try { await invokeDsh(a, job, work, home, task, provider, Math.min(JOB_TIMEOUT, 480000)); }
-      catch (error) { if (!job.timedOut || job.status === 'cancelled') throw error; generationError = error; }
-      if (job.status === 'cancelled') return;
-      job.phase = 'validate'; job.stage = '校验应用文件与脚本'; await save(a);
-      let delivery = await verifyDelivery(work, job, context);
+      let generationError, delivery;
+      if (job.recoverFrom && !previous) {
+        job.phase = 'validate'; job.stage = '重新校验已有草稿'; await save(a);
+        delivery = await verifyDelivery(work, job, context);
+        if (closed || job.status === 'cancelled') return;
+        if (!delivery.ok && delivery.errors.some(error => error.code === 'browser_unavailable')) throw new Error('浏览器交付检查不可用：' + delivery.errors.map(error => error.message).join('; '));
+        if (delivery.ok && job.browserValidation?.ok) {
+          revalidatedReuse = true;
+          job.reusedDeliveryFrom = job.recoverFrom;
+        }
+      }
+      if (!revalidatedReuse) {
+        job.phase = 'generate'; job.stage = '生成可运行版本'; await save(a);
+        try { await invokeDsh(a, job, work, home, task, provider, Math.min(JOB_TIMEOUT, 480000)); }
+        catch (error) { if (!job.timedOut || job.status === 'cancelled') throw error; generationError = error; }
+        if (closed || job.status === 'cancelled') return;
+        job.phase = 'validate'; job.stage = '校验应用文件与脚本'; await save(a);
+        delivery = await verifyDelivery(work, job, context);
+      }
       if (closed || job.status === 'cancelled') return;
       if (!delivery.ok && delivery.errors.some(error => error.code === 'browser_unavailable')) throw new Error('浏览器交付检查不可用：' + delivery.errors.map(error => error.message).join('; '));
       if (!delivery.ok) {
@@ -256,7 +271,7 @@ async function execute({ a, job, context, provider }) {
     } else {
       const html = await outputFile(work, 'index.html', 3000000);
       const meta = JSON.parse(await outputFile(work, 'app.json', 100000));
-      if (!meta || typeof meta.name !== 'string' || !meta.name.trim() || !/<html[\s>]/i.test(html) || !/<script[\s>]/i.test(html) || html.length < 1000 || html.length > 3000000 || job.toolCalls < 1) {
+      if (!meta || typeof meta.name !== 'string' || !meta.name.trim() || !/<html[\s>]/i.test(html) || !/<script[\s>]/i.test(html) || html.length < 1000 || html.length > 3000000 || (job.toolCalls < 1 && !revalidatedReuse)) {
         throw new Error('DSH did not deliver complete app files. Please try again.');
       }
       const dir = appDir(a, job.appId); await fs.mkdir(dir, { recursive: true, mode: 0o700 });

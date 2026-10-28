@@ -198,13 +198,14 @@ function createWorkspace(sdk, ui, options) {
   };
   const read = key => { const text = sdk.storage.getItem(key); if (text == null) return null; if (typeof text !== 'string' || text.length > 1000000) throw Error('Saved workspace data is invalid'); return clone(JSON.parse(text)); };
   let records = [], photos = [], preferences = {}, richState = {}, draft = '', tree = null, generatedTree = null, origin = 'source', error = null, viewRevision = '', snapshots = [], historyError = null;
+  let errorEpoch = 0;
   let tail = Promise.resolve(), queued = 0, generationQueued = false, generating = false, disposed = false, draftTimer, draftEpoch = 0;
-  const notify = (text, failed = false) => { if (status) { status.textContent = text; status.setAttribute('role', failed ? 'alert' : 'status'); } };
-  const report = failure => { error = String(failure?.message || failure); notify(error, true); };
+  const notify = (text, failed = false) => { if (error && !failed) return; if (status) { status.textContent = text; status.setAttribute('role', failed ? 'alert' : 'status'); } };
+  const report = failure => { errorEpoch++; error = String(failure?.message || failure); notify(error, true); };
   const persist = async (key, value) => { const ack = await sdk.save(key, JSON.stringify(value)); if (ack === false || ack?.ok === false) throw Error(zh ? '保存失败，请重试。' : 'Saving failed. Please retry.'); };
   const queue = operation => {
-    queued++;
-    const result = tail.then(async () => { if (disposed) throw Error('Workspace is closed'); error = null; try { return await operation(); } catch (failure) { report(failure); throw failure; } }).finally(() => { queued--; });
+    queued++; const requestedAtErrorEpoch = errorEpoch;
+    const result = tail.then(async () => { if (disposed) throw Error('Workspace is closed'); if (errorEpoch === requestedAtErrorEpoch) error = null; try { return await operation(); } catch (failure) { report(failure); throw failure; } }).finally(() => { queued--; });
     tail = result.catch(() => {}); return result;
   };
   const fallback = (nextRecords, nextPhotos) => nextRecords.length || nextPhotos.length ? ({ type: 'Stack', children: [...(nextRecords.length ? [{type:'Stack',children:nextRecords.map(record => ({ type: 'List', recordId: record.id, children: [] }))}] : []), ...(nextPhotos.length ? [{type:'Stack',children:nextPhotos.map(photo => ({ type: 'Image', photoId: photo.id }))}] : [])] }) : ({type:'Text',text:zh?'添加内容或描述你想生成的界面。':'Add content or describe the view you want.'});
@@ -293,17 +294,17 @@ function createWorkspace(sdk, ui, options) {
     if (!prompt.trim()) { const failure = Error(zh ? '请先输入布局要求。' : 'Enter a layout request first.'); report(failure); return Promise.reject(failure); }
     if (prompt.length > 4000) { const failure = Error('The layout request is too long'); report(failure); return Promise.reject(failure); }
     if (generationQueued) return Promise.reject(Error(zh ? '请等待当前布局完成。' : 'Wait for the current layout to finish.'));
-    generationQueued = true;
+    generationQueued = true; if (generateButton) generateButton.disabled = true;
     return queue(async () => {
-      generating = true; const previousDisabled = generateButton?.disabled;
+      generating = true;
       if (generateButton) generateButton.disabled = true;
       try {
         const next = viewSnapshot(); next.draft = prompt; await saveView(next);
         notify(words.generating);
         const result = await ui.generate(container, prompt, { storageKey: keys.layout, isCurrent: () => !disposed, getRecords: () => clone(records), getPhotos: () => clone(photos), getPhotosFingerprint: () => photosFingerprint(photos), getContext: () => clone(preferences, 6000), previousTree: generatedTree || tree || undefined, layoutBrief: options.layoutBrief, richState, onRichStateChange, onToggle });
         generatedTree = clone(result.tree, 64000); tree = clone(result.tree, 64000); origin = 'generated'; notify(words.saved); return result;
-      } finally { generating = false; if (generateButton) generateButton.disabled = previousDisabled; }
-    }).finally(() => { generationQueued = false; });
+      } finally { generating = false; }
+    }).finally(() => { generationQueued = false; if (generateButton) generateButton.disabled = false; });
   }
   function state() { return freeze(clone({ records, photos, preferences, richState, tree, generatedTree, origin, draft: String(requestInput?.value ?? draft), busy: queued > 0, generating, error })); }
   try {
@@ -328,6 +329,7 @@ function createWorkspace(sdk, ui, options) {
   } catch(failure){historyError=String(failure.message||failure);report(failure);}
   const onInput = () => { clearTimeout(draftTimer); draftTimer = setTimeout(() => { void saveDraft(requestInput.value).catch(() => {}); }, 200); };
   const onGenerate = event => { event.preventDefault(); void generate().catch(() => {}); };
+  if (generateButton) generateButton.disabled = false;
   requestInput?.addEventListener('input', onInput); generateButton?.addEventListener('click', onGenerate);
   return Object.freeze({ getRecords: () => clone(records), getPhotos: () => clone(photos), getPreferences: () => clone(preferences), getTree: () => tree && clone(tree, 64000), setRecords, setPhotos, setPreferences, generate, saveSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot, get state() { return state(); }, dispose() { disposed = true; clearTimeout(draftTimer); requestInput?.removeEventListener('input', onInput); generateButton?.removeEventListener('click', onGenerate); } });
 }

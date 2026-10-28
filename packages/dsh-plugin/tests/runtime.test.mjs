@@ -45,6 +45,99 @@ function writer() {
   } };
 }
 
+test('retry revalidates a complete failed-create draft and publishes the same app without another DSH run',async t=>{
+ let calls=0;
+ const generate=writer();
+ const f=await fixture(t,{async run(input){calls++;await generate.run(input);throw Error('Interrupted after complete draft');}});
+ const firstRequest=await f.api('generate','POST',{prompt:'A local counter'});
+ const first=await f.finished(firstRequest.data.id);
+ assert.equal(first.status,'error');assert.equal(calls,1);
+ assert.deepEqual((await f.api('state')).data.apps,[]);
+ const retry=await f.api('generate','POST',{prompt:'A local counter',context:{hostViewport:{width:717,height:493}}});
+ const reused=await f.finished(retry.data.id);
+ assert.equal(reused.status,'done',reused.error);
+ assert.equal(reused.appId,first.appId,'a retry keeps the original reserved app id');
+ assert.equal(reused.reusedDeliveryFrom,first.id);
+ assert.equal(reused.toolCalls,0,'browser revalidation does not fabricate model tool calls');
+ assert.deepEqual(reused.tools,[]);assert.equal(calls,1,'unchanged valid draft skips generation and repair');
+ const app=await f.api('apps/'+first.appId);assert.equal(app.data.html,html);assert.equal(app.data.app.revision,1);
+ const accounts=await fs.readdir(path.join(f.dataDir,'accounts'));
+ const state=JSON.parse(await readFile(path.join(f.dataDir,'accounts',accounts[0],'state.json'),'utf8'));
+ const recorded=state.jobs.find(job=>job.id===reused.id);
+ assert.equal(recorded.reusedDeliveryFrom,first.id);assert.equal(recorded.deliveryValidation.ok,true);assert.equal(recorded.browserValidation.ok,true);
+ assert.ok(recorded.browserValidation.layoutChecks.some(check=>check.width===717&&check.height===493),'the copied draft uses the current retry viewport');
+});
+
+test('retry of an invalid cached draft uses normal DSH generation and its single repair attempt',async t=>{
+ let calls=0;
+ const generate=writer();
+ const f=await fixture(t,{async run(input){
+  calls++;
+  if(calls<=2){input.onEvent({type:'tool_call',name:'write_file'});await writeFile(path.join(input.work,'index.html'),html.replace('document.querySelector("#add").onclick','const = invalid;document.querySelector("#add").onclick'));await writeFile(path.join(input.work,'app.json'),JSON.stringify({name:'Counter'}));if(calls===1)throw Error('Interrupted with invalid draft');return{};}
+  assert.match(input.task,/DELIVERY REPAIR ONLY/);return generate.run(input);
+ }});
+ const firstRequest=await f.api('generate','POST',{prompt:'A local counter with an invalid draft'});
+ const first=await f.finished(firstRequest.data.id);assert.equal(first.status,'error');
+ const retry=await f.api('generate','POST',{prompt:'A local counter with an invalid draft'});
+ const finished=await f.finished(retry.data.id);
+ assert.equal(finished.status,'done',finished.error);assert.equal(finished.appId,first.appId);
+ assert.equal(finished.reusedDeliveryFrom,undefined);assert.equal(finished.toolCalls,2);assert.equal(calls,3);
+ const accounts=await fs.readdir(path.join(f.dataDir,'accounts'));
+ const state=JSON.parse(await readFile(path.join(f.dataDir,'accounts',accounts[0],'state.json'),'utf8'));
+ assert.equal(state.jobs.find(job=>job.id===finished.id).repairAttempts,1);
+});
+
+test('retry cannot reuse a draft when browser verification is unavailable',async t=>{
+ let calls=0;const generate=writer();
+ const f=await fixture(t,{async run(input){calls++;await generate.run(input);throw Error('Interrupted after draft');}},{chrome:process.execPath});
+ const firstRequest=await f.api('generate','POST',{prompt:'A local counter without a browser'});
+ const first=await f.finished(firstRequest.data.id);assert.equal(first.status,'error');
+ const retry=await f.api('generate','POST',{prompt:'A local counter without a browser'});
+ const failed=await f.finished(retry.data.id);
+ assert.equal(failed.status,'error');assert.match(failed.error,/浏览器交付检查不可用/);
+ assert.equal(failed.reusedDeliveryFrom,undefined);assert.equal(failed.toolCalls,0);assert.equal(calls,1);
+ assert.deepEqual((await f.api('state')).data.apps,[]);
+});
+
+test('fresh generation still rejects zero tool calls even when its output passes delivery verification',async t=>{
+ const f=await fixture(t,{async run({work}){await writeFile(path.join(work,'index.html'),html);await writeFile(path.join(work,'app.json'),JSON.stringify({name:'Counter'}));return{};}});
+ const request=await f.api('generate','POST',{prompt:'A local counter without tool events'});
+ const failed=await f.finished(request.data.id);
+ assert.equal(failed.status,'error');assert.match(failed.error,/complete app files/);
+ assert.equal(failed.toolCalls,0);assert.equal(failed.reusedDeliveryFrom,undefined);
+ assert.deepEqual((await f.api('state')).data.apps,[]);
+});
+
+test('cancelling revalidated reuse before publication cannot publish the cached draft', {timeout:60000},async t=>{
+ let calls=0;const generate=writer();
+ const f=await fixture(t,{async run(input){calls++;await generate.run(input);throw Error('Interrupted after complete draft');}});
+ const firstRequest=await f.api('generate','POST',{prompt:'A local counter to cancel on retry'});
+ const first=await f.finished(firstRequest.data.id);assert.equal(first.status,'error');
+ let staged,release;
+ const entered=new Promise(resolve=>{staged=resolve;});const gate=new Promise(resolve=>{release=resolve;});
+ const originalWrite=fs.writeFile;
+ t.mock.method(fs,'writeFile',async function(file,...args){const result=await originalWrite.call(this,file,...args);if(path.basename(String(file)).startsWith('.pending-')){staged();await gate;}return result;});
+ const retry=await f.api('generate','POST',{prompt:'A local counter to cancel on retry'});
+ try{await entered;const cancelled=await f.api('jobs/'+retry.data.id,'DELETE',{});assert.equal(cancelled.data.status,'cancelled');}finally{release();}
+ await f.runtime.dispose();
+ assert.equal((await f.api('jobs/'+retry.data.id)).data.status,'cancelled');
+ assert.deepEqual((await f.api('state')).data.apps,[]);assert.equal(calls,1);
+});
+
+test('retry does not turn a rejected source symlink into a reusable regular draft',async t=>{
+ const outside=await mkdtemp(path.join(tmpdir(),'liveuiagent-recovery-symlink-'));
+ t.after(()=>fs.rm(outside,{recursive:true,force:true}));
+ await writeFile(path.join(outside,'outside.html'),html);
+ let calls=0;const generate=writer();
+ const f=await fixture(t,{async run(input){calls++;if(calls===1){input.onEvent({type:'tool_call',name:'write_file'});await symlink(path.join(outside,'outside.html'),path.join(input.work,'index.html'));await writeFile(path.join(input.work,'app.json'),JSON.stringify({name:'Counter'}));throw Error('Interrupted with source symlink');}return generate.run(input);}});
+ const firstRequest=await f.api('generate','POST',{prompt:'A local counter with an invalid cached source'});
+ const first=await f.finished(firstRequest.data.id);assert.equal(first.status,'error');
+ const retry=await f.api('generate','POST',{prompt:'A local counter with an invalid cached source'});
+ const finished=await f.finished(retry.data.id);
+ assert.equal(finished.status,'done',finished.error);assert.equal(finished.appId,first.appId);
+ assert.equal(finished.reusedDeliveryFrom,undefined);assert.equal(calls,2);assert.equal(finished.toolCalls,1);
+});
+
 test('model overrides reach real job execution while provider keys stay out of state and public jobs',async t=>{
   const generate=writer();const received=[];
   const f=await fixture(t,{modelSelection:true,providerOverride:true,modelOnly:true,async run(input){received.push(input);return generate.run(input);}});

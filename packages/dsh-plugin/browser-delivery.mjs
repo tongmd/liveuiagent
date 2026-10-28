@@ -18,7 +18,7 @@ async function executable(explicit) {
 
 // Deliberately a startup gate, not a claim that business workflows pass.
 export async function validateBrowserDelivery(html, { chrome, signal, settleMs = 350, requireAgentAction = false, viewport, presentationContract, verificationInput } = {}) {
-  const presentation=validatePresentationContract(presentationContract);
+  let presentation=validatePresentationContract(presentationContract);
   const fixture=validateVerificationInput(verificationInput);
   let browser;
   let actionPhase = false;
@@ -56,6 +56,9 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       if (/^(about:|data:|blob:)/.test(request.url())) void request.continue().catch(() => {});
       else { add('browser_external_request', 'Standalone app attempted an external request'); void request.abort().catch(() => {}); }
     });
+    // An app that opts into the maintained protocol must exercise it even when
+    // the user's wording did not produce a mandatory rich-component contract.
+    if(!presentation&&await page.evaluate(source=>new DOMParser().parseFromString(source,'text/html').querySelector('meta[name="liveui-ui-protocol"]')?.getAttribute('content')==='liveui-tree-v1',html))presentation={protocol:'liveui-tree-v1',components:[]};
     const channel = randomBytes(16).toString('hex');
     await page.exposeFunction('__deliveryViolation', (key, message) => { if (key === channel) add('browser_policy_violation', message); });
     if (requireAgentAction) await page.exposeFunction('__deliveryAgentAction', (key, prompt, context, primaryAction) => {
@@ -177,8 +180,7 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
   return { ok: errors.length === 0, errors, scope: requireAgentAction ? 'browser-agent-action-contract' : 'browser-startup', businessBehaviorVerified: false, layoutChecks, ...(actionVerification ? { agentAction: actionVerification } : {}),...(presentationVerification?{presentation:presentationVerification}:{}),...(inputVerification?{verificationInput:inputVerification}:{}) };
 }
 
-async function uploadPresentationVerificationInput(frame, fixture, settleMs) {
-  await frame.evaluate(filename=>{
+function selectPresentationFileTrigger(filename, onlyDirect=false) {
     const extension=filename.toLowerCase().endsWith('.csv')?'.csv':'.txt';
     const mimes=extension==='.csv'?['text/csv','application/csv','application/vnd.ms-excel']:['text/plain'];
     const candidates=[...document.querySelectorAll('input[type="file"]')].filter(input=>{
@@ -190,15 +192,47 @@ async function uploadPresentationVerificationInput(frame, fixture, settleMs) {
     const input=candidates[0];
     const visible=node=>{const r=node.getBoundingClientRect(),s=getComputedStyle(node);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&s.pointerEvents!=='none';};
     const labels=[...input.labels||[]].filter(visible);
-    const trigger=labels[0]||(visible(input)?input:undefined);
-    if(!trigger)throw Error('Expose the verification file input or an associated visible label for the browser file chooser.');
+    let trigger=labels[0]||(visible(input)?input:undefined),kind='direct';
+    if(!trigger&&onlyDirect)return false;
+    if(!trigger){
+      const controls=[...document.querySelectorAll('button,[role="button"]')].filter(node=>{
+        if(!visible(node)||node.disabled||node.getAttribute('aria-disabled')==='true'||node.closest('[data-liveui-action="agent.invoke"]')||node.form&&node.type!=='button')return false;
+        const action=node.getAttribute('data-liveui-action');
+        if(action&&!['file.import','file.choose'].includes(action))return false;
+        const controlled=(node.getAttribute('aria-controls')||'').split(/\s+/).some(id=>{const target=document.getElementById(id);return target&&(target===input||target.contains(input));});
+        if(input.id&&node.getAttribute('data-liveui-file-input')===input.id||controlled)return true;
+        const text=[node.getAttribute('aria-label'),node.getAttribute('title'),node.textContent].filter(Boolean).join(' ').trim();
+        if(/导出|下载|删除|支付|付款|发送|执行|发布|同步|云端|\b(?:export|download|delete|pay|send|submit|execute|publish|sync|cloud)\b/i.test(text))return false;
+        if(/\bcsv\b/i.test(text)&&extension!=='.csv'||/\btxt\b/i.test(text)&&extension!=='.txt')return false;
+        return /上传|导入|选择|选取|浏览|\b(?:upload|import|choose|select|browse)\b/i.test(text)&&/文件|笔记|文本|材料|数据|\b(?:txt|csv|text|files?|notes?|source|documents?)\b/i.test(text);
+      });
+      if(controls.length!==1)throw Error('Provide one visible local TXT/CSV import control, file input or associated label; a custom import button can bind its input with data-liveui-file-input="input-id".');
+      trigger=controls[0];kind='control';
+    }
+    for(const previous of document.querySelectorAll('[data-delivery-verification-trigger]'))previous.removeAttribute('data-delivery-verification-trigger');
     trigger.setAttribute('data-delivery-verification-trigger','true');
-  },fixture.filename);
+    return{kind};
+}
+
+async function uploadPresentationVerificationInput(frame, fixture, settleMs) {
+  const trigger=await frame.evaluate(selectPresentationFileTrigger,fixture.filename);
   const dir=await fs.mkdtemp(path.join(tmpdir(),'liveui-verification-input-'));
   try{
     const file=path.join(dir,fixture.filename);
     await fs.writeFile(file,fixture.content,{encoding:'utf8',mode:0o600});
-    const [chooser]=await Promise.all([frame.page().waitForFileChooser({timeout:4000}),frame.click('[data-delivery-verification-trigger="true"]')]);
+    const pendingChooser=frame.page().waitForFileChooser({timeout:4000}).then(chooser=>({chooser}),error=>({error}));
+    await frame.click('[data-delivery-verification-trigger="true"]');
+    let selected;
+    if(trigger.kind==='control'){
+      // A real import button may open the chooser itself, or disclose the file
+      // input/label first. Both steps use actual browser clicks.
+      const disclosed=frame.waitForFunction(selectPresentationFileTrigger,{timeout:1500},fixture.filename,true).then(handle=>({disclosed:true,handle}),()=>({disclosed:false}));
+      const first=await Promise.race([pendingChooser,disclosed]);
+      if(first.disclosed){await first.handle.dispose();await frame.click('[data-delivery-verification-trigger="true"]');selected=await pendingChooser;}
+      else selected=first.chooser||first.error?first:await pendingChooser;
+    }else selected=await pendingChooser;
+    if(selected.error)throw Error('The local import control did not open the native file chooser: '+selected.error.message);
+    const chooser=selected.chooser;
     await chooser.accept([file]);
     await new Promise(resolve=>setTimeout(resolve,Math.max(settleMs,350)));
     return{synthetic:true,uploaded:true,method:'file-chooser',filename:fixture.filename,bytes:Buffer.byteLength(fixture.content,'utf8')};
@@ -304,11 +338,13 @@ async function verifyPresentationSteps(frame,{contract,token,error,setProbe,getC
     if(document.querySelector('meta[name="liveui-ui-protocol"]')?.content!=='liveui-tree-v1')throw Error('Declare liveui-tree-v1 and render the returned tree with the maintained UI renderer.');
     const inputs=[...document.querySelectorAll('input[data-liveui-ui-request],textarea[data-liveui-ui-request]')].filter(visible);
     const buttons=[...document.querySelectorAll('button[data-liveui-action="ui.generate"],input[type="submit"][data-liveui-action="ui.generate"]')].filter(visible);
-    if(inputs.length!==1||buttons.length!==1||buttons[0].disabled||inputs[0].disabled)throw Error('Provide one visible editable data-liveui-ui-request input and one enabled data-liveui-action="ui.generate" button, connected to await window.liveuiagent.ui.generate.');
+    if(inputs.length!==1||buttons.length!==1||inputs[0].disabled)throw Error('Provide one visible editable data-liveui-ui-request input and one data-liveui-action="ui.generate" button that enables for a valid request, connected to await window.liveuiagent.ui.generate.');
     inputs[0].setAttribute('data-delivery-ui-input','true');buttons[0].setAttribute('data-delivery-ui-button','true');
   });
   const submit=async probe=>{
     await frame.$eval('[data-delivery-ui-input="true"]',(node,value)=>{const proto=node.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(node,value);node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));},probe.request);
+    try{await frame.waitForFunction(()=>{const button=document.querySelector('[data-delivery-ui-button="true"]');return button&&!button.disabled&&button.getAttribute('aria-disabled')!=='true';},{timeout:1500});}
+    catch{throw Error('After entering the current requirement, the UI generation button stayed disabled. Enable it for a valid request and keep ui.generate tied to its actual click.');}
     setProbe(probe);await frame.click('[data-delivery-ui-button="true"]');
   };
   const states=[];

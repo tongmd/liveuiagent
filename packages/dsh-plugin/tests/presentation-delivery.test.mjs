@@ -64,6 +64,25 @@ test('a verification fixture cannot select an absent or incompatible file input'
  const result=await validateBrowserDelivery(uploadHtml('.txt'),{presentationContract:{protocol:'liveui-tree-v1',components:[]},verificationInput:{filename:'verification.csv',content:'name,value\nA,1'},settleMs:30});
  assert.equal(result.ok,false);assert.ok(result.errors.some(e=>e.message.includes('exactly one enabled file input')),JSON.stringify(result));assert.equal(result.verificationInput,undefined);
 });
+test('a visible import button opens its hidden input through the actual browser chooser',async()=>{
+ const code=uploadFirst.replace("document.querySelector('button').onclick","document.querySelector('[data-liveui-action=\"ui.generate\"]').onclick")+`;document.querySelector('#import').onclick=()=>document.querySelector('#source').click();`;
+ const page=html(code).replace('<textarea','<button id="import" type="button">Import TXT file</button><input id="source" type="file" accept=".txt" hidden><textarea');
+ const result=await validateBrowserDelivery(page,{presentationContract:{protocol:'liveui-tree-v1',components:['Diagram']},verificationInput:{filename:'input.txt',content:'Synthetic import-button source'},settleMs:30});
+ assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.verificationInput.method,'file-chooser');assert.ok(result.presentation.variants.every(v=>v.content.includes('Synthetic import-button source')));
+});
+test('a local upload disclosure is clicked before its newly visible file label',async()=>{
+ const code=uploadFirst.replace("document.querySelector('button').onclick","document.querySelector('[data-liveui-action=\"ui.generate\"]').onclick")+`;document.querySelector('#upload').onclick=()=>{document.querySelector('#upload-controls').hidden=false;};`;
+ const page=html(code).replace('<textarea','<button id="upload" type="button">上传笔记</button><section id="upload-controls" hidden><label for="source">选择TXT文件</label><input id="source" type="file" accept=".txt" hidden></section><textarea');
+ const result=await validateBrowserDelivery(page,{presentationContract:{protocol:'liveui-tree-v1',components:['Diagram']},verificationInput:{filename:'input.txt',content:'Synthetic upload-disclosure source'},settleMs:30});
+ assert.equal(result.ok,true,JSON.stringify(result));assert.ok(result.presentation.variants.every(v=>v.content.includes('Synthetic upload-disclosure source')));assert.equal(result.presentation.restoredInFreshFrame,true);
+});
+test('file verification does not click business or ambiguous import buttons',async()=>{
+ for(const controls of ['<button type="button" onclick="throw Error(\'Business button was clicked\')">Pay invoice</button>','<button type="button">Import TXT file</button><button type="button">Choose TXT file</button>']){
+  const page=html(correct).replace('<textarea',controls+'<input type="file" accept=".txt" hidden><textarea');
+  const result=await validateBrowserDelivery(page,{presentationContract:{protocol:'liveui-tree-v1',components:[]},verificationInput:{filename:'input.txt',content:'Synthetic input'},settleMs:30});
+  assert.equal(result.ok,false);assert.ok(result.errors.some(e=>e.message.includes('one visible local TXT/CSV import control')),JSON.stringify(result));assert.ok(!result.errors.some(e=>e.code==='browser_script_error'));
+ }
+});
 test('the maintained workspace uses the same actual generation, chooser and fresh-restore gate',async()=>{
  const code=`const workspace=window.liveuiagent.ui.workspace({container:document.querySelector('#view'),requestInput:document.querySelector('textarea'),generateButton:document.querySelector('button'),status:document.querySelector('#status'),storagePrefix:'protocol-workspace'});document.querySelector('input[type=file]').onchange=async e=>{await workspace.setRecords([{id:'workspace-input',text:await e.target.files[0].text()}]);};`;
  const page=html(code).replace('<textarea','<label for="workspace-source">Import source<input type="file" id="workspace-source" accept=".txt" hidden></label><textarea');
@@ -72,6 +91,25 @@ test('the maintained workspace uses the same actual generation, chooser and fres
 });
 test('actual maintained UI generation renders controlled WebGL trees and survives failure and reopening',async()=>{const result=await validateBrowserDelivery(html(correct),{presentationContract:contract,settleMs:30});assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.presentation.generationCalls,3);assert.equal(result.presentation.successfulGenerations,2);assert.equal(result.presentation.failedGenerations,1);assert.equal(result.presentation.realProviderCalls,0);assert.equal(result.presentation.variants.length,2);assert.equal(result.presentation.preservedViewOnError,true);assert.equal(result.presentation.restoredInFreshFrame,true);assert.ok(result.presentation.variants.every(v=>v.components[0].renderer==='webgl'&&v.components[0].pixelsChanged>100));});
 test('generic dynamic UI renders structurally different trees with acknowledged saves',async()=>{const result=await validateBrowserDelivery(html(correct),{presentationContract:{protocol:'liveui-tree-v1',components:[]},settleMs:30});assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.presentation.storageAcknowledgements,true);assert.equal(result.presentation.structureChanged,true);assert.equal(result.presentation.contentChanged,true);assert.notEqual(result.presentation.variants[0].structure,result.presentation.variants[1].structure);});
+test('declaring the maintained protocol opts into the actual generic generation gate',async()=>{
+ const result=await validateBrowserDelivery(html(correct),{settleMs:30});assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.presentation.generationCalls,3);assert.equal(result.presentation.structureChanged,true);
+ const broken=await validateBrowserDelivery(html("document.querySelector('button').onclick=()=>{};"),{settleMs:30});assert.equal(broken.ok,false);assert.ok(broken.errors.some(e=>e.code==='browser_presentation_contract'));
+});
+test('protocol examples in comments and unsupported meta values do not opt in',async()=>{
+ for(const head of ['<!-- <meta name="liveui-ui-protocol" content="liveui-tree-v1"> -->','<meta name="liveui-ui-protocol" content="unsupported">']){
+  const page=`<html><head>${head}</head><body><p>Ordinary local application</p><button>Add</button></body></html>`;
+  const result=await validateBrowserDelivery(page,{settleMs:30});assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.presentation,undefined);
+ }
+});
+test('an initially disabled generation button is tested only after entering its current request',async()=>{
+ const code=correct+`;document.querySelector('textarea').addEventListener('input',()=>{document.querySelector('button').disabled=!document.querySelector('textarea').value.trim();});`;
+ const page=html(code).replace('data-liveui-action="ui.generate"','data-liveui-action="ui.generate" disabled');
+ const result=await validateBrowserDelivery(page,{settleMs:30});assert.equal(result.ok,true,JSON.stringify(result));assert.equal(result.presentation.generationCalls,3);
+});
+test('a declared generated UI with a permanently disabled button is rejected after filling',async()=>{
+ const page=html(correct).replace('data-liveui-action="ui.generate"','data-liveui-action="ui.generate" disabled');
+ const result=await validateBrowserDelivery(page,{settleMs:30});assert.equal(result.ok,false);const error=result.errors.find(e=>e.code==='browser_presentation_contract');assert.ok(error,JSON.stringify(result));assert.match(error.message,/button stayed disabled/);assert.equal(error.details.phase,'variant-1-submit');assert.equal(error.details.hostGenerationCalls,0);assert.equal(error.details.generateButtonDisabled,true);
+});
 test('Plot and Diagram contracts render actual changing SVG data and interactive nodes',async()=>{const result=await validateBrowserDelivery(html(correct),{presentationContract:{protocol:'liveui-tree-v1',components:['Plot','Diagram']},settleMs:30});assert.equal(result.ok,true,JSON.stringify(result));assert.deepEqual(result.presentation.variants[0].components.map(v=>v.renderer),['svg','svg']);assert.ok(result.presentation.variants.every(v=>v.components.every(c=>c.pixelsChanged>100)));});
 test('all requested rich components coexist in both generated layouts and reopening',async()=>{const result=await validateBrowserDelivery(html(correct),{presentationContract:{protocol:'liveui-tree-v1',components:['Scene3D','Plot','Diagram']},settleMs:30});assert.equal(result.ok,true,JSON.stringify(result));assert.ok(result.presentation.variants.every(v=>v.components.length===3));assert.equal(result.presentation.restoredInFreshFrame,true);});
 test('original records remain in both new structures, after failure and on reopening',async()=>{const code=correct.replace('const ui=window.liveuiagent.ui;',"const ui=window.liveuiagent.ui;const records=[{id:'source-record',text:'Original user content remains '+String.fromCharCode(60)+'/script>'+String.fromCharCode(60)+'script>throw Error(12345)'+String.fromCharCode(60)+'/script>'}];").replace('{records:[]}','{records}').replace('getRecords:()=>[]','getRecords:()=>records');const result=await validateBrowserDelivery(html(code),{presentationContract:{protocol:'liveui-tree-v1',components:[]},settleMs:30});assert.equal(result.ok,true,JSON.stringify(result));assert.ok(result.presentation.variants.every(v=>v.content.includes('Original user content remains')));assert.equal(result.presentation.preservedViewOnError,true);assert.equal(result.presentation.restoredInFreshFrame,true);});

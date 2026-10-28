@@ -34,7 +34,11 @@ The model chooses an appropriate expression and composition. There is no require
 
 The browser delivery gate drives the actual visible generation control, returns two different controlled trees, checks native SVG/WebGL output, waits for asynchronous save acknowledgement, tests failure retention and reopens a fresh iframe. Apps that require a local TXT/CSV import can declare a bounded synthetic `app.json.verificationInput`; the gate imports it through the actual file chooser in the isolated browser. It is never inserted into the delivered app or its real records.
 
-Failure reports identify the failed phase and include bounded visible status, generation/render counts and saved-tree diagnostics. This information reaches the single repair attempt. A successful controlled gate proves integration behavior, not model quality, domain correctness or every custom control. Actual model generation and domain interactions require separate live checks.
+An application that declares the maintained protocol is checked even if the original request did not use a particular generation keyword. Upload controls may use a native label, a recognizable import button or a local disclosure followed by the file chooser. Initially disabled controls must become usable after entering a request.
+
+Failure reports identify the failed phase and include bounded visible status, generation/render counts and saved-tree diagnostics. This information reaches the single repair attempt. Retrying the same failed creation first revalidates the existing draft against the current browser contract. An unchanged valid draft keeps its application ID and is published through the normal path with `reusedDeliveryFrom` and zero new model/tool calls. Invalid drafts continue to generation and the bounded repair step; cancellation, unavailable browser checks and nonregular recovery files cannot bypass verification.
+
+A successful controlled gate proves integration behavior, not model quality, domain correctness or every custom control. Actual model generation and domain interactions require separate live checks.
 
 Focused checks:
 
