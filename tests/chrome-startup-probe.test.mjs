@@ -2,7 +2,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import fs f
 import {chromeStartupProbe} from './chrome-startup-probe.mjs';
 const dead=(pid)=>{try{process.kill(pid,0);return false;}catch(error){return error.code==='ESRCH';}};
 const notRunning=(pid)=>{if(dead(pid))return true;try{return execFileSync('ps',['-p',String(pid),'-o','stat='],{encoding:'utf8'}).trim().startsWith('Z');}catch{return dead(pid);}};
-async function record(directory){for(let i=0;i<100;i++){const names=(await fs.readdir(directory)).filter(n=>n!=='executable.json'&&n.endsWith('.json'));if(names.length){const d=JSON.parse(await fs.readFile(path.join(directory,names[0]),'utf8'));if(d.browserPid)return d;}await new Promise(r=>setTimeout(r,10));}throw Error('probe record not written');}
+async function record(directory,readyFile){for(let i=0;i<100;i++){const names=(await fs.readdir(directory)).filter(n=>n!=='executable.json'&&n.endsWith('.json'));if(names.length){const d=JSON.parse(await fs.readFile(path.join(directory,names[0]),'utf8'));if(d.browserPid){if(!readyFile)return d;try{if(Number(await fs.readFile(readyFile,'utf8'))===d.browserPid)return d;}catch(error){if(error.code!=='ENOENT')throw error;}}}await new Promise(r=>setTimeout(r,10));}throw Error(readyFile?'probe child did not report ready':'probe record not written');}
 test('transparent startup probe preserves real argv, stdout/stderr and exit code but stores only bounded safe diagnostics',async()=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'csp-contract-'));const out=path.join(dir,'records');const probe=await chromeStartupProbe(process.execPath,out);
  try{const fixture=path.join(dir,'fixture.cjs');await fs.writeFile(fixture,`process.stdout.write('original stdout\\n');process.stderr.write('[1:2:1025/123:ERROR:file.cc:1] Authorization: Bearer private-key\\n');process.stderr.write('private application body must not be captured\\n');process.stdout.write(JSON.stringify(process.argv.slice(2)));process.exitCode=17;`);
@@ -11,7 +11,24 @@ test('transparent startup probe preserves real argv, stdout/stderr and exit code
 });
 test('startup probe belongs to Puppeteer process group and group termination leaves neither wrapper nor browser alive',async()=>{
  const dir=await fs.mkdtemp(path.join(os.tmpdir(),'csp-signal-'));const out=path.join(dir,'records');const probe=await chromeStartupProbe(process.execPath,out);let child;
- try{const fixture=path.join(dir,'wait.cjs');await fs.writeFile(fixture,'setInterval(()=>{},1000);');child=spawn(probe.executable,[fixture],{detached:true,stdio:'ignore'});const d=await record(out);assert.ok(!dead(d.browserPid));const ended=new Promise((resolve,reject)=>{child.on('exit',(code,signal)=>resolve({code,signal}));child.on('error',reject);});process.kill(-child.pid,'SIGTERM');await ended;for(let i=0;i<100&&!dead(d.browserPid);i++)await new Promise(r=>setTimeout(r,10));assert.ok(dead(d.browserPid),'actual child must be reaped, not left running after wrapper termination');assert.ok(dead(child.pid));const names=(await fs.readdir(out)).filter(n=>n!=='executable.json');const final=JSON.parse(await fs.readFile(path.join(out,names[0]),'utf8'));assert.equal(final.signal,'SIGTERM');assert.ok(final.wrapperReceivedSignal===undefined||final.wrapperReceivedSignal==='SIGTERM');
+ try{
+  const fixture=path.join(dir,'wait.cjs'),readyFile=path.join(dir,'child-ready');
+  // A PID only confirms spawn. Wait for this actual Node child to enter its
+  // event loop before testing default SIGTERM handling; do not add a handler.
+  await fs.writeFile(fixture,`const fs=require('node:fs');setInterval(()=>{},1000);setImmediate(()=>fs.writeFileSync(${JSON.stringify(readyFile)},String(process.pid),{mode:0o600}));`);
+  child=spawn(probe.executable,[fixture],{detached:true,stdio:'ignore'});
+  const d=await record(out,readyFile);assert.ok(!dead(d.browserPid));
+  const ended=new Promise((resolve,reject)=>{child.on('exit',(code,signal)=>resolve({code,signal}));child.on('error',reject);});
+  process.kill(-child.pid,'SIGTERM');const outcome=await ended;
+  for(let i=0;i<100&&!dead(d.browserPid);i++)await new Promise(r=>setTimeout(r,10));
+  const names=(await fs.readdir(out)).filter(n=>n!=='executable.json');
+  const final=JSON.parse(await fs.readFile(path.join(out,names[0]),'utf8'));
+  const diagnostics=JSON.stringify({outcome,wrapperPid:final.wrapperPid,browserPid:final.browserPid,exitCode:final.exitCode,signal:final.signal,wrapperReceivedSignal:final.wrapperReceivedSignal,elapsedMs:final.elapsedMs});
+  assert.ok(dead(d.browserPid),'actual child must be reaped, not left running after wrapper termination: '+diagnostics);
+  assert.ok(dead(child.pid),'wrapper must exit: '+diagnostics);
+  assert.equal(final.signal,'SIGTERM',diagnostics);
+  assert.ok(final.wrapperReceivedSignal===undefined||final.wrapperReceivedSignal==='SIGTERM',diagnostics);
+
  }finally{if(child?.pid&&!dead(child.pid)){try{process.kill(-child.pid,'SIGKILL');}catch{}}await probe.close();await fs.rm(dir,{recursive:true,force:true});}
 });
 
