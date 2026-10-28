@@ -2,6 +2,10 @@
 """Single Codex OAuth inference subprocess. Never exposes a tool or executes code."""
 import json,os,sys,urllib.request,urllib.error
 ENDPOINT='https://chatgpt.com/backend-api/codex/responses'
+# The parent owns the whole-request deadline (at most 300 seconds) and kills
+# this subprocess on timeout/disconnect. Do not add a shorter socket-idle limit
+# that interrupts a valid reasoning response before that deadline.
+SOCKET_TIMEOUT_SECONDS=300
 INSTRUCTIONS='You are liveUI JSON inference. Follow the ordered system/developer/user/assistant conversation supplied below. Return exactly the JSON object or value requested, without markdown. You have no tools. Do not execute commands, access files, contact services, or perform business actions; the liveUI host owns all such actions.'
 
 def make_payload(model,messages,schema,effort):
@@ -57,7 +61,7 @@ def main():
  req=urllib.request.Request(ENDPOINT,data=json.dumps(payload,ensure_ascii=False).encode(),headers=headers)
  meta={}
  try:
-  with opener.open(req,timeout=60) as response:content=parse_events(response,request['model'],meta)
+  with opener.open(req,timeout=SOCKET_TIMEOUT_SECONDS) as response:content=parse_events(response,request['model'],meta)
  except urllib.error.HTTPError as e:raise RuntimeError('codex_http_'+str(e.code))
  print(json.dumps({'content':content,'transport':'codex-responses','model':request['model'],**meta},ensure_ascii=False),flush=True)
 if __name__=='__main__':
