@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { createCodexNativeInference } from './codex-native-inference.js';
 import { createDshNativeInference } from './dsh-native-inference.js';
 import { createNativeHarnessBindings } from './native-harness.js';
 import { createPersonalization } from './personalization.js';
@@ -39,6 +40,7 @@ fs.mkdirSync(generatedAppsDir, { recursive: true });
 const db = openDb(dbPath);
 ensureLlmSettingsTable(db);
 const nativeHarnessBindings=createNativeHarnessBindings(db);
+const nativeCodex=createCodexNativeInference();
 const nativeDshCommand=process.env.LIVEUI_NATIVE_DSH_COMMAND?.trim();
 const nativeDsh=nativeDshCommand?createDshNativeInference({
   root:path.resolve(process.env.LIVEUI_NATIVE_DSH_ROOT||path.join(path.dirname(dbPath),'native-dsh-workers')),
@@ -65,7 +67,7 @@ const evaluatorArtifacts=createEvaluatorArtifacts(process.env.LIVEUI_EVALUATION_
 evaluatorArtifacts.install(app);
 const personal = createPersonalization(db, requestUser, llmConfigFromRequest);
 personal.install(app);
-if (process.env.LIVEUI_DEFAULT_HARNESS && !['native','dsh'].includes(process.env.LIVEUI_DEFAULT_HARNESS)) throw new Error('LIVEUI_DEFAULT_HARNESS must be native or dsh');
+if (process.env.LIVEUI_DEFAULT_HARNESS && !['native','dsh','codex'].includes(process.env.LIVEUI_DEFAULT_HARNESS)) throw new Error('LIVEUI_DEFAULT_HARNESS must be native, dsh or codex');
 const completeApps=createCompleteApps(db,personal,requestUser,llmConfigFromRequest,{
   harnessFor:(req,appId)=>runtimeSettings.forRequest(req,appId),
   executionOf(req) {
@@ -77,14 +79,17 @@ const completeApps=createCompleteApps(db,personal,requestUser,llmConfigFromReque
 });
 const runtimeSettings=createRuntimeSettings(db,{
   userOf:requestUser,
-  defaultHarness:process.env.LIVEUI_DEFAULT_HARNESS==='dsh'?'dsh':'native',
+  defaultHarness:process.env.LIVEUI_DEFAULT_HARNESS==='codex'?'codex':process.env.LIVEUI_DEFAULT_HARNESS==='dsh'?'dsh':'native',
   appHarnessOf:(req,appId)=>nativeHarnessBindings.get(requestUser(req),appId),
   choicesOf:req=>[
     {id:'native',label:'LiveUIAgent',available:true},
+    {id:'codex',label:'Codex',available:Boolean(nativeCodex?.allowsUser(requestUser(req))),
+      ...(!nativeCodex?{reason:'Codex relay is not configured'}:!requestUser(req)?{reason:'Sign in to use Codex'}:!nativeCodex.allowsUser(requestUser(req))?{reason:'Codex is not enabled for this account'}:{})},
     {id:'dsh',label:'DeepSeek Harness',available:Boolean(nativeDsh||completeApps.configured)&&Boolean(requestUser(req)),
       ...(!nativeDsh&&!completeApps.configured?{reason:'DSH service is not configured'}:!requestUser(req)?{reason:'Sign in to use DeepSeek Harness'}:{})},
   ],
   async modelOf(req,harness) {
+    if(harness==='codex')return nativeCodex?.view() ?? {id:null,configurable:false,providerConfigurable:false,reason:'Codex relay is not configured'};
     const view=llmSettingsView(db,requestUser(req));
     if(harness==='native')return {id:view.effective.model,source:view.effective.keySource,configurable:true};
     if(nativeDsh)return {id:view.effective.model,source:view.effective.keySource,configurable:true,providerConfigurable:true,delivery:'native'};
@@ -102,6 +107,12 @@ completeApps.install(app);
 // 前端不再传 key —— 它只改设置;这里读出的 llm 从不回写给客户端。
 function llmConfigFromRequest(req: express.Request): LlmRuntimeConfig | undefined {
   const body: Record<string, any> = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : Object.create(null);
+  const harness = runtimeSettings.forRequest(req,String(body.appId||body.selectedAppId||'')||undefined);
+  if(harness==='codex') {
+    if(body.delivery==='html')throw Object.assign(new Error('Codex uses Native app delivery'),{code:'codex_delivery_unsupported',status:422});
+    if(!nativeCodex)throw Object.assign(new Error('Codex relay is not configured'),{code:'codex_unavailable',status:503});
+    return nativeCodex.config(JSON.stringify(personal.context(requestUser(req),String(body.appId||body.selectedAppId||'global'))));
+  }
   const explicit: Record<string, any> = (body.llm && typeof body.llm === 'object' && !Array.isArray(body.llm)) ? body.llm : Object.create(null);
   const requested = {
     apiKey: String(explicit.apiKey ?? req.header('x-liveuiagent-llm-key') ?? ''),

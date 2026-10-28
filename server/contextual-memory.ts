@@ -57,11 +57,17 @@ export function createContextualMemory(db:Database.Database) {
     db.prepare('INSERT INTO personal_interactions VALUES (?,?,?,?,?,?)').run(owner,current.id,current.text,current.appId,current.kind,now);
     db.prepare('DELETE FROM personal_interactions WHERE owner=? AND id NOT IN (SELECT id FROM personal_interactions WHERE owner=? ORDER BY created_at DESC LIMIT 12)').run(owner,owner);
     const existing=list(owner).filter(m=>m.active && (m.scope==='global'||m.scope===input.appId)).slice(0,100);
-    if(!llm?.apiBase||!llm.apiKey||!llm.model)return {status:'unavailable',selected:[],currentContext:'',remembered:0};
+    if(!llm?.model||(!llm.chatCompletion&&(!llm.apiBase||!llm.apiKey)))return {status:'unavailable',selected:[],currentContext:'',remembered:0};
     try {
-      const response=await fetch(`${llm.apiBase.replace(/\/+$/,'')}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${llm.apiKey}`},signal:AbortSignal.timeout(25000),body:JSON.stringify({model:llm.model,temperature:0,max_tokens:2500,...(/^DeepSeek/i.test(llm.model)?{thinking:{type:'disabled'}}:{}),response_format:{type:'json_object'},messages:[{role:'system',content:SYSTEM},{role:'user',content:JSON.stringify({now,current,recent,task:input.app,memories:existing.map(m=>({id:m.id,preference:m.content,dimension:m.dimension,condition:m.condition,scope:m.scope}))})}]})});
-      if(!response.ok)throw new Error('memory provider unavailable');
-      const raw:any=await response.json(),content=String(raw.choices?.[0]?.message?.content||''),match=content.match(/\{[\s\S]*\}/);if(!match)throw new Error('invalid memory response');
+      const request={model:llm.model,temperature:0,max_tokens:2500,...(/^DeepSeek/i.test(llm.model)?{thinking:{type:'disabled'}}:{}),response_format:{type:'json_object'},messages:[{role:'system',content:SYSTEM},{role:'user',content:JSON.stringify({now,current,recent,task:input.app,memories:existing.map(m=>({id:m.id,preference:m.content,dimension:m.dimension,condition:m.condition,scope:m.scope}))})}]};
+      let raw:any;
+      if(llm.chatCompletion&&(!llm.apiBase||!llm.apiKey))raw=await llm.chatCompletion(request,{timeoutMs:25000,roleLabel:'Contextual memory'});
+      else {
+        const response=await fetch(`${llm.apiBase!.replace(/\/+$/,'')}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${llm.apiKey}`},signal:AbortSignal.timeout(25000),body:JSON.stringify(request)});
+        if(!response.ok)throw new Error('memory provider unavailable');
+        raw=await response.json();
+      }
+      const content=String(raw.choices?.[0]?.message?.content||''),match=content.match(/\{[\s\S]*\}/);if(!match)throw new Error('invalid memory response');
       const plan=JSON.parse(match[0]);if(!Array.isArray(plan.updates)||!Array.isArray(plan.selected_ids)||!Array.isArray(plan.selected_update_indexes))throw new Error('invalid memory schema');
       const events=new Map([...recent,current].map(e=>[e.id,e]));const applied=new Map<number,string>();
       const operation=db.transaction(()=>{

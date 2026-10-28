@@ -45,6 +45,7 @@ Model requests use your configured provider. No model API calls are needed for t
 | Harness | Application representation | Configuration |
 | --- | --- | --- |
 | Native | Application specifications rendered by the shared runtime | Included in the local runtime |
+| Codex | Native component specifications with Codex reasoning and host-managed actions | Configure an authenticated Codex inference relay |
 | DeepSeek Harness | Native component specifications with DSH-backed agent reasoning | Set `LIVEUI_NATIVE_DSH_COMMAND` to an installed DSH CLI |
 
 New applications use A2UI component specifications. Agent roles pass validated contracts to a host executor, which owns permitted service calls and commits reviewed state. Existing HTML applications remain supported; API callers can explicitly request `delivery: "html"` for the [HTML plugin](packages/dsh-plugin/README.md) path.
@@ -62,9 +63,15 @@ Start with [.env.example](.env.example). Storage paths are local and ignored by 
 | `GENERATED_APPS_DIR` | Generated application storage |
 | `OPENAI_API_BASE`, `OPENAI_API_KEY` | Model provider connection |
 | `LIVEUIAGENT_ORCHESTRATOR_MODEL` | Default orchestration model |
+| `LIVEUIAGENT_CODEX_BASE_URL`, `LIVEUIAGENT_CODEX_TOKEN` | Server-only Codex inference relay URL (ending in `/v1`) and bearer token |
+| `LIVEUIAGENT_CODEX_ALLOWED_USERS` | Optional comma-separated account allowlist; unset allows authenticated users |
+| `LIVEUIAGENT_CODEX_MODEL` | Relay model, default `gpt-6-astra`; independent of provider model settings |
+| `LIVEUIAGENT_CODEX_TIMEOUT_MS`, `LIVEUIAGENT_CODEX_MAX_CONCURRENT` | Codex inference deadline (default 180000 ms) and capacity (default 2) |
 | `LIVEUI_NATIVE_DSH_COMMAND`, `LIVEUI_NATIVE_DSH_ARGS` | DSH reasoning executable and optional JSON argument array |
 | `LIVEUI_NATIVE_DSH_TIMEOUT_MS`, `LIVEUI_NATIVE_DSH_MAX_CONCURRENT` | Per-inference deadline and concurrent-worker limit |
 | `LIVEUIAGENT_DSH_API_BASE` | Optional service endpoint for existing or explicit HTML applications |
+
+Codex appears in the harness selector when its server connection is configured. The relay must provide an inference-only `POST /v1/chat/completions` endpoint and manage its Codex login on the relay host. It must disable file, shell, network, MCP and delegated-agent execution; LiveUIAgent retains all application actions. Use HTTPS or a loopback tunnel. The Codex model is fixed by the server, and existing apps retain their selected harness.
 
 The application settings can override provider settings for the current user. `liveuiagent.config.json` configures optional service and evaluator integrations. For a hosted installation with authentication and persistent storage, follow the [deployment guide](deploy/README.md).
 

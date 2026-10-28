@@ -12,7 +12,7 @@ export function createNativeHarnessBindings(db:Database.Database) {
   },
   save(owner:string,appId:string,harness:HarnessId) {
    if(!appId||appId.startsWith('dsh_'))throw new Error('Native harness binding requires a Native application ID');
-   if(harness!=='native'&&harness!=='dsh')throw new Error('Unknown Native inference harness');
+   if(harness!=='native'&&harness!=='dsh'&&harness!=='codex')throw new Error('Unknown Native inference harness');
    db.prepare('INSERT INTO native_harness_bindings(owner,app_id,harness) VALUES (?,?,?) ON CONFLICT(owner,app_id) DO UPDATE SET harness=excluded.harness').run(owner,appId,harness);
   },
  };
