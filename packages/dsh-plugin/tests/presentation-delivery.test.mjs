@@ -7,6 +7,9 @@ test('only explicit positive dynamic 3D user requests activate the host contract
  for(const q of ['根据我的描述动态生成可渲染的3D场景','请动态生成三维交互界面','Dynamically generate an interactive 3D scene'])assert.deepEqual(presentationContractForRequest(q),contract);
  for(const q of ['做一个阅读清单','介绍3D打印的发展','不要动态3D，只需要列表','不需要三维场景','Create a static 3D printer checklist'])assert.equal(presentationContractForRequest(q),undefined);
  assert.deepEqual(presentationContractForRequest('把按钮改成蓝色',['动态生成可旋转三维结构']),contract);
+ assert.deepEqual(presentationContractForRequest('不要普通卡片，动态生成可旋转的3D空间'),contract);
+ assert.deepEqual(presentationContractForRequest('不用二维投影，动态生成可旋转的3D空间'),contract);
+ assert.equal(presentationContractForRequest('把按钮改成蓝色',['动态生成可旋转三维结构','移除三维场景']),undefined);
  assert.equal(presentationContractForRequest('不需要动态生成界面',['动态生成可旋转三维结构']),undefined);
  assert.equal(presentationContractForRequest('移除三维场景',['动态生成可旋转三维结构']),undefined);
  assert.throws(()=>validatePresentationContract({protocol:'fake',components:['Scene3D']}));
