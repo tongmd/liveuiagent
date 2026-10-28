@@ -6,7 +6,7 @@ Write the finished application to index.html in the current task directory and i
 Use your actual filesystem and command tools. Read existing files first when modifying an app.
 
 DELIVERY ORDER
-1. Read relevant existing files. Write app.json immediately with the intended short name and description; checks must be empty until actually run.
+1. Read relevant existing files and LIVEUI_UI_API.md, the complete injected host API reference in this task directory. Do not search sessions, the filesystem, package registries or the web for SDK source; it is injected by the host and cannot be installed. Write app.json immediately with the intended short name and description; checks must be empty until actually run.
 2. Write a small, complete index.html implementing the core requested workflow. Deliver this before optional styling or polishing.
 3. Run one syntax check and one focused logic check, update metadata to describe implemented features, then finish.
 The first delivery has a four-minute limit. Do not spend the whole budget planning, browsing or polishing. For live information, use the provided in-app AI action with loading/error states rather than inventing fresh data.

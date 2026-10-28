@@ -7,6 +7,7 @@ import { seedConnectedApp } from './host-action-starter.mjs';
 import { validateDelivery } from './delivery.mjs';
 import { validateBrowserDelivery } from './browser-delivery.mjs';
 import { presentationContractForRequest } from './presentation-contract.mjs';
+import { writeHostUiReference } from './host-ui-reference.mjs';
 import { resolveJobModel } from './model-config.mjs';
 
 /** Create one operator's LiveUIAgent application service; the Cordis entry owns HTTP authentication. */
@@ -213,6 +214,7 @@ async function execute({ a, job, context, provider }) {
         catch (error) { if (error.code !== 'ENOENT') throw error; }
       }
     }
+    if (job.mode !== 'action') await writeHostUiReference(work);
     if (job.mode !== 'action' && Array.isArray(context?.connectedServices) && context.connectedServices.length) await seedConnectedApp(work);
     await writeJson(path.join(work, 'user-memory.json'), context?.personalContext ?? a.state.memory);
     if (job.status === 'cancelled') return;
