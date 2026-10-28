@@ -14,13 +14,14 @@ test('trusted structured runtime validates and commits real DOM only after persi
   w.sdk={storage:{getItem:(key:string)=>w.saved[key]??null},ai:async(_prompt:string,context:any)=>{w.context=context;return new Promise(resolve=>w.aiReply=resolve);},save:async(key:string,value:string)=>{w.saveCount++;return new Promise((resolve,reject)=>{w.ack=()=>{w.saved[key]=value;resolve({ok:true});};w.fail=()=>reject(Error('Persistence failed'));});}};
   w.ui=w.__liveuiStructuredRuntime(w.sdk);w.options={storageKey:'layout',getRecords:()=>w.records,onToggle:(id:string,checked:boolean)=>{w.events.push({id,checked});w.records=w.records.map((r:any)=>r.id===id?{...r,checked}:r);}};
   w.tree={type:'Grid',style:{columns:2},children:[{type:'Card',children:[{type:'Checklist',children:[{type:'Checklist',recordId:'r1',checked:true,children:[]}]}]},{type:'Checklist',children:[{type:'Checklist',recordId:'r2',checked:false,children:[]}]}]};
-  w.options.previousTree={type:'Text',text:'Prior layout'};
+  w.options.previousTree={type:'Text',text:'Prior layout'};w.options.layoutBrief='Compare my data';w.options.getContext=()=>({preferredView:'plot'});
   w.start=()=>{w.operation=w.ui.generate(document.querySelector('#view'),'Reorganize',w.options).then((value:any)=>({ok:true,value}),(error:any)=>({ok:false,error:error.message}));};
   w.respond=(tree=w.tree)=>w.aiReply({text:'Layout ready',requestId:w.context.requestId,data:{tree}});
   w.start();w.respond();
  });
  await page.waitForFunction(()=>(window as any).saveCount===1);
  assert.deepEqual(await page.evaluate(()=>(window as any).context.tree),{type:'Text',text:'Prior layout'});
+ const presentation=await page.evaluate(()=>(window as any).context.presentationContext);assert.equal(presentation.viewport.width,390);assert.equal(presentation.viewport.height,844);assert.equal(presentation.viewport.contentWidth,374);assert.equal(presentation.layoutBrief,'Compare my data');assert.deepEqual(presentation.appContext,{preferredView:'plot'});assert.ok(presentation.components.includes('Diagram'));
  assert.equal(await page.$eval('#view',e=>e.textContent),'OLD DOM');assert.equal(await page.evaluate(()=>(window as any).saved.layout),undefined);
  await page.evaluate(()=>(window as any).ack());assert.equal((await page.evaluate(()=>(window as any).operation)).ok,true);
  assert.match(await page.$eval('#view',e=>e.textContent||''),/Original <script>/);assert.equal(await page.evaluate(()=>(window as any).pwned),undefined);
@@ -32,6 +33,7 @@ test('trusted structured runtime validates and commits real DOM only after persi
 
  await page.evaluate(()=>{const w:any=window;w.beforeDom=document.querySelector('#view')!.innerHTML;w.beforeStore=w.saved.layout;w.start();w.respond();});
  await page.waitForFunction(()=>(window as any).saveCount===2);await page.evaluate(()=>(window as any).fail());
+ assert.equal(await page.evaluate(()=>(window as any).context.presentationContext.previousRequest),'Reorganize');
  const failure=await page.evaluate(()=>(window as any).operation);assert.equal(failure.ok,false);assert.match(failure.error,/Persistence failed/);
  assert.equal(await page.evaluate(()=>document.querySelector('#view')!.innerHTML===(window as any).beforeDom),true);assert.equal(await page.evaluate(()=>(window as any).saved.layout===(window as any).beforeStore),true);
  await page.evaluate(()=>{const w:any=window;w.start();w.records.push({id:'r3',text:'Edited while waiting'});w.respond();});

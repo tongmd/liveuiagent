@@ -2,6 +2,20 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 
+/** Synthetic local input for the isolated browser check, never production data. */
+export function validateVerificationInput(value) {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== 'object' || Array.isArray(value)
+    || Object.keys(value).some(key => !['filename', 'content'].includes(key))
+    || typeof value.filename !== 'string' || value.filename.length > 128
+    || !/^[^/\\\u0000-\u001f]+\.(txt|csv)$/i.test(value.filename)
+    || typeof value.content !== 'string' || !value.content.trim()
+    || Buffer.byteLength(value.content, 'utf8') > 16384) {
+    throw new Error('verificationInput must contain only filename (.txt or .csv, no path) and nonempty synthetic content up to 16KB');
+  }
+  return { filename: value.filename, content: value.content };
+}
+
 async function readOutput(work, name, limit) {
   const file = path.join(work, name);
   const stat = await fs.lstat(file);
@@ -32,6 +46,7 @@ export async function validateDelivery(work) {
   try {
     meta = JSON.parse(await readOutput(work, 'app.json', 100000));
     if (!meta || Array.isArray(meta) || typeof meta.name !== 'string' || !meta.name.trim()) throw new Error('app.json must contain a nonempty name');
+    if (meta.verificationInput !== undefined) meta.verificationInput = validateVerificationInput(meta.verificationInput);
   } catch (error) { errors.push({ code: 'metadata_missing_or_invalid', message: error.code === 'ENOENT' ? 'app.json is missing' : error.message }); }
   if (html !== undefined) {
     if (html.length < 1000 || !/<html[\s>]/i.test(html) || !/<\/html\s*>\s*$/i.test(html)) {

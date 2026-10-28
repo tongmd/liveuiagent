@@ -2,8 +2,11 @@ import { validatePresentationContract } from './presentation-contract.mjs';
 import { normalizeDeliveryViewport } from './delivery-viewport.mjs';
 export { normalizeDeliveryViewport } from './delivery-viewport.mjs';
 import fs from 'node:fs/promises';
+import path from 'node:path';
+import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import puppeteer from 'puppeteer-core';
+import { validateVerificationInput } from './delivery.mjs';
 
 async function executable(explicit) {
   for (const file of [explicit, process.env.CHROME_PATH, process.env.PUPPETEER_EXECUTABLE_PATH, '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', '/usr/bin/chromium', '/usr/bin/chromium-browser', '/usr/bin/google-chrome']) {
@@ -14,8 +17,9 @@ async function executable(explicit) {
 }
 
 // Deliberately a startup gate, not a claim that business workflows pass.
-export async function validateBrowserDelivery(html, { chrome, signal, settleMs = 350, requireAgentAction = false, viewport, presentationContract } = {}) {
+export async function validateBrowserDelivery(html, { chrome, signal, settleMs = 350, requireAgentAction = false, viewport, presentationContract, verificationInput } = {}) {
   const presentation=validatePresentationContract(presentationContract);
+  const fixture=validateVerificationInput(verificationInput);
   let browser;
   let actionPhase = false;
   let outcome = 'failure';
@@ -24,12 +28,15 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
   const syntheticRequest = `Process this current user request: delivery-check-${token}`;
   const serviceError = `Connected service unavailable: delivery-error-${token}`;
   const serviceSuccess = {ok:true,status:'succeeded',text:`Observed service result: delivery-success-${token}`,data:{entities:[{id:`delivery-${token}`,name:`Observed entity ${token}`,detail:`Observed detail ${token}`,group:`unknown-group-${token}`},{name:`Second entity ${token}`,detail:`Second detail ${token}`,group:`other-group-${token}`}],stats:[{label:`Observed count ${token}`,value:'1'}],evaluation:{pass:true,deficiencies:[]}}};
-  let actionVerification, presentationVerification;
+  let actionVerification, presentationVerification, inputVerification;
   let presentationCalls=0;
+  let presentationProbe, presentationFrame;
+  const presentationStorage = new Map(), presentationSaves = [];
+  const presentationError = `UI generation unavailable: delivery-ui-error-${token}`;
   const errors = [];
   const layoutChecks = [];
   const requestedViewport = normalizeDeliveryViewport(viewport);
-  const add = (code, message) => { if (errors.length < 12 && !errors.some(e => e.code === code && e.message === message)) errors.push({ code, message: String(message).slice(0, 600) }); };
+  const add = (code, message, details) => { if (errors.length < 12 && !errors.some(e => e.code === code && e.message === message)) errors.push({ code, message: String(message).slice(0, 600),...(details?{details}:{}) }); };
   const stop = () => browser?.process()?.kill('SIGKILL');
   const budgetMs = requireAgentAction ? 40000 : 25000;
   const deadline = setTimeout(() => { add('browser_deadline', `Browser delivery verification exceeded ${budgetMs / 1000} seconds`); stop(); }, budgetMs);
@@ -61,24 +68,46 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       if (agentCalls.length > 1) add('agent_action_contract', `A single primary submit invoked window.liveuiagent.ai ${agentCalls.length} times on the ${outcome} probe. Use one host SDK invocation per submit; compose multiple service API operations inside that host action.`);
       return outcome === 'success' ? serviceSuccess : { ok: false, text: serviceError, error: serviceError, data: { ok: false, error: serviceError } };
     });
-    if(presentation)await page.exposeFunction('__deliveryPresentationAction',(key,prompt,context)=>{
-      if(key!==channel||context?.uiProtocol!=='liveui-tree-v1'||typeof prompt!=='string'||!prompt.includes('delivery-ui-'))throw Error('Invalid presentation bridge request');
-      const variant=++presentationCalls;
-      return{text:'Controlled geometry',requestId:context.requestId,data:{tree:{type:'Stack',children:[{type:'Scene3D',scene:{title:'Geometry '+variant,grid:true,objects:[{id:'probe-'+token+'-'+variant,shape:variant===1?'box':'torus',position:[0,0,0],scale:[1,1,1],color:variant===1?'#6366f1':'#10b981'}]}},...(context.records||[]).map(r=>({type:'List',recordId:r.id,children:[]})),...(context.photos||[]).map(p=>({type:'Image',photoId:p.id}))]}}};
+    if(presentation)await page.exposeFunction('__deliveryPresentationAction',(key,prompt,context,trustedAction)=>{
+      if(key!==channel||context?.uiProtocol!=='liveui-tree-v1')throw Error('Invalid presentation bridge request');
+      presentationCalls++;
+      if(!presentationProbe||!trustedAction||typeof prompt!=='string'||!prompt.includes(presentationProbe.request)){
+        add('browser_presentation_contract','Generate a new UI only from the visible submit button and forward its current requirement.');
+        throw Error('Presentation generation requires the current explicit user action');
+      }
+      if(++presentationProbe.calls!==1){add('browser_presentation_contract','One UI submit must invoke ui.generate exactly once.');throw Error('Duplicate presentation generation');}
+      if(presentationProbe.failure)throw Error(presentationError);
+      return{text:'Controlled component tree',requestId:context.requestId,data:{tree:controlledPresentationTree(presentation.components,presentationProbe.variant,token,context)}};
+    });
+    await page.exposeFunction('__deliveryStorageSave',async(key,storageKey,value)=>{
+      if(key!==channel||typeof storageKey!=='string'||!storageKey)throw Error('Invalid storage bridge request');
+      let treeCommit=false;
+      if(presentationProbe&&!presentationProbe.failure&&!presentationProbe.savedMarker&&presentationFrame){
+        const marker=`delivery-tree-${token}-${presentationProbe.variant}`;
+        treeCommit=typeof value==='string'&&value.includes(marker);
+        if(treeCommit&&await presentationFrame.evaluate(marker=>document.body.innerText.includes(marker),marker))throw Error('The generated view was displayed before storage acknowledgement');
+      }
+      // An asynchronous host ACK, not a synchronous localStorage write.
+      await new Promise(resolve=>setTimeout(resolve,20));
+      presentationStorage.set(storageKey,String(value));presentationSaves.push({key:storageKey,value:String(value),acknowledged:true});
+      if(treeCommit&&presentationProbe)presentationProbe.savedMarker=true;
+      return{ok:true};
     });
     const policy = '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; script-src \'unsafe-inline\'; style-src \'unsafe-inline\'; img-src data: blob:; font-src data:; connect-src \'none\'; frame-src \'none\'; object-src \'none\'; base-uri \'none\'; form-action \'none\'">';
     // Match the host's opaque-origin storage API. AI is unavailable during startup
     // checks: a real request must happen through an explicit user action later.
     const structuredRuntime = await fs.readFile(new URL('../../frontend/snapshot/structured-ui-runtime.js', import.meta.url),'utf8');
-    const bootstrap = `<script>(${installDeliverySdk.toString()})(${JSON.stringify(channel)},${JSON.stringify(requireAgentAction)},${JSON.stringify(Boolean(presentation))});</script>`;
-    const runtimeBootstrap='<script>'+structuredRuntime+`;(()=>{let saveCount=0;window.liveuiagent.save=async(k,v)=>{window.liveuiagent.storage.setItem(k,v);saveCount++;return {ok:true};};Object.defineProperty(window,'__deliveryUiSaveCount',{value:()=>saveCount,writable:false});const ui=window.__liveuiStructuredRuntime(window.liveuiagent);const originalGenerate=ui.generate;let generationCount=0;Object.defineProperty(ui,'generate',{value:async function(...args){generationCount++;return originalGenerate.apply(ui,args);},writable:false});Object.defineProperty(window,'__deliveryUiGenerationCount',{value:()=>generationCount,writable:false});Object.defineProperty(window.liveuiagent,'ui',{value:Object.freeze(ui),writable:false});})();</script>`;
-    const injected = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, match => match + policy + bootstrap + runtimeBootstrap) : policy + bootstrap + runtimeBootstrap + html;
-    const loadApp = async () => {
+    const runtimeBootstrap='<script>'+structuredRuntime+`;(()=>{let saveCount=0;const originalSave=window.liveuiagent.save;window.liveuiagent.save=async(k,v)=>{const ack=await originalSave(k,v);saveCount++;return ack;};Object.defineProperty(window,'__deliveryUiSaveCount',{value:()=>saveCount,writable:false});const ui=window.__liveuiStructuredRuntime(window.liveuiagent);const originalGenerate=ui.generate,originalRender=ui.render;let generationCount=0,renderCount=0;Object.defineProperty(ui,'generate',{value:async function(...args){generationCount++;return originalGenerate.apply(ui,args);},writable:false});Object.defineProperty(ui,'render',{value:function(...args){renderCount++;return originalRender.apply(ui,args);},writable:false});Object.defineProperty(window,'__deliveryUiGenerationCount',{value:()=>generationCount,writable:false});Object.defineProperty(window,'__deliveryUiRenderCount',{value:()=>renderCount,writable:false});Object.defineProperty(window.liveuiagent,'ui',{value:Object.freeze(ui),writable:false});})();</script>`;
+    const loadApp = async ({restorePresentation=false}={}) => {
+      const initialValues = JSON.stringify(restorePresentation?Object.fromEntries(presentationStorage):{}).replace(/</g,'\\u003c');
+      const bootstrap = `<script>(${installDeliverySdk.toString()})(${JSON.stringify(channel)},${JSON.stringify(requireAgentAction)},${JSON.stringify(Boolean(presentation))},${initialValues});</script>`;
+      const injected = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, match => match + policy + bootstrap + runtimeBootstrap) : policy + bootstrap + runtimeBootstrap + html;
       await page.setContent('<!doctype html><html><body style="margin:0"><iframe id="app" sandbox="allow-scripts allow-forms allow-modals allow-downloads" style="width:100vw;height:100vh;border:0"></iframe></body></html>');
       await page.evaluate(({ html, channel }) => {
         const iframe = document.querySelector('#app');
         addEventListener('message', event => { if (event.source !== iframe.contentWindow || event.data?.channel !== channel) return;
-          if(event.data.type==='presentation'){const {id,prompt,context}=event.data;window.__deliveryPresentationAction(channel,prompt,context).then(value=>iframe.contentWindow?.postMessage({channel,id,type:'agent-reply',value},'*'),error=>iframe.contentWindow?.postMessage({channel,id,type:'agent-reply',error:error.message},'*'));}
+          if(event.data.type==='presentation'){const {id,prompt,context,presentationAction}=event.data;window.__deliveryPresentationAction(channel,prompt,context,presentationAction).then(value=>iframe.contentWindow?.postMessage({channel,id,type:'agent-reply',value},'*'),error=>iframe.contentWindow?.postMessage({channel,id,type:'agent-reply',error:error.message},'*'));}
+          else if(event.data.type==='save'){const {id,storageKey,value}=event.data;window.__deliveryStorageSave(channel,storageKey,value).then(value=>iframe.contentWindow?.postMessage({channel,id,type:'agent-reply',value},'*'),error=>iframe.contentWindow?.postMessage({channel,id,type:'agent-reply',error:error.message},'*'));}
           else if (event.data.type === 'agent') {
             const { id, prompt, context, primaryAction } = event.data;
             window.__deliveryAgentAction(channel, prompt, context, primaryAction).then(value => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', value }, '*'), error => iframe.contentWindow?.postMessage({ channel, id, type: 'agent-reply', error: error.message }, '*'));
@@ -93,7 +122,7 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       }
       return frame;
     };
-    let frame = await loadApp();
+    let frame = await loadApp();presentationFrame=frame;
     signal?.throwIfAborted();
     const visible = await frame.evaluate(() => {
       const body = document.body;
@@ -113,7 +142,11 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       for (const violation of measured.violations) add('browser_layout', `${size.width}x${size.height}: ${violation}`);
     }
     await page.setViewport(requestedViewport ?? {width:1280,height:900});
-    if(presentation&&!errors.length){try{presentationVerification=await verifyPresentation(frame);}catch(error){add('browser_presentation_contract',error.message);}}
+    if(presentation&&!errors.length){try{
+      if(fixture)inputVerification=await uploadPresentationVerificationInput(frame,fixture,settleMs);
+      const verified=await verifyPresentation(frame,{contract:presentation,token,error:presentationError,setProbe:value=>{presentationProbe=value;},getCalls:()=>presentationCalls,getSaves:()=>presentationSaves,restore:async()=>{const restored=await loadApp({restorePresentation:true});presentationFrame=restored;return restored;}});
+      presentationVerification=verified.verification;frame=verified.frame;
+    }catch(error){add('browser_presentation_contract',error.message,error.deliveryDiagnostic);}finally{presentationProbe=undefined;}}
     if (requireAgentAction && !errors.length) {
       try {
         const failure = await verifyAgentAction(frame, syntheticRequest, serviceError, agentCalls, () => { actionPhase = true; });
@@ -141,50 +174,204 @@ export async function validateBrowserDelivery(html, { chrome, signal, settleMs =
       try { await browser.close(); } catch { stop(); } finally { clearTimeout(timer); }
     }
   }
-  return { ok: errors.length === 0, errors, scope: requireAgentAction ? 'browser-agent-action-contract' : 'browser-startup', businessBehaviorVerified: false, layoutChecks, ...(actionVerification ? { agentAction: actionVerification } : {}),...(presentationVerification?{presentation:presentationVerification}:{}) };
+  return { ok: errors.length === 0, errors, scope: requireAgentAction ? 'browser-agent-action-contract' : 'browser-startup', businessBehaviorVerified: false, layoutChecks, ...(actionVerification ? { agentAction: actionVerification } : {}),...(presentationVerification?{presentation:presentationVerification}:{}),...(inputVerification?{verificationInput:inputVerification}:{}) };
+}
+
+async function uploadPresentationVerificationInput(frame, fixture, settleMs) {
+  await frame.evaluate(filename=>{
+    const extension=filename.toLowerCase().endsWith('.csv')?'.csv':'.txt';
+    const mimes=extension==='.csv'?['text/csv','application/csv','application/vnd.ms-excel']:['text/plain'];
+    const candidates=[...document.querySelectorAll('input[type="file"]')].filter(input=>{
+      if(input.disabled)return false;
+      const accepts=input.accept.toLowerCase().split(',').map(v=>v.trim()).filter(Boolean);
+      return !accepts.length||accepts.some(v=>v===extension||v==='*/*'||v==='text/*'||mimes.includes(v));
+    });
+    if(candidates.length!==1)throw Error('verificationInput requires exactly one enabled file input accepting its .txt or .csv type.');
+    const input=candidates[0];
+    const visible=node=>{const r=node.getBoundingClientRect(),s=getComputedStyle(node);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'&&s.pointerEvents!=='none';};
+    const labels=[...input.labels||[]].filter(visible);
+    const trigger=labels[0]||(visible(input)?input:undefined);
+    if(!trigger)throw Error('Expose the verification file input or an associated visible label for the browser file chooser.');
+    trigger.setAttribute('data-delivery-verification-trigger','true');
+  },fixture.filename);
+  const dir=await fs.mkdtemp(path.join(tmpdir(),'liveui-verification-input-'));
+  try{
+    const file=path.join(dir,fixture.filename);
+    await fs.writeFile(file,fixture.content,{encoding:'utf8',mode:0o600});
+    const [chooser]=await Promise.all([frame.page().waitForFileChooser({timeout:4000}),frame.click('[data-delivery-verification-trigger="true"]')]);
+    await chooser.accept([file]);
+    await new Promise(resolve=>setTimeout(resolve,Math.max(settleMs,350)));
+    return{synthetic:true,uploaded:true,method:'file-chooser',filename:fixture.filename,bytes:Buffer.byteLength(fixture.content,'utf8')};
+  }finally{await fs.rm(dir,{recursive:true,force:true});}
 }
 
 
-async function verifyPresentation(frame){
-  const target=await frame.evaluate(()=>{
+// Neutral protocol fixtures, not application templates or generated business data.
+function controlledPresentationTree(types, variant, token, context) {
+  const rich = types.map(type => {
+    const title = `${type} ${variant} ${token}`;
+    if (type === 'Scene3D') return {type,scene:{title,grid:true,objects:[{id:`probe-${token}-${variant}`,shape:variant===1?'box':'torus',position:[0,0,0],scale:[1,1,1],color:variant===1?'#6366f1':'#10b981'}]}};
+    if (type === 'Plot') return {type,plot:{title,kind:variant===1?'line':'bar',series:[{name:`Series ${variant}`,color:'#6366f1',points:variant===1?[[0,1],[1,3],[2,2]]:[[0,4],[1,1],[2,5]]}]}};
+    return {type,diagram:{title,nodes:[{id:'a',label:`Start ${variant}`,x:.15,y:.25,color:'#6366f1'},{id:'b',label:`Result ${variant}`,x:.8,y:.7,color:'#10b981'},...(variant===2?[{id:'c',label:'Detail',x:.5,y:.45,color:'#f59e0b'}]:[])],edges:variant===1?[{from:'a',to:'b'}]:[{from:'a',to:'c'},{from:'c',to:'b'}]}};
+  });
+  const originals = [...(context.records||[]).map(r=>({type:'List',recordId:r.id,children:[]})),...(context.photos||[]).map(p=>({type:'Image',photoId:p.id}))];
+  const marker={type:'Text',text:`delivery-tree-${token}-${variant}`};
+  return variant===1
+    ? {type:'Stack',children:[marker,{type:'Card',children:[{type:'Text',text:'First arrangement'},...rich,...originals]}]}
+    : {type:'Grid',style:{columns:2},children:[{type:'Card',children:[marker,{type:'Text',text:'Reorganized content'}]},{type:'Stack',children:[...rich,...originals,{type:'Text',text:'Updated detail'}]}]};
+}
+
+async function presentationState(frame, marker, types) {
+  await frame.waitForFunction(marker=>[...document.querySelectorAll('[data-liveui-component="Text"]')].some(n=>n.textContent===marker),{timeout:4000},marker);
+  const state=await frame.evaluate(marker=>{
+    const text=[...document.querySelectorAll('[data-liveui-component="Text"]')].find(n=>n.textContent===marker);
+    let root=text;while(root.parentElement?.hasAttribute('data-liveui-component'))root=root.parentElement;
+    root.scrollIntoView({block:'nearest'});
+    const rect=root.getBoundingClientRect(),style=getComputedStyle(root);
+    if(rect.width<160||rect.height<20||style.display==='none'||style.visibility==='hidden')throw Error('The returned component tree is not visibly rendered');
+    const signature=n=>({type:n.dataset.liveuiComponent,children:[...n.children].filter(c=>c.hasAttribute('data-liveui-component')).map(signature)});
+    return{rootType:root.dataset.liveuiComponent,structure:JSON.stringify(signature(root)),content:root.innerText};
+  },marker);
+  state.components=[];
+  for(const type of types){
+    const rendered=await frame.evaluate(async({marker,type})=>{
+      const text=[...document.querySelectorAll('[data-liveui-component="Text"]')].find(n=>n.textContent===marker);
+      let root=text;while(root.parentElement?.hasAttribute('data-liveui-component'))root=root.parentElement;
+      const component=[...root.querySelectorAll('[data-liveui-component]')].find(n=>n.dataset.liveuiComponent===type);
+      if(!component)throw Error(`The returned tree omitted ${type}`);
+      const visual=component.querySelector(type==='Scene3D'?'section[data-renderer="webgl"] canvas':'svg');
+      if(!visual)throw Error(`${type} needs its maintained ${type==='Scene3D'?'WebGL':'SVG'} renderer, not a label`);
+      visual.scrollIntoView({block:'center'});
+      const r=visual.getBoundingClientRect(),style=getComputedStyle(visual);
+      if(r.width<160||r.height<100||r.bottom<=0||r.top>=innerHeight||style.display==='none'||style.visibility==='hidden')throw Error(`${type} is not visibly rendered`);
+      let changed=0,width,height;
+      if(type==='Scene3D'){
+        const gl=visual.getContext('webgl');if(!gl||gl.isContextLost())throw Error('Scene3D has no live WebGL context');
+        width=visual.width;height=visual.height;const pixels=new Uint8Array(width*height*4);gl.readPixels(0,0,width,height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+        for(let i=4;i<pixels.length;i+=4)if(Math.abs(pixels[i]-pixels[0])+Math.abs(pixels[i+1]-pixels[1])+Math.abs(pixels[i+2]-pixels[2])>20)changed++;
+      }else{
+        const marks=visual.querySelectorAll(type==='Plot'?'polyline,circle,rect':'g[role="button"] circle');
+        if(marks.length<(type==='Plot'?3:2)||[...marks].some(n=>n.getBBox().width<=0||n.getBBox().height<=0))throw Error(`${type} has no plotted data or diagram nodes`);
+        if(type==='Diagram'){
+          const node=visual.querySelector('g[role="button"]');node.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+          if(node.querySelector('circle')?.getAttribute('stroke-width')!=='4')throw Error('Diagram node interaction did not update its rendered selection');
+        }
+        const copy=visual.cloneNode(true);copy.setAttribute('width','640');copy.setAttribute('height','360');
+        const image=new Image();image.src='data:image/svg+xml;charset=utf-8,'+encodeURIComponent(new XMLSerializer().serializeToString(copy));await image.decode();
+        const canvas=document.createElement('canvas');canvas.width=width=640;canvas.height=height=360;const ctx=canvas.getContext('2d');ctx.drawImage(image,0,0,width,height);
+        const pixels=ctx.getImageData(0,0,width,height).data;for(let i=0;i<pixels.length;i+=4)if(pixels[i+3]>0)changed++;
+      }
+      if(changed<100)throw Error(`${type} must render nonempty graphics`);
+      return{type,renderer:type==='Scene3D'?'webgl':'svg',pixelsChanged:changed,width,height};
+    },{marker,type});
+    state.components.push(rendered);
+  }
+  // Rich controls may add a selected-node caption. Compare the view after the
+  // controlled interaction, not the earlier unselected caption.
+  state.content=await frame.evaluate(marker=>{
+    const text=[...document.querySelectorAll('[data-liveui-component="Text"]')].find(n=>n.textContent===marker);
+    let root=text;while(root.parentElement?.hasAttribute('data-liveui-component'))root=root.parentElement;
+    return root.innerText;
+  },marker);
+  return state;
+}
+
+async function verifyPresentation(frame,options){
+  let currentFrame=frame,phase='controls',marker;
+  try{
+    return await verifyPresentationSteps(frame,{...options,setPhase:(value,expected)=>{phase=value;if(expected!==undefined)marker=expected;},restore:async()=>{currentFrame=await options.restore();return currentFrame;}});
+  }catch(error){
+    const snapshot=await currentFrame.evaluate(marker=>{
+      const visible=n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';};
+      const status=[...document.querySelectorAll('[role="status"],[role="alert"]')].filter(visible).map(n=>n.textContent.trim()).filter(Boolean).join(' | ').slice(0,350);
+      const nodes=[...document.querySelectorAll('[data-liveui-component]')];
+      const savedTreeKeys=[];
+      if(marker)for(let i=0;i<Math.min(window.liveuiagent.storage.length,100);i++){const key=window.liveuiagent.storage.key(i),value=window.liveuiagent.storage.getItem(key);if(typeof value==='string'&&value.includes(marker))savedTreeKeys.push(String(key).slice(0,160));}
+      return{status,generationCount:window.__deliveryUiGenerationCount(),renderCount:window.__deliveryUiRenderCount(),acknowledgedSaveCount:window.__deliveryUiSaveCount(),expectedMarkerPresent:Boolean(marker&&nodes.some(n=>n.dataset.liveuiComponent==='Text'&&n.textContent===marker)),savedTreeKeys:savedTreeKeys.slice(0,10),renderedComponentTypes:[...new Set(nodes.map(n=>n.dataset.liveuiComponent))].slice(0,10),renderedText:nodes.filter(n=>n.dataset.liveuiComponent==='Text').slice(0,3).map(n=>n.textContent.slice(0,120)).join(' | ').slice(0,240),generateButtonDisabled:Boolean(document.querySelector('[data-liveui-action="ui.generate"]')?.disabled)};
+    },marker).catch(failure=>({captureError:String(failure.message).slice(0,200)}));
+    const timeout=/Waiting failed:.*ms exceeded/i.test(error.message);
+    const timeoutReason=phase==='fresh-frame-restore'?'Reopening did not display the last acknowledged generated tree.':phase==='failure-message'?'The failed generation did not display the actual host error.':phase==='failure-preservation'?'The failed generation did not retain the previous rendered tree.':'The expected presentation update was not observed.';
+    const reason=timeout?timeoutReason:error.message;
+    const failure=Error(`Presentation phase ${phase} failed: ${reason}`+(snapshot.status?' Visible status: '+snapshot.status.slice(0,180):'')+` Calls=${options.getCalls()}, generates=${snapshot.generationCount??'?'}, renders=${snapshot.renderCount??'?'}, expected tree visible=${snapshot.expectedMarkerPresent??'?'}.`+(snapshot.renderedText?' Rendered text: '+snapshot.renderedText.slice(0,100):''));
+    failure.deliveryDiagnostic={phase,cause:String(error.message).slice(0,600),hostGenerationCalls:options.getCalls(),hostAcknowledgedWrites:options.getSaves().length,...snapshot};
+    throw failure;
+  }
+}
+
+async function verifyPresentationSteps(frame,{contract,token,error,setProbe,getCalls,getSaves,restore,setPhase}){
+  await frame.evaluate(()=>{
     const visible=n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';};
-    if(document.querySelector('meta[name="liveui-ui-protocol"]')?.content!=='liveui-tree-v1')throw Error('Declare liveui-tree-v1 through the host protocol meta tag; a custom Canvas2D renderer is not the requested maintained 3D component.');
+    if(document.querySelector('meta[name="liveui-ui-protocol"]')?.content!=='liveui-tree-v1')throw Error('Declare liveui-tree-v1 and render the returned tree with the maintained UI renderer.');
     const inputs=[...document.querySelectorAll('input[data-liveui-ui-request],textarea[data-liveui-ui-request]')].filter(visible);
     const buttons=[...document.querySelectorAll('button[data-liveui-action="ui.generate"],input[type="submit"][data-liveui-action="ui.generate"]')].filter(visible);
     if(inputs.length!==1||buttons.length!==1||buttons[0].disabled||inputs[0].disabled)throw Error('Provide one visible editable data-liveui-ui-request input and one enabled data-liveui-action="ui.generate" button, connected to await window.liveuiagent.ui.generate.');
-    inputs[0].setAttribute('data-delivery-ui-input','true');buttons[0].setAttribute('data-delivery-ui-button','true');return true;
+    inputs[0].setAttribute('data-delivery-ui-input','true');buttons[0].setAttribute('data-delivery-ui-button','true');
   });
-  if(!target)throw Error('Structured UI controls are unavailable');
+  const submit=async probe=>{
+    await frame.$eval('[data-delivery-ui-input="true"]',(node,value)=>{const proto=node.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(node,value);node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));},probe.request);
+    setProbe(probe);await frame.click('[data-delivery-ui-button="true"]');
+  };
   const states=[];
   for(let variant=1;variant<=2;variant++){
     const previous=await frame.evaluate(()=>({generations:window.__deliveryUiGenerationCount(),saves:window.__deliveryUiSaveCount()}));
-    await frame.$eval('[data-delivery-ui-input="true"]',(node,value)=>{const proto=node.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype;Object.getOwnPropertyDescriptor(proto,'value').set.call(node,value);node.dispatchEvent(new Event('input',{bubbles:true}));node.dispatchEvent(new Event('change',{bubbles:true}));},'delivery-ui-'+variant+' generate a new interactive 3D scene');
-    await frame.click('[data-delivery-ui-button="true"]');
-    await frame.waitForFunction(({previous,variant})=>{
-      const component=[...document.querySelectorAll('[data-liveui-component="Scene3D"]')].find(n=>n.textContent.includes('Geometry '+variant));
-      if(!component||window.__deliveryUiGenerationCount()!==previous.generations+1||window.__deliveryUiSaveCount()<=previous.saves)return false;
-      const canvas=component.querySelector('section[data-renderer="webgl"] canvas');if(!canvas)return false;const r=canvas.getBoundingClientRect();return r.width>=160&&r.height>=100&&r.top<innerHeight&&r.bottom>0;
-    },{timeout:4000}, {previous,variant});
-    const result=await frame.evaluate(variant=>{
-      const component=[...document.querySelectorAll('[data-liveui-component="Scene3D"]')].find(n=>n.textContent.includes('Geometry '+variant));const canvas=component.querySelector('canvas'),gl=canvas.getContext('webgl');
-      if(!gl||gl.isContextLost())throw Error('Scene3D has no live WebGL context');const pixels=new Uint8Array(canvas.width*canvas.height*4);gl.readPixels(0,0,canvas.width,canvas.height,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
-      let changed=0;for(let i=4;i<pixels.length;i+=4)if(Math.abs(pixels[i]-pixels[0])+Math.abs(pixels[i+1]-pixels[1])+Math.abs(pixels[i+2]-pixels[2])>20)changed++;
-      if(changed<100)throw Error('Scene3D must render nonempty geometry, not an empty canvas or text label');
-      return{variant,pixelsChanged:changed,canvasWidth:canvas.width,canvasHeight:canvas.height,view:component.querySelector('[data-renderer]').dataset.view};
-    },variant);states.push(result);
+    const probe={variant,calls:0,request:`delivery-ui-${token}-${variant} generate a new ${contract.components.join(' and ')||'component'} layout`};
+    setPhase(`variant-${variant}-submit`,`delivery-tree-${token}-${variant}`);
+    await submit(probe);
+    setPhase(`variant-${variant}-render`);
+    let state;
+    try{state=await presentationState(frame,`delivery-tree-${token}-${variant}`,contract.components);}
+    catch(error){
+      const diagnostic=await frame.evaluate(()=>({generations:window.__deliveryUiGenerationCount(),status:[...document.querySelectorAll('[role="status"],[role="alert"]')].filter(n=>{const r=n.getBoundingClientRect(),s=getComputedStyle(n);return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden';}).map(n=>n.textContent.trim()).filter(Boolean).join(' | ').slice(0,350)}));
+      if(diagnostic.generations===previous.generations)throw Error('The UI generation button did not invoke ui.generate.'+(diagnostic.status?' Visible status: '+diagnostic.status:'')+' If local upload is required first, provide synthetic app.json.verificationInput.');
+      throw Error('UI generation did not render the returned component tree.'+(diagnostic.status?' Visible status: '+diagnostic.status:' '+error.message));
+    }
+    setPhase(`variant-${variant}-acknowledgement`);
+    const counts=await frame.evaluate(()=>({generations:window.__deliveryUiGenerationCount(),saves:window.__deliveryUiSaveCount()}));
+    if(probe.calls!==1||counts.generations!==previous.generations+1||counts.saves<=previous.saves||!probe.savedMarker)throw Error('Each UI submit must generate once and await host storage ACK before displaying the returned tree');
+    if(!getSaves().some(save=>save.acknowledged&&save.value.includes(`delivery-tree-${token}-${variant}`)))throw Error('The generated tree was not acknowledged by host storage');
+    states.push({variant,...state});setProbe(undefined);
   }
-  return{scope:'controlled-presentation-variants',generationCalls:2,storageAcknowledgements:true,realProviderCalls:0,realBusinessCalls:0,variants:states};
+  setPhase('generation-diversity');
+  if(states[0].structure===states[1].structure||states[0].content===states[1].content)throw Error('The two returned trees must change both visible structure and content, not only a preset theme');
+  const writesBeforeFailure=new Map(getSaves().filter(save=>save.value.includes(`delivery-tree-${token}-2`)).map(save=>[save.key,save.value]));
+  const generationsBeforeFailure=await frame.evaluate(()=>window.__deliveryUiGenerationCount());
+  setPhase('failure-submit');
+  await submit({variant:3,calls:0,failure:true,request:`delivery-ui-${token}-failure preserve the current view`});
+  setPhase('failure-message');
+  await frame.waitForFunction(error=>document.body.innerText.includes(error),{timeout:4000},error);
+  setPhase('failure-preservation');
+  const retained=await presentationState(frame,`delivery-tree-${token}-2`,contract.components);
+  const latestWrites=new Map(getSaves().map(save=>[save.key,save.value]));
+  const failedGenerations=await frame.evaluate(()=>window.__deliveryUiGenerationCount());
+  if(failedGenerations!==generationsBeforeFailure+1)throw Error('The failed UI submit must still use ui.generate exactly once');
+  if(retained.structure!==states[1].structure||retained.content!==states[1].content)throw Error('Generation failure must preserve the last rendered tree');
+  setPhase('failure-storage');
+  if([...writesBeforeFailure].some(([key,value])=>latestWrites.get(key)!==value))throw Error('Generation failure must preserve the last saved tree');
+  setProbe(undefined);
+  setPhase('fresh-frame-load');
+  const callsBeforeRestore=getCalls();frame=await restore();
+  setPhase('fresh-frame-restore');
+  const reopened=await presentationState(frame,`delivery-tree-${token}-2`,contract.components);
+  const restoredRenders=await frame.evaluate(()=>window.__deliveryUiRenderCount());
+  if(restoredRenders<1||reopened.structure!==states[1].structure||reopened.content!==states[1].content||getCalls()!==callsBeforeRestore)throw Error('Reopening must restore the acknowledged tree through ui.render without generating another UI');
+  return{frame,verification:{scope:'controlled-presentation-variants',generationCalls:getCalls(),successfulGenerations:2,failedGenerations:1,structureChanged:true,contentChanged:true,storageAcknowledgements:true,preservedViewOnError:true,restoredInFreshFrame:true,realProviderCalls:0,realBusinessCalls:0,variants:states}};
 }
 
-function installDeliverySdk(channel, agentEnabled, presentationEnabled) {
-  const values = Object.create(null), pending = new Map(); let sequence = 0, primaryAction = false;
-  addEventListener('click', event => { if (event.isTrusted && event.target.closest?.('[data-delivery-primary="true"]')) primaryAction = true; }, true);
+function installDeliverySdk(channel, agentEnabled, presentationEnabled, initialValues = {}) {
+  const values = Object.assign(Object.create(null),initialValues), pending = new Map(); let sequence = 0, primaryAction = false, presentationAction = false;
+  addEventListener('click', event => {
+    if(event.isTrusted&&event.target.closest?.('[data-delivery-primary="true"]'))primaryAction=true;
+    if(event.isTrusted&&event.target.closest?.('[data-delivery-ui-button="true"]'))presentationAction=true;
+  }, true);
   const storage = { getItem: k => Object.hasOwn(values, String(k)) ? values[String(k)] : null, setItem: (k, v) => { values[String(k)] = String(v); }, removeItem: k => { delete values[k]; }, clear: () => { for (const k of Object.keys(values)) delete values[k]; }, key: i => Object.keys(values)[i] ?? null, get length() { return Object.keys(values).length; } };
   Object.defineProperty(window, 'localStorage', { value: storage });
   window.liveuiagent = { storage, ai: (prompt, context) => {
     if (!agentEnabled&&!(presentationEnabled&&context?.uiProtocol==='liveui-tree-v1')) return Promise.reject(Error('AI actions require a user action; unavailable during delivery startup verification'));
     const id = ++sequence;
-    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); parent.postMessage({ channel, id, type: presentationEnabled&&context?.uiProtocol==='liveui-tree-v1'?'presentation':'agent', prompt, context, primaryAction }, '*'); });
+    return new Promise((resolve, reject) => { pending.set(id, { resolve, reject }); parent.postMessage({ channel, id, type: presentationEnabled&&context?.uiProtocol==='liveui-tree-v1'?'presentation':'agent', prompt, context, primaryAction, presentationAction }, '*'); });
+  }, save:async(storageKey,value)=>{
+    const id=++sequence;const ack=await new Promise((resolve,reject)=>{pending.set(id,{resolve,reject});parent.postMessage({channel,id,type:'save',storageKey,value},'*');});
+    storage.setItem(storageKey,value);return ack;
   }, download: () => { throw Error('Downloads require a user action during delivery verification'); } };
   addEventListener('message', event => {
     if (event.source !== parent || event.data?.channel !== channel || event.data?.type !== 'agent-reply') return;

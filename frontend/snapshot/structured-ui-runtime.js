@@ -56,6 +56,282 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
       }
     } finally {queue.running=false;if(queue.pending.size)void flushRichSaves(callback,queue);}
   }
+// Embed this function inside structuredUiRuntime: the iframe serializes that runtime.
+// enqueueSave(key, view, active) must use the runtime's existing rich save queue.
+function enhanceRichSelection(host, svg, raw, doc, options = {}, enqueueSave) {
+  const data = raw.plot || raw.diagram;
+  if (!data || !['Plot', 'Diagram'].includes(raw.type)) return { dispose() {} };
+  const zh = /^zh/i.test(options.locale || doc.documentElement.lang || '') ||
+    (!options.locale && /[\u3400-\u9fff]/.test(data.title || ''));
+  const fingerprint = JSON.stringify([raw.type, data]);
+  // Compact deterministic content identity keeps unrelated plots/diagrams separate.
+  const hash = seed => { let h = seed; for (let i = 0; i < fingerprint.length; i++) h = Math.imul(h ^ fingerprint.charCodeAt(i), 16777619); return (h >>> 0).toString(16).padStart(8, '0'); };
+  const key = 'rich-selection-v1:' + raw.type + ':' + hash(2166136261) + hash(3339675911);
+  let disposed = false;
+  const listeners = [];
+  const on = (el, name, fn) => { el.addEventListener(name, fn); listeners.push(() => el.removeEventListener(name, fn)); };
+  const panel = doc.createElement('div');
+  panel.dataset.richDetails = raw.type.toLowerCase();
+  panel.style.cssText = 'padding:12px 16px;background:#fff;border-top:1px solid #dce4ee;font:14px/1.6 system-ui;overflow-wrap:anywhere;min-width:0;';
+  const details = doc.createElement('div');
+  details.setAttribute('role', 'status'); details.setAttribute('aria-live', 'polite'); details.setAttribute('aria-atomic', 'true');
+  const select = doc.createElement('select');
+  select.setAttribute('aria-label', zh ? (raw.type === 'Plot' ? '选择数据点' : '选择节点') : (raw.type === 'Plot' ? 'Choose data point' : 'Choose node'));
+  select.style.cssText = 'display:block;width:100%;max-width:100%;min-height:44px;margin-top:8px;border:1px solid #c9d3e0;border-radius:8px;background:#fff;color:#172033;font:14px system-ui;padding:8px;';
+  const placeholder = doc.createElement('option'); placeholder.value = ''; placeholder.textContent = zh ? '请选择' : 'Select'; select.append(placeholder);
+  panel.append(details, select); host.append(panel);
+  svg.setAttribute('role', 'group');
+  host.dataset.richStateKey = key;
+  const commit = view => {
+    host.dataset.selection = JSON.stringify(view);
+    if (!disposed && typeof enqueueSave === 'function') enqueueSave(key, { ...view }, () => !disposed);
+  };
+  const saved = options.richState?.[key];
+  if (raw.type === 'Plot') {
+    const marks = [...svg.querySelectorAll('circle,rect')];
+    const entries = []; let markIndex = 0;
+    for (let seriesIndex = 0; seriesIndex < data.series.length; seriesIndex++) {
+      const series = data.series[seriesIndex];
+      for (let pointIndex = 0; pointIndex < series.points.length; pointIndex++) {
+        const [x, y] = series.points[pointIndex]; const mark = marks[markIndex++];
+        if (!mark) continue;
+        const value = seriesIndex + ':' + pointIndex;
+        const description = series.name + ' · ' + (data.xLabel || 'x') + ' = ' + x + ' · ' + (data.yLabel || 'y') + ' = ' + y;
+        const group = doc.createElementNS(svg.namespaceURI, 'g');
+        group.setAttribute('role', 'button'); group.setAttribute('tabindex', '0'); group.setAttribute('aria-label', description);
+        group.style.cssText = 'cursor:pointer;touch-action:manipulation;';
+        const hit = doc.createElementNS(svg.namespaceURI, mark.tagName.toLowerCase() === 'rect' ? 'rect' : 'circle');
+        if (mark.tagName.toLowerCase() === 'rect') {
+          const width = +mark.getAttribute('width'), height = +mark.getAttribute('height');
+          hit.setAttribute('x', String(+mark.getAttribute('x') - Math.max(0, 28 - width) / 2));
+          hit.setAttribute('y', String(+mark.getAttribute('y') - Math.max(0, 28 - height) / 2));
+          hit.setAttribute('width', String(Math.max(28, width))); hit.setAttribute('height', String(Math.max(28, height)));
+        } else { hit.setAttribute('cx', mark.getAttribute('cx')); hit.setAttribute('cy', mark.getAttribute('cy')); hit.setAttribute('r', '16'); }
+        hit.setAttribute('fill', 'transparent'); hit.setAttribute('pointer-events', 'all'); hit.setAttribute('aria-hidden', 'true');
+        mark.replaceWith(group); group.append(hit, mark);
+        const option = doc.createElement('option'); option.value = value; option.textContent = description; select.append(option);
+        const entry = { seriesIndex, pointIndex, x, y, value, description, group, mark }; entries.push(entry);
+        on(group, 'click', () => choose(entry, true));
+        on(group, 'keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); choose(entry, true); } });
+      }
+    }
+    function choose(entry, persist) {
+      if (disposed) return;
+      for (const other of entries) {
+        const selected = other === entry;
+        other.group.setAttribute('aria-pressed', String(selected));
+        other.mark.setAttribute('stroke', selected ? '#172033' : 'none'); other.mark.setAttribute('stroke-width', selected ? '3' : '0');
+      }
+      details.textContent = entry ? entry.description : (zh ? '点选图中的数据点查看数值。' : 'Select a point to see its values.');
+      select.value = entry?.value || '';
+      const view = entry ? { kind: 'plot-selection-v1', seriesIndex: entry.seriesIndex, pointIndex: entry.pointIndex, x: entry.x, y: entry.y } : { kind: 'plot-selection-v1' };
+      host.dataset.selection = JSON.stringify(view);
+      if (persist) commit(view);
+    }
+    on(select, 'change', () => choose(entries.find(e => e.value === select.value), true));
+    const restored = saved?.kind === 'plot-selection-v1' ? entries.find(e => e.seriesIndex === saved.seriesIndex && e.pointIndex === saved.pointIndex && e.x === saved.x && e.y === saved.y) : undefined;
+    choose(restored, false);
+  } else {
+    const groups = [...svg.querySelectorAll('g[role="button"]')];
+    const lines = [...svg.querySelectorAll('line')];
+    const nodes = new Map(data.nodes.map(n => [n.id, n]));
+    const list = doc.createElement('ul'); list.style.cssText = 'padding-left:20px;margin:8px 0 0;'; panel.append(list);
+    data.nodes.forEach((node, index) => {
+      const option = doc.createElement('option'); option.value = node.id; option.textContent = node.label; select.append(option);
+      const group = groups[index]; if (!group) return;
+      // Native Diagram already turns Enter/Space into click; reuse that handler.
+      on(group, 'click', () => choose(node.id, true));
+    });
+    function choose(nodeId, persist) {
+      if (disposed) return;
+      const selected = nodes.get(nodeId); const edges = selected ? data.edges.filter(e => e.from === nodeId || e.to === nodeId) : [];
+      const neighbors = new Set(edges.flatMap(e => [e.from, e.to]));
+      groups.forEach((group, i) => {
+        const current = data.nodes[i]; if (!current) return;
+        const active = selected?.id === current.id;
+        group.setAttribute('aria-pressed', String(active)); group.style.opacity = !selected || active || neighbors.has(current.id) ? '1' : '.35';
+        const circle = group.querySelector('circle'); circle?.setAttribute('stroke', active ? '#172033' : 'none'); circle?.setAttribute('stroke-width', active ? '4' : '0');
+      });
+      lines.forEach((line, i) => { const edge = data.edges[i]; const direct = edge && (edge.from === nodeId || edge.to === nodeId); line.setAttribute('stroke', selected && direct ? '#172033' : '#a0adbd'); line.setAttribute('stroke-width', selected && direct ? '3' : '2'); line.style.opacity = !selected || direct ? '1' : '.2'; });
+      details.textContent = selected ? selected.label + (zh ? '：直接关系（' : ': direct relationships (') + edges.length + (zh ? '）' : ')') : (zh ? '选择节点查看它的直接关系。' : 'Select a node to see its direct relationships.');
+      list.replaceChildren(); list.hidden = !selected;
+      for (const edge of edges) { const item = doc.createElement('li'); item.textContent = nodes.get(edge.from).label + ' → ' + nodes.get(edge.to).label + (edge.label ? ' · ' + edge.label : ''); list.append(item); }
+      if (selected && !edges.length) { const item = doc.createElement('li'); item.textContent = zh ? '没有直接连接。' : 'No direct connections.'; list.append(item); }
+      select.value = selected?.id || '';
+      const view = selected ? { kind: 'diagram-selection-v1', nodeId: selected.id } : { kind: 'diagram-selection-v1' };
+      host.dataset.selection = JSON.stringify(view); if (persist) commit(view);
+    }
+    on(select, 'change', () => choose(select.value, true));
+    choose(saved?.kind === 'diagram-selection-v1' && nodes.has(saved.nodeId) ? saved.nodeId : undefined, false);
+  }
+  return { key, dispose() { disposed = true; for (const remove of listeners) remove(); } };
+}
+
+// Embed this self-contained function inside structuredUiRuntime for iframe use.
+function createWorkspace(sdk, ui, options) {
+  const { container, requestInput, generateButton, status, storagePrefix } = options || {};
+  if (!container?.ownerDocument || typeof storagePrefix !== 'string' || !storagePrefix || storagePrefix.length > 160) throw Error('A workspace needs a container and stable storagePrefix');
+  const doc = container.ownerDocument;
+  const zh = /^zh/i.test(options.locale || doc.documentElement.lang || '');
+  const words = { saving: zh ? '正在保存…' : 'Saving…', generating: zh ? '正在生成布局…' : 'Generating layout…', saved: zh ? '已保存' : 'Saved', sources: zh ? '数据已保存，可生成新布局。' : 'Data saved. Generate a new layout when ready.', ready: zh ? '就绪' : 'Ready' };
+  const keys = { source: storagePrefix + ':source:v1', view: storagePrefix + ':view:v1', layout: storagePrefix + ':layout:v1', history: storagePrefix + ':history:v1' };
+  const photosFingerprint = value => {
+    const text = JSON.stringify(value); let a = 2166136261, b = 3339675911;
+    for (let i = 0; i < text.length; i++) { a = Math.imul(a ^ text.charCodeAt(i), 16777619); b = Math.imul(b ^ text.charCodeAt(i), 16777619); }
+    return 'workspace-photos-v1:' + text.length + ':' + (a >>> 0).toString(16) + ':' + (b >>> 0).toString(16);
+  };
+  const plain = x => x && typeof x === 'object' && !Array.isArray(x) && (Object.getPrototypeOf(x) === Object.prototype || Object.getPrototypeOf(x) === null);
+  const clone = (value, limit = 1000000) => {
+    const json = JSON.stringify(value, (_key, item) => {
+      if (typeof item === 'function' || typeof item === 'symbol' || typeof item === 'bigint' || typeof item === 'number' && !Number.isFinite(item) || item === undefined) throw Error('Workspace data must be finite JSON');
+      return item;
+    });
+    if (!json || new TextEncoder().encode(json).length > limit) throw Error('Workspace data is too large to save');
+    return JSON.parse(json);
+  };
+  const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
+  const validateItems = (items, label) => {
+    const result = clone(items); const ids = new Set();
+    if (!Array.isArray(result) || result.length > 80) throw Error(label + ' must contain at most 80 items');
+    for (const item of result) { if (!plain(item) || typeof item.id !== 'string' || !/^[\w.-]{1,128}$/.test(item.id) || ids.has(item.id)) throw Error(label + ' need unique stable ids'); ids.add(item.id); }
+    return result;
+  };
+  const read = key => { const text = sdk.storage.getItem(key); if (text == null) return null; if (typeof text !== 'string' || text.length > 1000000) throw Error('Saved workspace data is invalid'); return clone(JSON.parse(text)); };
+  let records = [], photos = [], preferences = {}, richState = {}, draft = '', tree = null, generatedTree = null, origin = 'source', error = null, viewRevision = '', snapshots = [], historyError = null;
+  let tail = Promise.resolve(), queued = 0, generationQueued = false, generating = false, disposed = false, draftTimer, draftEpoch = 0;
+  const notify = (text, failed = false) => { if (status) { status.textContent = text; status.setAttribute('role', failed ? 'alert' : 'status'); } };
+  const report = failure => { error = String(failure?.message || failure); notify(error, true); };
+  const persist = async (key, value) => { const ack = await sdk.save(key, JSON.stringify(value)); if (ack === false || ack?.ok === false) throw Error(zh ? '保存失败，请重试。' : 'Saving failed. Please retry.'); };
+  const queue = operation => {
+    queued++;
+    const result = tail.then(async () => { if (disposed) throw Error('Workspace is closed'); error = null; try { return await operation(); } catch (failure) { report(failure); throw failure; } }).finally(() => { queued--; });
+    tail = result.catch(() => {}); return result;
+  };
+  const fallback = (nextRecords, nextPhotos) => nextRecords.length || nextPhotos.length ? ({ type: 'Stack', children: [...(nextRecords.length ? [{type:'Stack',children:nextRecords.map(record => ({ type: 'List', recordId: record.id, children: [] }))}] : []), ...(nextPhotos.length ? [{type:'Stack',children:nextPhotos.map(photo => ({ type: 'Image', photoId: photo.id }))}] : [])] }) : ({type:'Text',text:zh?'添加内容或描述你想生成的界面。':'Add content or describe the view you want.'});
+  const renderOptions = (nextRecords = records, nextPhotos = photos) => ({ records: nextRecords, photos: nextPhotos, richState, onRichStateChange, onToggle });
+  const validateTree = (nextTree, nextRecords, nextPhotos, nextRichState = richState) => {
+    const probe = doc.createElement('div');
+    try { ui.render(probe, nextTree, {...renderOptions(nextRecords, nextPhotos),richState:nextRichState}); }
+    finally { for (const canvas of probe.querySelectorAll('canvas,svg')) canvas.__liveuiDispose?.(); }
+  };
+  const paint = nextTree => { ui.render(container, nextTree, renderOptions()); tree = clone(nextTree, 64000); };
+  const freshId = () => doc.defaultView.crypto?.randomUUID?.() || Date.now().toString(36)+'-'+Math.random().toString(36).slice(2);
+  const saveView = async next => { const saved = {...next,revision:freshId()}; await persist(keys.view, saved); preferences = saved.preferences; richState = saved.richState; draft = saved.draft; viewRevision = saved.revision; };
+  const viewSnapshot = () => ({ version: 1, preferences: clone(preferences, 6000), richState: clone(richState, 100000), draft });
+  function onRichStateChange(key, view) {
+    const incoming = clone(view, 10000);
+    return queue(async () => { const next = viewSnapshot(); next.richState = clone({ ...next.richState, [key]: incoming }, 100000); await saveView(next); });
+  }
+  function onToggle(id, checked) { return queue(async () => {
+    const nextRecords = records.map(item => item.id === id ? {...item,checked} : item);
+    validateTree(tree,nextRecords,photos);
+    await persist(keys.source,{version:1,records:nextRecords,photos});
+    if (disposed) throw Error('Workspace is closed');
+    records = nextRecords; paint(tree); notify(words.saved);
+  }); }
+  async function setRecords(value) {
+    let supplied; try { supplied = typeof value === 'function' ? value : validateItems(value, 'Records'); } catch (failure) { report(failure); throw failure; }
+    return queue(async () => changeSource(validateItems(typeof supplied === 'function' ? supplied(clone(records)) : supplied, 'Records'), photos));
+  }
+  async function setPhotos(value) {
+    let supplied; try { supplied = typeof value === 'function' ? value : validateItems(value, 'Photos'); } catch (failure) { report(failure); throw failure; }
+    return queue(async () => changeSource(records, validateItems(typeof supplied === 'function' ? supplied(clone(photos)) : supplied, 'Photos')));
+  }
+  async function changeSource(nextRecords, nextPhotos) {
+    if(JSON.stringify(nextRecords)===JSON.stringify(records)&&JSON.stringify(nextPhotos)===JSON.stringify(photos))return state();
+    const nextTree = fallback(nextRecords, nextPhotos);
+    validateTree(nextTree, nextRecords, nextPhotos);
+    const next = clone({ version: 1, records: nextRecords, photos: nextPhotos });
+    notify(words.saving); await persist(keys.source, next);
+    if (disposed) throw Error('Workspace is closed');
+    records = next.records; photos = next.photos;
+    paint(nextTree); origin = 'source'; notify(words.sources);
+    return state();
+  }
+  async function setPreferences(value) {
+    let supplied; try { supplied = typeof value === 'function' ? value : clone(value, 6000); } catch (failure) { report(failure); throw failure; }
+    return queue(async () => { const next = viewSnapshot(); next.preferences = clone(typeof supplied === 'function' ? supplied(clone(preferences)) : supplied, 6000); if (!plain(next.preferences)) throw Error('Preferences must be an object'); notify(words.saving); await saveView(next); notify(words.saved); return state(); });
+  }
+  function saveDraft(value) { const nextDraft = String(value), epoch=draftEpoch; return queue(async () => { if(epoch!==draftEpoch)return; const next = viewSnapshot(); next.draft = nextDraft; await saveView(next); }); }
+  const matchesSnapshot = snapshot => snapshot.recordsFingerprint === JSON.stringify(records) && snapshot.photosFingerprint === photosFingerprint(photos);
+  const snapshotLayout = snapshot => clone({tree:snapshot.tree,requestId:'snapshot-'+snapshot.id,requirement:snapshot.draft,updatedAt:new Date().toISOString(),recordsFingerprint:snapshot.recordsFingerprint,photosFingerprint:snapshot.photosFingerprint,workspaceOrigin:snapshot.origin,workspaceView:{version:1,baseRevision:viewRevision,preferences:snapshot.preferences,richState:snapshot.richState,draft:snapshot.draft}},100000);
+  const historyValue = items => {
+    if(items.length>6)throw Error(zh?'最多保存6个快照，请先删除一个。':'Keep at most 6 snapshots. Delete one before saving another.');
+    return clone({version:1,snapshots:items},500000);
+  };
+  function listSnapshots() { return freeze(snapshots.map(({id,label,createdAt,origin,...item})=>({id,label,createdAt,origin,matchesSource:matchesSnapshot(item)}))); }
+  function saveSnapshot(label) { return queue(async()=>{
+    if(historyError)throw Error(historyError);
+    if(label!==undefined&&(typeof label!=='string'||!label.trim()||label.length>160))throw Error(zh?'快照名称需为1至160个字符。':'Snapshot label must contain 1 to 160 characters.');
+    if(!tree)throw Error(zh?'还没有可保存的界面。':'There is no view to save yet.');
+    const snapshot=clone({id:freshId(),label:label===undefined?(String(requestInput?.value??draft).trim().slice(0,80)||(zh?'已保存界面':'Saved view')):label.trim(),createdAt:new Date().toISOString(),origin,tree:clone(tree,64000),recordsFingerprint:JSON.stringify(records),photosFingerprint:photosFingerprint(photos),preferences:clone(preferences,6000),richState:clone(richState,100000),draft:String(requestInput?.value??draft)});
+    validateTree(snapshot.tree,records,photos,snapshot.richState);snapshotLayout(snapshot);
+    const next=historyValue([...snapshots,snapshot]);await persist(keys.history,next);
+    if(disposed)throw Error('Workspace is closed');snapshots=next.snapshots;notify(words.saved);
+    return listSnapshots().find(item=>item.id===snapshot.id);
+  }); }
+  function restoreSnapshot(id) { return queue(async()=>{
+    if(historyError)throw Error(historyError);
+    const snapshot=snapshots.find(item=>item.id===id);if(!snapshot)throw Error(zh?'找不到这个快照。':'Snapshot not found.');
+    if(!matchesSnapshot(snapshot))throw Error(zh?'源数据已变化，无法恢复这个快照。':'Source data changed. This snapshot cannot be restored.');
+    validateTree(snapshot.tree,records,photos,snapshot.richState);
+    const saved=snapshotLayout(snapshot);await persist(keys.layout,saved);
+    if(disposed)throw Error('Workspace is closed');
+    draftEpoch++;clearTimeout(draftTimer);
+    preferences=clone(snapshot.preferences);richState=clone(snapshot.richState);draft=snapshot.draft;
+    if(requestInput)requestInput.value=draft;
+    generatedTree=clone(snapshot.tree,64000);paint(snapshot.tree);origin=snapshot.origin;notify(words.saved);return state();
+  }); }
+  function deleteSnapshot(id) { return queue(async()=>{
+    if(historyError)throw Error(historyError);
+    if(!snapshots.some(item=>item.id===id))throw Error(zh?'找不到这个快照。':'Snapshot not found.');
+    const next=historyValue(snapshots.filter(item=>item.id!==id));await persist(keys.history,next);
+    if(disposed)throw Error('Workspace is closed');snapshots=next.snapshots;notify(words.saved);return listSnapshots();
+  }); }
+  function generate(requirement) {
+    const prompt = requirement === undefined ? String(requestInput?.value ?? draft) : String(requirement);
+    if (!prompt.trim()) { const failure = Error(zh ? '请先输入布局要求。' : 'Enter a layout request first.'); report(failure); return Promise.reject(failure); }
+    if (prompt.length > 4000) { const failure = Error('The layout request is too long'); report(failure); return Promise.reject(failure); }
+    if (generationQueued) return Promise.reject(Error(zh ? '请等待当前布局完成。' : 'Wait for the current layout to finish.'));
+    generationQueued = true;
+    return queue(async () => {
+      generating = true; const previousDisabled = generateButton?.disabled;
+      if (generateButton) generateButton.disabled = true;
+      try {
+        const next = viewSnapshot(); next.draft = prompt; await saveView(next);
+        notify(words.generating);
+        const result = await ui.generate(container, prompt, { storageKey: keys.layout, isCurrent: () => !disposed, getRecords: () => clone(records), getPhotos: () => clone(photos), getPhotosFingerprint: () => photosFingerprint(photos), getContext: () => clone(preferences, 6000), previousTree: generatedTree || tree || undefined, layoutBrief: options.layoutBrief, richState, onRichStateChange, onToggle });
+        generatedTree = clone(result.tree, 64000); tree = clone(result.tree, 64000); origin = 'generated'; notify(words.saved); return result;
+      } finally { generating = false; if (generateButton) generateButton.disabled = previousDisabled; }
+    }).finally(() => { generationQueued = false; });
+  }
+  function state() { return freeze(clone({ records, photos, preferences, richState, tree, generatedTree, origin, draft: String(requestInput?.value ?? draft), busy: queued > 0, generating, error })); }
+  try {
+    const source = read(keys.source); if (source) { if (source.version !== 1) throw Error('Unknown workspace source version'); records = validateItems(source.records, 'Records'); photos = validateItems(source.photos, 'Photos'); }
+    const view = read(keys.view); if (view) { if (view.version !== 1 || !plain(view.preferences) || !plain(view.richState) || typeof view.draft !== 'string') throw Error('Saved workspace preferences are invalid'); preferences = clone(view.preferences, 6000); richState = clone(view.richState, 100000); draft = view.draft; viewRevision=typeof view.revision==='string'?view.revision:''; }
+    const saved = ui.read(keys.layout); generatedTree = saved?.tree ? clone(saved.tree, 64000) : null;
+    const restoredView=saved?.workspaceView;
+    if(plain(restoredView)&&restoredView.version===1&&restoredView.baseRevision===viewRevision){if(!plain(restoredView.preferences)||!plain(restoredView.richState)||typeof restoredView.draft!=='string')throw Error('Saved snapshot view is invalid');preferences=clone(restoredView.preferences,6000);richState=clone(restoredView.richState,100000);draft=restoredView.draft;}
+    if (requestInput && !requestInput.value) requestInput.value = draft;
+    const recordShape = value => JSON.stringify(value.map(({checked,...rest})=>rest));
+    let sameRecords = saved?.recordsFingerprint === JSON.stringify(records);
+    if (!sameRecords && saved?.recordsFingerprint) { try { sameRecords = recordShape(JSON.parse(saved.recordsFingerprint)) === recordShape(records); } catch {} }
+    const matchingSource = saved && sameRecords && (saved.photosFingerprint === photosFingerprint(photos) || saved.photosFingerprint === JSON.stringify(photos) || !photos.length && saved.photosFingerprint === undefined);
+    const candidate = matchingSource ? generatedTree : options.initialTree;
+    if (candidate) { try { validateTree(candidate, records, photos); paint(candidate); origin = matchingSource ? (['source','initial','generated'].includes(saved.workspaceOrigin)?saved.workspaceOrigin:'generated') : 'initial'; } catch { paint(fallback(records, photos)); origin = 'source'; } }
+    else paint(fallback(records, photos));
+    notify(words.ready);
+  } catch (failure) { try { paint(fallback(records, photos)); } catch {} report(failure); }
+  try {
+    const history=read(keys.history);
+    if(history){if(history.version!==1||!Array.isArray(history.snapshots))throw Error('Saved snapshot history is invalid');historyValue(history.snapshots);const ids=new Set();for(const item of history.snapshots){if(!plain(item)||typeof item.id!=='string'||!item.id||ids.has(item.id)||typeof item.label!=='string'||!item.label||item.label.length>160||typeof item.createdAt!=='string'||!Number.isFinite(Date.parse(item.createdAt))||!['source','initial','generated'].includes(item.origin)||!plain(item.tree)||typeof item.recordsFingerprint!=='string'||typeof item.photosFingerprint!=='string'||!plain(item.preferences)||!plain(item.richState)||typeof item.draft!=='string')throw Error('Saved snapshot history is invalid');clone(item.tree,64000);clone(item.preferences,6000);clone(item.richState,100000);ids.add(item.id);}snapshots=history.snapshots;}
+  } catch(failure){historyError=String(failure.message||failure);report(failure);}
+  const onInput = () => { clearTimeout(draftTimer); draftTimer = setTimeout(() => { void saveDraft(requestInput.value).catch(() => {}); }, 200); };
+  const onGenerate = event => { event.preventDefault(); void generate().catch(() => {}); };
+  requestInput?.addEventListener('input', onInput); generateButton?.addEventListener('click', onGenerate);
+  return Object.freeze({ getRecords: () => clone(records), getPhotos: () => clone(photos), getPreferences: () => clone(preferences), getTree: () => tree && clone(tree, 64000), setRecords, setPhotos, setPreferences, generate, saveSnapshot, listSnapshots, restoreSnapshot, deleteSnapshot, get state() { return state(); }, dispose() { disposed = true; clearTimeout(draftTimer); requestInput?.removeEventListener('input', onInput); generateButton?.removeEventListener('click', onGenerate); } });
+}
+
   function renderRich(raw,doc,options) {
     const host=doc.createElement('section');host.style.cssText='position:relative;min-width:0;overflow:hidden;border:1px solid #dce4ee;border-radius:18px;background:#f8fafc;color:#172033;';
     const data=raw.scene||raw.plot||raw.diagram;
@@ -77,10 +353,11 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
         const nodes=new Map(data.nodes.map(n=>[n.id,n]));for(const e of data.edges){const a=nodes.get(e.from),b=nodes.get(e.to);svg.append(svgEl('line',{x1:50+a.x*540,y1:40+a.y*280,x2:50+b.x*540,y2:40+b.y*280,stroke:'#a0adbd','stroke-width':2}));if(e.label)tx(50+(a.x+b.x)*270,35+(a.y+b.y)*140,e.label);}
         for(const n of data.nodes){const g=svgEl('g',{tabindex:0,role:'button','aria-label':n.label});g.style.cursor='pointer';g.append(svgEl('circle',{cx:50+n.x*540,cy:40+n.y*280,r:22,fill:n.color}));const t=svgEl('text',{x:50+n.x*540,y:76+n.y*280,'text-anchor':'middle','font-size':14,'font-family':'system-ui',fill:'#172033'});t.textContent=n.label;g.append(t);g.addEventListener('keydown',e=>{if(e.key==='Enter'||e.key===' '){e.preventDefault();g.dispatchEvent(new MouseEvent('click'));}});g.addEventListener('click',()=>{for(const el of svg.querySelectorAll('circle'))el.setAttribute('stroke','none');g.firstChild.setAttribute('stroke','#172033');g.firstChild.setAttribute('stroke-width','4');});svg.append(g);}
       }
+      const richSelection=enhanceRichSelection(host,svg,raw,doc,options,(key,view,active)=>{const callback=options.onRichStateChange;if(typeof callback!=='function')return;let queue=richSaveQueues.get(callback);if(!queue){queue={running:false,pending:new Map()};richSaveQueues.set(callback,queue);}queue.pending.set(key,{view,host,active});void flushRichSaves(callback,queue);});
       let resize=null,unmount=null,disposed=false;
       const fitLabels=()=>{const w=svg.getBoundingClientRect().width||480;for(const text of svg.querySelectorAll('text')){const base=Number(text.dataset.baseFont||text.getAttribute('font-size')||13);text.dataset.baseFont=String(base);text.setAttribute('font-size',String(Math.min(28,base*Math.max(1,640/w))));}};
       svg.__liveuiMount=()=>{if(disposed)return;fitLabels();if(typeof ResizeObserver==='function'&&!resize){resize=new ResizeObserver(fitLabels);resize.observe(svg);}if(typeof MutationObserver==='function'&&!unmount){unmount=new MutationObserver(()=>{if(!host.isConnected)svg.__liveuiDispose();});unmount.observe(doc.documentElement,{childList:true,subtree:true});}};
-      svg.__liveuiDispose=()=>{disposed=true;resize?.disconnect();unmount?.disconnect();};return host;
+      svg.__liveuiDispose=()=>{disposed=true;richSelection.dispose();const queue=richSaveQueues.get(options.onRichStateChange);if(queue?.pending.get(richSelection.key)?.host===host)queue.pending.delete(richSelection.key);resize?.disconnect();unmount?.disconnect();};return host;
     }
     const canvas=doc.createElement('canvas');canvas.setAttribute('aria-label',data.title||(zh?'可交互三维场景':'Interactive 3D scene'));canvas.setAttribute('role','img');canvas.tabIndex=0;canvas.style.cssText='width:100%;height:330px;display:block;touch-action:none;cursor:grab';host.append(canvas);
     const controls=doc.createElement('div');controls.style.cssText='display:flex;align-items:center;flex-wrap:wrap;gap:12px;padding:12px 16px;background:#fff;font:14px system-ui';
@@ -246,16 +523,24 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
       const fingerprint = snapshot(),records = JSON.parse(fingerprint),photos = (options.getPhotos ? options.getPhotos() : []).map(photo=>({...photo}));
       references(records,'records');references(photos,'photos');
       const photosUnchanged = () => { const latest = options.getPhotos ? options.getPhotos() : []; return latest.length === photos.length && latest.every((photo,index)=>photo.id === photos[index].id && (photo.src || photo.url) === (photos[index].src || photos[index].url)); };
-      const current = () => container.isConnected && childrenUnchanged() && generations.get(container) === version && snapshot() === fingerprint && photosUnchanged();
+      const current = () => (!options.isCurrent || options.isCurrent()) && container.isConnected && childrenUnchanged() && generations.get(container) === version && snapshot() === fingerprint && photosUnchanged();
       const previousTree = options.tree ?? options.previousTree;
       if (previousTree !== undefined) json(previousTree,64000); // Prior references may legitimately differ after source edits.
-      const response = await sdk.ai(prompt,{uiProtocol:'liveui-tree-v1',requestId,records,photos:photos.map(photo=>({id:photo.id})),...(previousTree !== undefined ? {tree:previousTree} : {})});
+      const view = container.ownerDocument.defaultView;
+      const bounds = container.getBoundingClientRect();
+      const previous = read(options.storageKey);
+      const presentationContext = {viewport:{width:Math.round(view.innerWidth),height:Math.round(view.innerHeight),contentWidth:Math.round(bounds.width)},components:[...types],
+        previousRequest:typeof previous?.requirement==='string'?previous.requirement.slice(0,4000):'',
+        ...(typeof options.layoutBrief==='string'?{layoutBrief:options.layoutBrief.slice(0,4000)}:{}),
+        ...(typeof options.getContext==='function'?{appContext:JSON.parse(json(options.getContext(),6000))}:{})};
+      const response = await sdk.ai(prompt,{uiProtocol:'liveui-tree-v1',requestId,records,photos:photos.map(photo=>({id:photo.id})),presentationContext,...(previousTree !== undefined ? {tree:previousTree} : {})});
       if (response?.requestId !== requestId) fail('mismatched generation response');
       const tree = response?.data?.tree;
       candidate = build(tree,{records,photos,onToggle:options.onToggle,richState:options.richState,onRichStateChange:options.onRichStateChange,document:container.ownerDocument});
       if (!current()) throw Error('Content changed while generating. Generate again.');
-      const state = {tree,requestId,updatedAt:new Date().toISOString(),recordsFingerprint:fingerprint};
-      await sdk.save(options.storageKey,json(state,100000));
+      const state = {tree,requestId,requirement:prompt,...(typeof options.getPhotosFingerprint==='function'?{photosFingerprint:options.getPhotosFingerprint()}:{}),updatedAt:new Date().toISOString(),recordsFingerprint:fingerprint};
+      const ack = await sdk.save(options.storageKey,json(state,100000));
+      if (ack === false || ack?.ok === false) throw Error('Saving failed. Please retry.');
       if (!current()) throw Error('Content changed while saving. Reopen or generate again.');
       disposeRich(container);container.replaceChildren(candidate);mountRich(candidate);candidate=null;return state;
     } finally { if(candidate)disposeRich(candidate);active.delete(container); }
@@ -267,5 +552,7 @@ window.__liveuiStructuredRuntime = function structuredUiRuntime(sdk) {
     if (!plain(state) || !plain(state.tree) || typeof state.requestId !== 'string' || typeof state.updatedAt !== 'string') fail('invalid saved state');
     json(state.tree,64000);return state;
   }
-  return {render,generate,read};
+  const api = {render,generate,read,capabilities:Object.freeze({protocol:'liveui-tree-v1',components:Object.freeze([...types])})};
+  api.workspace = options => createWorkspace(sdk,api,options);
+  return api;
 };

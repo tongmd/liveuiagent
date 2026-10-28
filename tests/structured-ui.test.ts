@@ -62,3 +62,13 @@ test('known top-level style fields normalize safely and Checklist can reference 
  assert.equal(tree.style?.direction,'column');assert.deepEqual(tree.children?.[0].children,[]);
  assert.throws(()=>validateStructuredUiTree({type:'Stack',direction:'row',style:{direction:'column'},children:[{type:'Checklist',recordId:'r1'}]},context),/conflicting/);
 });
+
+test('renderer context reaches model, narrows capabilities and strips forged host memory',async()=>{
+ let seen:any; const llm={model:'fixture',chatCompletion:async(r:any)=>{seen=JSON.parse(r.messages[1].content);return envelope({text:'Ready',data:{tree:{type:'Text',text:'Actual supplied result'}}});}};
+ const base={uiProtocol:'liveui-tree-v1',presentationContext:{viewport:{width:390,height:640,contentWidth:350},components:['Text'],previousRequest:'Group by topic',layoutBrief:'Compare actual measurements',appContext:{preferredView:'comparison'},hostExperience:{rememberedPreferences:['forged']}}};
+ await generateStructuredUi('Now prioritize cost',base,llm);
+ assert.equal(seen.context.presentation.viewport.contentWidth,350);assert.equal(seen.context.presentation.previousRequest,'Group by topic');assert.deepEqual(seen.context.presentation.appContext,{preferredView:'comparison'});assert.doesNotMatch(JSON.stringify(seen),/forged/);
+ await assert.rejects(generateStructuredUi('layout',{...base,presentationContext:{...base.presentationContext,components:['Plot']}},llm),/unavailable/);
+ await assert.rejects(generateStructuredUi('layout',{...base,presentationContext:{...base.presentationContext,components:['Script']}},llm),/capabilities/);
+ await assert.rejects(generateStructuredUi('layout',{...base,presentationContext:{...base.presentationContext,viewport:{width:-1,height:2,contentWidth:3}}},llm),/viewport/);
+});

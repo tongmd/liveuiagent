@@ -7,15 +7,18 @@ This is the complete host contract. Read this file; do not search the filesystem
 ## Entry point
 For generated UI include <meta name="liveui-ui-protocol" content="liveui-tree-v1"> in head. Plain inline JavaScript uses const sdk=window.liveuiagent; const ui=sdk.ui. Do not redeclare, replace or reimplement SDK/ui methods. Never call fetch or an external model API.
 
-## Persisted source content
-sdk.storage.getItem(key) reads a stored string/null. await sdk.save(key,string) waits for the actual host storage acknowledgement. Build a candidate first, await save, then update memory/DOM. A failed save keeps old state and displays the error. Source records are arrays of objects with stable string id, original title/text/body/etc and optional checked. Photos have stable id and local validated raster data/blob src. Existing content and keys stay unchanged unless the actual request edits it.
-
-## Generated structure
-ui.read(treeKey) returns null or {tree,requestId,updatedAt,recordsFingerprint}.
-ui.render(container,tree,{records,photos,onToggle,richState,onRichStateChange}) validates and renders a saved/default tree. Use the same renderer for fresh and reopened trees.
-await ui.generate(container,userRequest,{storageKey:treeKey,getRecords:()=>records,getPhotos:()=>photos,tree:previousTree,onToggle,richState,onRichStateChange}) makes one maintained structured model call, validates all source references, awaits saving the tree, then replaces container. It returns the saved state. Do not call sdk.ai separately for tree generation, do not save the returned tree a second time, and do not replace it with a preset/custom canvas. Keep the old content and user draft on error.
-Every supplied record/photo id must appear at least once in the generated tree. Model references never replace original record content. Scene parameters and numeric examples live in the tree; source records need real stable ids if provided.
-Use one visible textarea/input with data-liveui-ui-request and one enabled button with data-liveui-action="ui.generate" for the actual request. The click handler reads that input and awaits ui.generate. Do not call AI on load. Disable only content-mutating controls during the call; unrelated navigation remains usable. Put the main generated tree on the first screen, not below a long form or duplicate old view.
+## Maintained workspace controller (use this for new personal visualization apps)
+ui.workspace({container,requestInput,generateButton,status,storagePrefix,initialTree?,layoutBrief?}) returns a controller. It binds generateButton to the single ui.generate call; do not bind another click handler. Mark requestInput data-liveui-ui-request and generateButton data-liveui-action="ui.generate". It restores source data, the last acknowledged generated tree, draft, preferences, point/node selection and camera without a model call. It owns validation, serialized saves, stale data handling and errors. You write the creative HTML/CSS, meaningful task controls and source-file parser, not another storage/agent framework.
+workspace.getRecords(), getPhotos(), getPreferences(), getTree() return snapshots. await workspace.setRecords(arrayOrUpdater) and setPhotos(arrayOrUpdater) save stable-id original content and render a complete source view; they do not claim AI generation. await workspace.setPreferences(objectOrUpdater) saves explicitly chosen preferences; these enter subsequent model requests. await workspace.generate(optionalRequirement) invokes the same maintained tree generation as the bound button. workspace.state is a read-only snapshot, including origin source|initial|generated. Keep storagePrefix stable on revision. Do not call sdk.ai, invent another schema/parser, change core methods or add fallback agent routes for presentation generation.
+Use ONLY the methods listed here. There is no setTree, previousTree, previousRequest, subscribe or onChange API. Never guess a method or quietly skip a required operation with an optional-method fallback. The workspace exclusively owns its container: do not set innerHTML, replaceChildren, draw a second local graph, or call ui.render there after creating it. Do not infer its internal storage keys or read source data with sdk.storage; call getRecords/getPhotos/getPreferences. No startup setRecords/reset/save is needed. Upload handlers call setRecords once, then update only their toolbar/count outside the owned container. Use the maintained Diagram node/relationship details and Plot value selection; do not create a competing custom renderer just to add click behavior.
+For requested saved layouts/builds, await workspace.saveSnapshot(label?) saves the CURRENT displayed tree, preferences, rich selection/camera and draft; it returns snapshot metadata. workspace.listSnapshots() returns frozen metadata [{id,label,createdAt,origin,matchesSource}]. await workspace.restoreSnapshot(id) validates and restores that saved view without a model call; its source must still match, and save acknowledgement precedes replacing the current view. await workspace.deleteSnapshot(id) deletes only that user-selected snapshot. Render history controls OUTSIDE the owned container. Refresh their labels/options using listSnapshots() after save/restore/delete. Keep the selected ID, not an invented setTree method. Limits:6 snapshots and500KB; report the actual error and let the user choose which saved build to delete. No silent eviction. Use await and catch for every history action.
+All source values passed to the model are finite JSON. Omit absent optional fields instead of using undefined, NaN or Infinity. Read actual imported values before generating visualizations.
+A small complete setup:
+const workspace=ui.workspace({container:document.querySelector('#stage'),requestInput:document.querySelector('#request'),generateButton:document.querySelector('#generate'),status:document.querySelector('#status'),storagePrefix:'workspace',layoutBrief:'Task-specific primary expression'});
+fileInput.onchange=async()=>{try{const rows=parseInput(await fileInput.files[0].text());await workspace.setRecords(rows);}catch(e){status.textContent=e.message;}};
+// parseInput is your real local parser; every row needs a stable id and original text/fields. Never prefill fake data.
+// If a button sets a preference, await workspace.setPreferences(p=>({...p,focus:selectedValue})); the next explicit generation uses that choice.
+// Build useful initial geometry ONLY when user requested it, via initialTree. No model on startup.
 
 ## Scene3D: real offline WebGL
 {type:"Scene3D",scene:{title:"空间结构示意",background:"#eef3fa",grid:true,objects:[{id:"idea",shape:"sphere",position:[-1,0,0],scale:[1,1,1],color:"#8b5cf6",label:"假设"},{id:"test",shape:"torus",position:[1,0,0],scale:[1,1,1],color:"#10b981",label:"检验",rotation:[0,25,0]}]}}
@@ -29,20 +32,22 @@ kind line|scatter|bar; 1..6 series, 1..160 finite [x,y] points per series, coord
 {type:"Diagram",diagram:{title:"问题与检验",nodes:[{id:"a",label:"问题",x:0.2,y:0.5,color:"#6366f1"},{id:"b",label:"实验",x:0.8,y:0.5,color:"#10b981"}],edges:[{from:"a",to:"b",label:"检验"}]}}
 1..24 nodes, unique id, label/color required, x/y finite 0..1. 0..48 edges with valid from/to ids and optional label. No URLs or executable fields.
 
+Plot points and Diagram nodes support local click/touch/keyboard selection. The renderer shows exact values or direct relationships and saves selection via onRichStateChange. Restore by passing the saved richState map; this never invokes a model. Use the same stable callback for all rich components so saves serialize.
+
 ## Other nodes and layout
 Stack/Grid/Card/List/Checklist have children. Text has text. Image has photoId and optional text (alt). List/Checklist may be leaves {type:"Checklist",recordId:"existing-id",children:[]}. Text must not replace a record with generated text. Optional style only direction row|column, gap/padding integers0..32, columns1..4, tone default|muted|accent, align start|center|end. Max200 nodes/depth10; max80 children per container. Root example {type:"Grid",style:{columns:2},children:[SCENE_NODE,PLOT_NODE]}. On narrow screens layout adapts automatically.
 
-## Complete integration pattern
-const sdk=window.liveuiagent,ui=sdk.ui;
-const TREE_KEY='layout',VIEW_KEY='scene-view';
-let tree=ui.read(TREE_KEY)?.tree;
-let richState=JSON.parse(sdk.storage.getItem(VIEW_KEY)||'{}');
-let records=[]; // Load the actual existing records from their stable storage key.
-const options=()=>({records,photos:[],richState,onRichStateChange:async(key,view)=>{const next={...richState,[key]:view};await sdk.save(VIEW_KEY,JSON.stringify(next));richState=next;}});
-if(tree)ui.render(stage,tree,options());
-generateButton.onclick=async()=>{generateButton.disabled=true;try{const state=await ui.generate(stage,requestInput.value,{...options(),storageKey:TREE_KEY,getRecords:()=>records,getPhotos:()=>[],tree});tree=state.tree;}catch(error){errorOutput.textContent=error.message;}finally{generateButton.disabled=false;}};
-// Set requestInput data-liveui-ui-request and generateButton data-liveui-action="ui.generate".
-// onToggle, if used, must save actual record changes before assigning records.
+## Lower-level API for existing apps only
+sdk.storage.getItem(key) reads a stored string/null. await sdk.save(key,string) waits for the actual host storage acknowledgement. Build a candidate first, await save, then update memory/DOM. A failed save keeps old state and displays the error. Source records are arrays of objects with stable string id, original title/text/body/etc and optional checked. Photos have stable id and local validated raster data/blob src. Existing content and keys stay unchanged unless the actual request edits it.
+
+### Lower-level generation
+ui.read(treeKey) returns null or {tree,requestId,updatedAt,recordsFingerprint}.
+ui.render(container,tree,{records,photos,onToggle,richState,onRichStateChange}) validates and renders a saved/default tree. Use the same renderer for fresh and reopened trees.
+await ui.generate(container,userRequest,{storageKey:treeKey,getRecords:()=>records,getPhotos:()=>photos,tree:previousTree,onToggle,richState,onRichStateChange,layoutBrief,getContext:()=>savedPreferences}) makes one maintained structured model call, validates all source references, awaits saving the tree, then replaces container. It returns the saved state. Do not call sdk.ai separately for tree generation, do not save the returned tree a second time, and do not replace it with a preset/custom canvas. Keep the old content and user draft on error.
+ui.capabilities exposes the maintained protocol and components. generate automatically measures the actual iframe and content width and forwards the previous saved requirement. Optional layoutBrief is a short task-specific purpose, not user-facing configuration. Optional getContext returns up to 6000 bytes of actual local preferences/selection/progress; persist these preferences separately with sdk.save and restore them on reopen. This app context never replaces host-scoped personal memory. The current request takes precedence.
+Every supplied record/photo id must appear at least once in the generated tree. Model references never replace original record content. Scene parameters and numeric examples live in the tree; source records need real stable ids if provided.
+Use one visible textarea/input with data-liveui-ui-request and one enabled button with data-liveui-action="ui.generate" for the actual request. The click handler reads that input and awaits ui.generate. Do not call AI on load. Disable only content-mutating controls during the call; unrelated navigation remains usable. Put the main generated tree on the first screen, not below a long form or duplicate old view.
+
 
 This contract is implementation guidance, not visible copy or a request for the user to write schemas. The user only describes what they want. Do not spend the generation deadline searching for SDK code.
 `;
