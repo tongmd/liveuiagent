@@ -34,8 +34,12 @@ async def terminate(proc):
    await proc.wait()
 
 AUTH_LOCK=asyncio.Lock()
-async def refresh_auth(executable,auth_file):
+AUTH_GENERATIONS={}
+async def refresh_auth(executable,auth_file,expected_generation=None):
+ key=str(pathlib.Path(auth_file).resolve())
  async with AUTH_LOCK:
+  # Another request already refreshed this login while this request waited.
+  if expected_generation is not None and AUTH_GENERATIONS.get(key,0)!=expected_generation:return
   env={k:v for k,v in os.environ.items() if k in ('PATH','HOME','USER','LOGNAME','TMPDIR','LANG','HTTPS_PROXY','HTTP_PROXY','ALL_PROXY','NO_PROXY','https_proxy','http_proxy','all_proxy','no_proxy')}
   env['CODEX_HOME']=str(auth_file.parent)
   proc=await asyncio.create_subprocess_exec(executable,'app-server','--stdio',env=env,stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL,start_new_session=True,limit=1024*1024)
@@ -55,13 +59,21 @@ async def refresh_auth(executable,auth_file):
     result=await rpc(2,'account/read',{'refreshToken':True})
     if not result.get('account'):raise RelayError('auth_required','Codex login is required on the relay Mac',503)
    await asyncio.wait_for(check(),25)
+   AUTH_GENERATIONS[key]=AUTH_GENERATIONS.get(key,0)+1
   finally:await asyncio.shield(terminate(proc))
 
 class ResponsesRunner:
  def __init__(self,executable,auth_file,effort='high',command_factory=None):
   self.executable,self.auth_file,self.effort=executable,pathlib.Path(auth_file),effort;self.command_factory=command_factory
  async def infer(self,model,messages,schema=None):
-  if not self.command_factory:await refresh_auth(self.executable,self.auth_file)
+  # Only a definite authentication rejection warrants refresh plus one retry.
+  generation=AUTH_GENERATIONS.get(str(self.auth_file.resolve()),0)
+  try:return await self._infer_once(model,messages,schema)
+  except RelayError as failure:
+   if failure.code!='codex_http_401':raise
+  await refresh_auth(self.executable,self.auth_file,expected_generation=generation)
+  return await self._infer_once(model,messages,schema)
+ async def _infer_once(self,model,messages,schema=None):
   env={k:v for k,v in os.environ.items() if k in ('PATH','HOME','USER','LANG','TMPDIR','LIVEUI_CODEX_PROXY')}
   cmd=self.command_factory() if self.command_factory else [sys.executable,str(pathlib.Path(__file__).with_name('codex_response.py')),str(self.auth_file)]
   proc=await asyncio.create_subprocess_exec(*cmd,env=env,stdin=asyncio.subprocess.PIPE,stdout=asyncio.subprocess.PIPE,stderr=asyncio.subprocess.DEVNULL,start_new_session=True,limit=3*1024*1024)
