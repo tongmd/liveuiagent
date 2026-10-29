@@ -31,7 +31,7 @@ async function fixture(t:any) {
  const host=express();host.use(express.json());bridge.install(host);host.use((error:any,_q:any,r:any,_next:any)=>r.status(error.status||500).json({error:error.message,code:error.code}));
  const base=await serve(t,host);
  const request=async(path:string,method='GET',body?:unknown,owner='alice')=>fetch(base+'/agent/complete/'+path,{method,headers:{'X-LiveUIAgent-User':owner,...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)})});
- return {request,store:()=>structuredClone(store),counts:()=>({writes,actions,modelCalls}),complete(value:unknown){assert.ok(completions.length);completions.shift()!({choices:[{message:{content:JSON.stringify(value)}}]});}};
+ return {db,request,store:()=>structuredClone(store),counts:()=>({writes,actions,modelCalls}),complete(value:unknown){assert.ok(completions.length);completions.shift()!({choices:[{message:{content:JSON.stringify(value)}}]});}};
 }
 async function terminal(f:any,jobId:string) {
  for(let i=0;i<40;i++){const r=await f.request('jobs/'+jobId);assert.equal(r.status,200);const job:any=await r.json();if(job.status!=='running')return job;await new Promise(resolve=>setTimeout(resolve,5));}
@@ -64,4 +64,21 @@ test('concurrent compare-and-save requests allow one winner and ordinary PUT rem
  const winner=results.findIndex(r=>r.status===200);assert.deepEqual(f.store(),candidates[winner]);assert.equal(f.counts().writes,1);
  const legacy={localPreference:'still supported'};const put=await f.request('apps/'+appId+'/store','PUT',legacy);
  assert.equal(put.status,200);assert.deepEqual(f.store(),legacy);assert.equal(f.counts().writes,2);
+});
+
+// A generated result is not a saved app: the interaction panel must distinguish them.
+test('interaction history records request, generation, save conflict and confirmed save in one account-scoped row',async t=>{
+ const f=await fixture(t),before=f.store();
+ const job:any=await (await f.request('apps/'+appId+'/action','POST',{prompt:'重新排列这张页面',context})).json();
+ const row=()=>f.db.prepare('SELECT * FROM chat_history WHERE owner=?').get('alice') as any;
+ assert.equal(row().prompt,'重新排列这张页面');assert.equal(row().status,'running');
+ f.complete({text:'Layout ready',data:{tree}});await terminal(f,job.id);
+ assert.match(row().text,/尚未确认保存/);
+ const store={...before,layout:JSON.stringify({tree})};
+ const rejected=await f.request('apps/'+appId+'/store-commit','POST',{expected:{stale:'value'},store});
+ assert.equal(rejected.status,409);assert.equal(row().status,'error');assert.match(row().text,/保存失败/);
+ assert.equal((await f.request('apps/'+appId+'/store-commit','POST',{expected:before,store})).status,200);
+ assert.equal(row().status,'done');assert.match(row().text,/已更新并保存/);
+ assert.equal(f.db.prepare('SELECT COUNT(*) n FROM chat_history').get().n,1);
+ assert.equal(f.db.prepare('SELECT COUNT(*) n FROM chat_history WHERE owner=?').get('bob').n,0);
 });

@@ -1,25 +1,37 @@
 /* Keep every app reachable in a responsive grid; app clicks stay React-owned. */
 (() => {
   'use strict';
-  let scheduled = false, empty;
+  let scheduled = false, empty, heading, count, search;
+  let openApps = new Set();
   function synchronize() {
     scheduled = false;
     const container = document.querySelector('.concept-material .material-standalone .morph-materials');
-    if (!container) { empty.hidden = true; return; }
+    if (!container) { empty.hidden = true; heading.hidden = true; return; }
     if (!container.classList.contains('liveui-material-catalog')) {
       container.classList.add('liveui-material-catalog');
       // Scrolling the catalog must not trigger the old canvas drag or save positions.
       container.addEventListener('pointerdown', event => event.stopPropagation(), true);
     }
     const cards = [...container.querySelectorAll(':scope > .morph-material[data-app-id]')];
+    const currentOpen = new Set([...document.querySelectorAll('.app-sheet[data-app-id]')].map(el=>el.dataset.appId));
+    for(const appId of openApps)if(!currentOpen.has(appId))window.dispatchEvent(new CustomEvent('liveui:gallery-refresh',{detail:{appId}}));
+    openApps=currentOpen;
     for (const card of cards) {
       card.removeAttribute('data-liveui-page-hidden');
       card.inert = false;
+      const filtered=!!search.value.trim()&&!String(card.dataset.searchText||card.textContent).toLocaleLowerCase().includes(search.value.trim().toLocaleLowerCase());
+      card.toggleAttribute('data-gallery-filtered',filtered);
     }
+    const total=String(cards.length)+' 个';if(count.textContent!==total)count.textContent=total;
+    heading.hidden=cards.length===0||!!document.querySelector('.app-sheet');
     empty.hidden = cards.length !== 0;
     document.body.classList.toggle('liveui-has-apps', cards.length > 0);
   }
   function mount() {
+    heading=document.createElement('header');heading.className='liveui-catalog-heading';
+    const name=document.createElement('h2');name.textContent='我的应用';count=document.createElement('span');count.className='catalog-count';name.append(count);
+    search=document.createElement('input');search.type='search';search.placeholder='搜索应用';search.setAttribute('aria-label','搜索应用');search.addEventListener('input',synchronize);
+    heading.append(name,search);document.body.append(heading);
     empty = document.createElement('section');
     empty.className = 'liveui-catalog-empty'; empty.hidden = true;
     empty.setAttribute('aria-label', 'Your apps');

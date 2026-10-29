@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import {appActivity,describeUiChanges,activityOutcome} from './app-activity.js';
 import { generateStructuredUi } from './structured-ui.js';
 import { buildUiExperienceContext } from './ui-experience-context.js';
 import { normalizeDisplayEnvironment } from './display-environment.js';
@@ -43,6 +44,8 @@ export function createDshServiceBindings(db: Database.Database) {
 
 export function createHostActionStore(db: Database.Database) {
   db.exec('CREATE TABLE IF NOT EXISTS complete_host_actions(owner TEXT NOT NULL,job_id TEXT NOT NULL,app_id TEXT NOT NULL,result_json TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(owner,job_id))');
+  const activity=appActivity(db);
+  for(const row of db.prepare('SELECT owner,result_json FROM complete_host_actions').all() as any[]){const job=JSON.parse(row.result_json);if(job.status==='running'&&job.execution?.actionRuntime==='structured-ui'){job.status='error';job.error='生成被服务重启中断，请重新提交修改';job.finishedAt=new Date().toISOString();db.prepare('UPDATE complete_host_actions SET result_json=? WHERE owner=? AND job_id=?').run(JSON.stringify(job),row.owner,job.id);activity.update(row.owner,job.activityId,'error',job.error);}}
   return {
     save(owner:string,appId:string,grounded:NonNullable<Awaited<ReturnType<typeof runAppWorldGrounding>>>,model:string) {
       const createdAt=new Date().toISOString();
@@ -62,14 +65,25 @@ export function createHostActionStore(db: Database.Database) {
       db.prepare('INSERT INTO complete_host_actions VALUES (?,?,?,?,?)').run(owner,job.id,appId,JSON.stringify(job),createdAt);
       return job;
     },
-    createUi(owner:string,appId:string,model:string) {
+    createUi(owner:string,appId:string,model:string,request?:{name:string;prompt:string}) {
       const createdAt=new Date().toISOString();
-      const job={id:'host_'+randomUUID(),appId,status:'running',stage:'Generating interface',createdAt,execution:{harness:'dsh',actionRuntime:'structured-ui',model}};
+      const job={id:'host_'+randomUUID(),appId,status:'running',stage:'Generating interface',createdAt,execution:{harness:'dsh',actionRuntime:'structured-ui',model},...(request?{activityId:activity.start(owner,request.name,request.prompt,model)}:{})};
       db.prepare('INSERT INTO complete_host_actions VALUES (?,?,?,?,?)').run(owner,job.id,appId,JSON.stringify(job),createdAt);return job;
     },
-    finishUi(owner:string,job:any,result:any,failure?:any) {
+    finishUi(owner:string,job:any,result:any,failure?:any,previous?:any) {
       const finished={...job,status:failure?'error':'done',finishedAt:new Date().toISOString(),...(failure?{error:String(failure.message||failure)}:{result})};
+      finished.changeSummary=failure?'':describeUiChanges(previous,result?.data?.tree);
+      activity.update(owner,job.activityId,failure?'error':'done',failure?'修改未完成：'+finished.error:activityOutcome(finished,finished.changeSummary,false));
       db.prepare('UPDATE complete_host_actions SET result_json=? WHERE owner=? AND job_id=?').run(JSON.stringify(finished),owner,job.id);return finished;
+    },
+    confirmStore(owner:string,appId:string,store:any,failure?:any){
+      const row=db.prepare('SELECT result_json FROM complete_host_actions WHERE owner=? AND app_id=? ORDER BY created_at DESC LIMIT 1').get(owner,appId) as any;
+      if(!row)return;const job=JSON.parse(row.result_json);
+      if(!job.activityId||job.status!=='done'||job.savedAt||!job.result?.data?.tree)return;
+      const matches=Object.values(store||{}).some(value=>{try{const parsed=typeof value==='string'?JSON.parse(value):value;return isDeepStrictEqual(parsed?.tree,job.result.data.tree);}catch{return false;}});
+      if(!matches)return;if(failure){activity.update(owner,job.activityId,'error','修改已生成，但保存失败：'+String(failure.message||failure)+'\n'+job.changeSummary);return;}job.savedAt=new Date().toISOString();
+      db.prepare('UPDATE complete_host_actions SET result_json=? WHERE owner=? AND job_id=?').run(JSON.stringify(job),owner,job.id);
+      activity.update(owner,job.activityId,'done',activityOutcome(job,job.changeSummary,true));
     },
     load(owner:string,id:string) {
       const row=db.prepare('SELECT result_json FROM complete_host_actions WHERE owner=? AND job_id=?').get(owner,id) as {result_json:string}|undefined;
@@ -305,8 +319,8 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       let llm:any;try{llm=llmOf(req);}finally{if(previousAppId===undefined)delete req.body.appId;else req.body.appId=previousAppId;}
       const owner=userOf(req);
       const experience=buildUiExperienceContext({app:saved.app,memories:personal.recall(owner,appId)});
-      const job=hostActions.createUi(owner,appId,String(llm?.model||selected.model));
-      void generateStructuredUi(String(body.prompt||''),body.context,llm,experience).then(result=>hostActions.finishUi(owner,job,result),failure=>hostActions.finishUi(owner,job,null,failure)).catch(()=>{console.error('Could not persist structured UI job outcome: '+job.id);});
+      const job=hostActions.createUi(owner,appId,String(llm?.model||selected.model),{name:String(saved.app.name||'应用修改'),prompt:String(body.prompt||'')});
+      void generateStructuredUi(String(body.prompt||''),body.context,llm,experience).then(result=>hostActions.finishUi(owner,job,result,undefined,body.context?.tree),failure=>hostActions.finishUi(owner,job,null,failure)).catch(()=>{console.error('Could not persist structured UI job outcome: '+job.id);});
       return job;
     }
 
@@ -349,8 +363,10 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     const prior=storeWrites.get(key)||Promise.resolve();
     const write=prior.catch(()=>{}).then(async()=>{
       if(expected!==undefined){const current=await dsh(req,'apps/'+id);if(!isDeepStrictEqual(current.store,expected))throw error('Saved data changed in another window. Reopen before saving this result.',409);}
-      return dsh(req,'apps/'+id+'/store','PUT',store);
+      const result=await dsh(req,'apps/'+id+'/store','PUT',store);
+      hostActions.confirmStore(userOf(req),PREFIX+id,store);return result;
     });
+    void write.catch(failure=>hostActions.confirmStore(userOf(req),PREFIX+id,store,failure));
     storeWrites.set(key,write);void write.finally(()=>{if(storeWrites.get(key)===write)storeWrites.delete(key);}).catch(()=>{});return write;
   }
   function install(app: express.Express) {

@@ -9,6 +9,7 @@
     catch (error) { throw Object.assign(error, {transport:true}); }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(Error(data.error || '请求失败（' + response.status + '）'), {status:response.status});
+    if(method!=='GET'||path.startsWith('jobs/')&&!['queued','running'].includes(data.status))window.__liveuiActivityRefresh?.();
     return data;
   };
   window.__liveuiWorkspaceSnapshots = window.__liveuiWorkspaceSnapshots || Object.create(null);

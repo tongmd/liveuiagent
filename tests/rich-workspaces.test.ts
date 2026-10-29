@@ -34,3 +34,13 @@ test('workspace names follow the original user purpose instead of hint text, inc
  assert.equal(workspaceName('帮我开发一个三维房间应用',hintFirst),'三维房间');
  assert.equal(workspaceName('Draw data in a workspace',hintFirst),'曲线');
 });
+
+test('workspace activity survives completion and failure with the original request and saved outcome',async t=>{
+ const x=await setup(t);const first=await x.request('/agent/workspaces/create',{prompt:'创建三维房间'});await x.wait(first.value.id);
+ const rows=()=>x.db.prepare('SELECT * FROM chat_history WHERE owner=? ORDER BY id').all('alice') as any[];
+ assert.equal(rows()[0].prompt,'创建三维房间');assert.match(rows()[0].text,/已更新并保存/);
+ x.set({text:'bad',data:{tree:{type:'Script'}}});
+ const second=await x.request('/agent/workspaces/'+first.value.appId+'/generate',{prompt:'修改房间颜色',expectedVersion:1});await x.wait(second.value.id);
+ assert.equal(rows()[1].status,'error');assert.equal(rows()[1].prompt,'修改房间颜色');assert.match(rows()[1].text,/修改未完成/);
+ assert.equal(rows().length,2);
+});

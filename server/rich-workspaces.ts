@@ -2,6 +2,7 @@ import type express from 'express';
 import type Database from 'better-sqlite3';
 import {randomUUID,createHash} from 'node:crypto';
 import {isDeepStrictEqual} from 'node:util';
+import {appActivity,describeUiChanges,activityOutcome} from './app-activity.js';
 import {generateStructuredUi} from './structured-ui.js';
 import {buildUiExperienceContext} from './ui-experience-context.js';
 import type {LlmRuntimeConfig} from './liveuiagent.js';
@@ -27,16 +28,17 @@ const WORKSPACE_GUIDANCE='This is a persisted component workspace. Product chrom
 /** Product-owned component workspace. Only model-produced validated trees are
  * installed; no app HTML, scripts, arbitrary fetches or account tools are accepted. */
 export function createRichWorkspaces(db:Database.Database,options:{userOf:(req:express.Request)=>string;codexOf:(req:express.Request)=>LlmRuntimeConfig;harnessFor:(req:express.Request)=>string;bindHarness?:(owner:string,appId:string)=>void;recall?:(owner:string,appId:string,prompt:string)=>Promise<any>|any}) {
+ const activity=appActivity(db);
  db.exec(`CREATE TABLE IF NOT EXISTS rich_workspaces(owner TEXT NOT NULL,app_id TEXT NOT NULL,snapshot_json TEXT NOT NULL,PRIMARY KEY(owner,app_id));
  CREATE TABLE IF NOT EXISTS rich_workspace_requests(owner TEXT NOT NULL,request_id TEXT NOT NULL,signature TEXT NOT NULL,job_id TEXT NOT NULL,PRIMARY KEY(owner,request_id));
  CREATE TABLE IF NOT EXISTS rich_workspace_jobs(owner TEXT NOT NULL,job_id TEXT NOT NULL,app_id TEXT NOT NULL,job_json TEXT NOT NULL,PRIMARY KEY(owner,job_id));`);
  // A process restart cannot assert that an interrupted provider request never ran.
- for(const row of db.prepare('SELECT owner,job_id,job_json FROM rich_workspace_jobs').all() as any[]){const job=JSON.parse(row.job_json);if(job.status==='running'){job.status='error';job.error='生成过程被服务重启中断，原请求未重新提交';job.code='workspace_interrupted';job.finishedAt=new Date().toISOString();db.prepare('UPDATE rich_workspace_jobs SET job_json=? WHERE owner=? AND job_id=?').run(JSON.stringify(job),row.owner,row.job_id);}}
+ for(const row of db.prepare('SELECT owner,job_id,job_json FROM rich_workspace_jobs').all() as any[]){const job=JSON.parse(row.job_json);if(job.status==='running'){job.status='error';job.error='生成过程被服务重启中断，原请求未重新提交';job.code='workspace_interrupted';job.finishedAt=new Date().toISOString();activity.update(row.owner,job.activityId,'error',job.error);db.prepare('UPDATE rich_workspace_jobs SET job_json=? WHERE owner=? AND job_id=?').run(JSON.stringify(job),row.owner,row.job_id);}}
  const active=new Map<string,string>();let inferenceCount=0;
  const ownerOf=(req:express.Request)=>{const owner=options.userOf(req);if(!owner)throw fail('请先登录',401);return owner;};
  function load(owner:string,id:string){const row=db.prepare('SELECT snapshot_json FROM rich_workspaces WHERE owner=? AND app_id=?').get(owner,id) as any;if(!row)throw fail('应用不存在',404,'workspace_missing');return JSON.parse(row.snapshot_json);}
  function jobOf(owner:string,id:string){const row=db.prepare('SELECT job_json FROM rich_workspace_jobs WHERE owner=? AND job_id=?').get(owner,id) as any;if(!row)throw fail('任务不存在',404,'workspace_job_missing');return JSON.parse(row.job_json);}
- function saveJob(owner:string,job:any){db.prepare('INSERT OR REPLACE INTO rich_workspace_jobs VALUES (?,?,?,?)').run(owner,job.id,job.appId,JSON.stringify(job));}
+ function saveJob(owner:string,job:any){db.prepare('INSERT OR REPLACE INTO rich_workspace_jobs VALUES (?,?,?,?)').run(owner,job.id,job.appId,JSON.stringify(job));if(job.status!=='running')activity.update(owner,job.activityId,job.status,job.status==='error'?'修改未完成：'+job.error:activityOutcome(job,job.changeSummary||'页面已更新',true));}
  function record(snapshot:any){const a=snapshot.app,id=a.id,surfaceId='surface_'+id;
   const icon='<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96" viewBox="0 0 96 96"><rect x="4" y="4" width="88" height="88" rx="24" fill="#2554bd"/><path d="M48 20 74 35 74 64 48 79 22 64 22 35Z M22 35 48 50 74 35 M48 50V79" fill="none" stroke="white" stroke-width="4"/></svg>';
   const presentation={glyph:a.name.slice(0,1),accent:'#2554bd',tagline:'',metric:'',metricLabel:'',collection:a.name,actionVerb:'打开',live:true,rows:snapshot.records.length};
@@ -59,7 +61,7 @@ export function createRichWorkspaces(db:Database.Database,options:{userOf:(req:e
   const records=snapshot?.records||bounded(body.records||[],40000);if(!Array.isArray(records)||records.length>100||records.some((r:any)=>!plain(r)||typeof r.id!=='string'||!r.id||r.id.length>128)||new Set(records.map((r:any)=>r.id)).size!==records.length)throw fail('Records need unique stable ids');
   const initial=snapshot||{app:{id:appId,description:prompt},records,interactionState:{richState:{},checked:{}},version:0};
   const job={id:'workspace_'+randomUUID(),appId,status:'running',stage:'Codex 正在生成界面',createdAt:new Date().toISOString(),prompt,baseVersion:initial.version,execution:{harness:'codex',delivery:'workspace',model:llm.model}} as any;
-  db.transaction(()=>{saveJob(owner,job);if(requestId)db.prepare('INSERT INTO rich_workspace_requests VALUES (?,?,?,?)').run(owner,requestId,signature,job.id);})();active.set(lock,job.id);inferenceCount++;
+  db.transaction(()=>{job.activityId=activity.start(owner,initial.app.name||'创建应用',prompt,String(llm.model||''));saveJob(owner,job);if(requestId)db.prepare('INSERT INTO rich_workspace_requests VALUES (?,?,?,?)').run(owner,requestId,signature,job.id);})();active.set(lock,job.id);inferenceCount++;
   void (async()=>{const began=Date.now();try{
    const memories=await options.recall?.(owner,appId,prompt);const experience=buildUiExperienceContext({app:initial.app,memories});
    const workspaceLlm:LlmRuntimeConfig={...llm,chatCompletion:(request,inferenceOptions)=>llm.chatCompletion!({...request,messages:(request.messages as any[]).map((message:any,index:number)=>index===0?{...message,content:message.content+'\n'+WORKSPACE_GUIDANCE}:message)},inferenceOptions)};
@@ -67,7 +69,7 @@ export function createRichWorkspaces(db:Database.Database,options:{userOf:(req:e
    const name=workspaceName(initial.app.description,result.data.tree,snapshot?.app.name);
    const updatedAt=new Date().toISOString();
    const next={app:{...initial.app,name,createdAt:initial.app.createdAt||job.createdAt,updatedAt,harness:'codex',model:llm.model,revision:initial.version+1},version:initial.version+1,tree:result.data.tree,records:initial.records,interactionState:initial.interactionState,lastRequest:prompt,requestHistory:[...(initial.requestHistory||[]),{prompt,at:updatedAt,jobId:job.id}].slice(-30)};
-   db.transaction(()=>{if(snapshot){const current=load(owner,appId);if(current.version!==initial.version)throw fail('生成期间应用已变化，保留现有内容',409,'workspace_conflict');}else if(db.prepare('SELECT 1 FROM rich_workspaces WHERE owner=? AND app_id=?').get(owner,appId))throw fail('App identifier already exists',409);db.prepare('INSERT OR REPLACE INTO rich_workspaces VALUES (?,?,?)').run(owner,appId,JSON.stringify(next));options.bindHarness?.(owner,appId);job.status='done';job.finishedAt=updatedAt;job.result={appId,version:next.version,name,durationMs:Date.now()-began,modelRoundTripMs:result.timing.durationMs};saveJob(owner,job);})();
+   db.transaction(()=>{if(snapshot){const current=load(owner,appId);if(current.version!==initial.version)throw fail('生成期间应用已变化，保留现有内容',409,'workspace_conflict');}else if(db.prepare('SELECT 1 FROM rich_workspaces WHERE owner=? AND app_id=?').get(owner,appId))throw fail('App identifier already exists',409);db.prepare('INSERT OR REPLACE INTO rich_workspaces VALUES (?,?,?)').run(owner,appId,JSON.stringify(next));options.bindHarness?.(owner,appId);job.status='done';job.finishedAt=updatedAt;job.changeSummary=describeUiChanges(initial.tree,result.data.tree);job.result={appId,version:next.version,name,durationMs:Date.now()-began,modelRoundTripMs:result.timing.durationMs};saveJob(owner,job);})();
   }catch(error:any){job.status='error';job.error=String(error?.message||error);job.code=error?.code||'workspace_generation_failed';job.finishedAt=new Date().toISOString();saveJob(owner,job);}finally{active.delete(lock);inferenceCount--;}})().catch(()=>console.error('Workspace outcome persistence failed: '+job.id));return job;
  }
  function install(app:express.Express){
