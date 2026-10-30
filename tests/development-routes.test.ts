@@ -83,6 +83,12 @@ test('adapter response deadline is bounded and invalid envelope cannot become su
  await assert.rejects(developmentCompletion({model:'x',chatCompletion:async()=>({choices:[]})},[],100),{code:'development_provider_format'});
  await assert.rejects(developmentCompletion({model:'x',chatCompletion:()=>new Promise(()=>{})},[],5),{code:'development_model_timeout'});
 });
+test('timed out adapter remains counted until its actual operation settles',async()=>{
+ let active=0,resolve!:(value:unknown)=>void;
+ const pending=new Promise(r=>resolve=r);
+ await assert.rejects(developmentCompletion({model:'fixture',chatCompletion:()=>pending},[],5,{onStart:()=>{active++;},onEnd:()=>{active--;}}),{code:'development_model_timeout'});
+ assert.equal(active,1);resolve(envelope({tool:'finish',summary:'late'}));await new Promise(r=>setImmediate(r));assert.equal(active,0);
+});
 test('a finished model turn with failed tests reports failed validation, never deployed',async()=>{
  const f=await fixture('test-failure');try{const result:any=await (await f.request('/agent/run',{target:'liveui',prompt:'修复liveUI宿主',clientRequestId:'bad-test'})).json();assert.equal(result.development.validation,'failed');assert.match(result.answer,/当前代码测试失败/);assert.equal(result.development.deployed,false);}finally{await f.close();}
 });

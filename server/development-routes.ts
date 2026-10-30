@@ -25,7 +25,7 @@ function wantsDevelopmentContinuation(prompt:string){return /^(?:请\s*)?继续(
 
 /** Reuse the selected host adapter. Credentials and untrusted body callbacks
  * never become model context, and native HTTP has an absolute response bound. */
-export async function developmentCompletion(llm:LlmRuntimeConfig,messages:unknown[],timeoutMs:number):Promise<string> {
+export async function developmentCompletion(llm:LlmRuntimeConfig,messages:unknown[],timeoutMs:number,lifecycle?:{onStart:()=>void;onEnd:()=>void}):Promise<string> {
   if(!llm.model||(!llm.chatCompletion&&(!llm.apiBase||!llm.apiKey)))throw fail('所选 harness 尚未连接','llm_config_required',422);
   const budget=Math.max(1,Math.min(180000,timeoutMs));
   const controller=new AbortController();
@@ -43,7 +43,12 @@ export async function developmentCompletion(llm:LlmRuntimeConfig,messages:unknow
       catch(error){await reader.cancel().catch(()=>{});throw error;}
       try{return JSON.parse(Buffer.concat(parts).toString('utf8'));}catch{throw fail('模型响应不是有效 JSON','development_provider_format',502);}
     };
-    const result:any=await Promise.race([inference(),stop]);
+    lifecycle?.onStart();
+    // A deadline stops waiting, not necessarily the adapter's subprocess. Keep
+    // its actual Promise counted until it settles so deployment cannot restart
+    // the host while an old harness request is still in flight.
+    const operation=inference().finally(()=>lifecycle?.onEnd());
+    const result:any=await Promise.race([operation,stop]);
     const content=result?.choices?.[0]?.message?.content;
     if(typeof content!=='string'||!content.trim()||Buffer.byteLength(content)>1024*1024)throw fail('模型未返回有效开发指令','development_provider_format',502);
     return content;
@@ -75,6 +80,7 @@ export function installDevelopmentRoutes(app:express.Express,_db:Database.Databa
   const sourceRoot=options.sourceRoot??process.env.LIVEUI_DEVELOPMENT_SOURCE;
   const root=options.workspaceRoot??process.env.LIVEUI_DEVELOPMENT_ROOT;
   const configured=Boolean(owners.size&&sourceRoot&&root);
+  let providerPending=0;
   const workspace=configured?createDevelopmentWorkspace({root:root!,sourceRoot:sourceRoot!,sourceCommit:options.sourceCommit,
     runtimeContext:options.context,runTest:options.runTest,allowedTests:options.allowedTests,maxSteps:options.maxSteps,timeoutMs:options.timeoutMs,
     infer:async()=>{throw fail('本请求缺少已绑定的模型连接','development_inference_missing',503);},
@@ -112,7 +118,10 @@ export function installDevelopmentRoutes(app:express.Express,_db:Database.Databa
     }
     return workspace!.submit({owner,prompt:body.prompt,harness,model:llm.model,clientRequestId:requestId,
       ...(appId?{appId}:{}),...(conversationId?{conversationId}:{}),
-    },{infer:({messages,timeoutMs})=>developmentCompletion(llm,messages,timeoutMs)});
+    },{infer:({messages,timeoutMs})=>developmentCompletion(llm,messages,timeoutMs,{
+      onStart(){if(providerPending>=2)throw fail('仍有模型请求在执行，请稍后继续','development_capacity',429);providerPending++;},
+      onEnd(){providerPending--;},
+    })});
   }
   const output=(job:any)=>{
     const result=job.result;
@@ -126,7 +135,8 @@ export function installDevelopmentRoutes(app:express.Express,_db:Database.Databa
   const route=(handler:(req:express.Request,res:express.Response)=>unknown)=>async(req:express.Request,res:express.Response,next:express.NextFunction)=>{
     try{res.setHeader('Cache-Control','private, no-store');await handler(req,res);}catch(error){next(error);}
   };
-  app.get('/agent/development/status',route((req,res)=>{const owner=ownerOf(req);res.json({configured:true,...workspace!.status(owner),inferenceCount:workspace!.status().activeCount});}));
+  const globalStatus=()=>{const status=workspace?.status()??{activeCount:0,active:[],capacity:0};return {...status,inferenceCount:Math.max(status.activeCount,(status as {inferenceCount?:number}).inferenceCount??0,providerPending)};};
+  app.get('/agent/development/status',route((req,res)=>{const owner=ownerOf(req);res.json({configured:true,...workspace!.status(owner),inferenceCount:globalStatus().inferenceCount});}));
   app.get('/agent/development/conversations',route(async(req,res)=>{const owner=ownerOf(req);res.json({conversations:await workspace!.list(owner)});}));
   app.get('/agent/development/conversations/:id',route(async(req,res)=>{const owner=ownerOf(req);res.json(await workspace!.getConversation(owner,String(req.params.id)));}));
   app.get('/agent/development/jobs/:id',route(async(req,res)=>{const owner=ownerOf(req);res.json(await workspace!.getJob(owner,String(req.params.id)));}));
@@ -158,6 +168,6 @@ export function installDevelopmentRoutes(app:express.Express,_db:Database.Databa
       const result=output(current);if(streamed){send('result',result);res.end();}else res.setHeader('Cache-Control','private, no-store').json(result);
     }catch(error:any){if(streamed){if(!res.destroyed){res.write('event: error\ndata: '+JSON.stringify({error:redactSecrets(String(error?.message||'开发任务失败')),code:error?.code||'development_failed'})+'\n\n');res.end();}}else next(error);}
   });
-  return {configured,activeCount:()=>workspace?.status().activeCount??0,status:()=>workspace?.status()??{activeCount:0,active:[],capacity:0},dispose:()=>workspace?.dispose()??Promise.resolve()};
+  return {configured,activeCount:()=>globalStatus().inferenceCount,status:globalStatus,dispose:()=>workspace?.dispose()??Promise.resolve()};
 }
 
