@@ -59,6 +59,39 @@ const nativeDsh=nativeDshCommand?createDshNativeInference({
 const liveuiagentRuntime = createLiveUIRuntime(db, { registryRoot: generatedAppsDir, projectRoot: root });
 const agentGateway = createScheduledAgentGateway(liveuiagentRuntime);
 const app = express();
+// LIVEUI_AUTO_REPAIR_GATE_1143_BEGIN
+const liveuiRepairMaintenancePath1143 = path.resolve(root, '..', '..', 'auto-repair-maintenance.json');
+function liveuiRepairGateState1143() {
+    try {
+        const metadata = fs.lstatSync(liveuiRepairMaintenancePath1143);
+        if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.size > 4096) return { active: false, transactionId: null };
+        const marker = JSON.parse(fs.readFileSync(liveuiRepairMaintenancePath1143, 'utf8'));
+        const now = Date.now();
+        if (!marker || typeof marker.expiresAt !== 'number' || !Number.isFinite(marker.expiresAt)
+            || marker.expiresAt <= now || marker.expiresAt > now + 180000
+            || typeof marker.transactionId !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(marker.transactionId)) {
+            return { active: false, transactionId: null };
+        }
+        return { active: true, transactionId: marker.transactionId };
+    } catch {
+        return { active: false, transactionId: null };
+    }
+}
+app.get('/agent/repair-gate-status', (_req, res) => {
+    res.set('Cache-Control', 'no-store').json(liveuiRepairGateState1143());
+});
+app.use((req, res, next) => {
+    const writeMethod = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method);
+    const readOnlyPost = req.method === 'POST' && ['/agent/scheduler-state', '/agent/query-state'].includes(req.path);
+    if (writeMethod && !readOnlyPost && liveuiRepairGateState1143().active) {
+        return res.status(503).set('Retry-After', '5').set('Cache-Control', 'no-store').json({
+            error: 'liveUI is applying an automatic repair. Please try again shortly.',
+            code: 'liveui_repair_maintenance', retryable: true,
+        });
+    }
+    next();
+});
+// LIVEUI_AUTO_REPAIR_GATE_1143_END
 
 app.use(cors());
 app.use(express.json({ limit: '5mb' }));
