@@ -9,15 +9,15 @@ LiveUIAgent is an open-source runtime for personalized applications. Describe wh
 
 ## Applications
 
-Four independent applications generated with Codex: room layout, 3D packing, function comparison, and talk planning. Rotate the 3D views, select chart points and diagram nodes, and reopen an application with its saved state.
+Four independent applications generated with Codex: Workspace Layout, 3D Packing, Function Comparison, and Talk Planner. Rotate the 3D views, select chart points and diagram nodes, and reopen an application with its saved state.
 
 <p>
-  <a href="assets/demos/room.gif"><img src="assets/demos/room.gif" width="400" alt="Room layout: rotate and zoom the 3D workspace, then reopen the saved view" /></a>
-  <a href="assets/demos/packing.gif"><img src="assets/demos/packing.gif" width="400" alt="3D packing: inspect the arrangement from different angles and reopen the saved view" /></a>
+  <a href="assets/demos/workspace-layout.gif"><img src="assets/demos/workspace-layout.gif" width="400" alt="Room layout: rotate and zoom the 3D workspace, then reopen the saved view" /></a>
+  <a href="assets/demos/3d-packing.gif"><img src="assets/demos/3d-packing.gif" width="400" alt="3D packing: inspect the arrangement from different angles and reopen the saved view" /></a>
 </p>
 <p>
-  <a href="assets/demos/functions.gif"><img src="assets/demos/functions.gif" width="400" alt="Function comparison: select points on the curves and reopen the saved selection" /></a>
-  <a href="assets/demos/talk.gif"><img src="assets/demos/talk.gif" width="400" alt="Talk planning: select a section in the timing diagram and reopen the saved selection" /></a>
+  <a href="assets/demos/function-comparison.gif"><img src="assets/demos/function-comparison.gif" width="400" alt="Function comparison: select points on the curves and reopen the saved selection" /></a>
+  <a href="assets/demos/talk-planner.gif"><img src="assets/demos/talk-planner.gif" width="400" alt="Talk planning: select a section in the timing diagram and reopen the saved selection" /></a>
 </p>
 
 ## Get Started
