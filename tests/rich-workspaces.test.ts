@@ -44,3 +44,11 @@ test('workspace activity survives completion and failure with the original reque
  assert.equal(rows()[1].status,'error');assert.equal(rows()[1].prompt,'修改房间颜色');assert.match(rows()[1].text,/修改未完成/);
  assert.equal(rows().length,2);
 });
+
+ test('replayed request cannot claim a different harness without making a new inference',async t=>{
+ const x=await setup(t),body={prompt:'创建三维房间',clientRequestId:'replay-harness',harness:'codex'};
+ const first=await x.request('/agent/workspaces/create',body);await x.wait(first.value.id);
+ const replay=await x.request('/agent/workspaces/create',{...body,harness:'native'});
+ assert.equal(replay.status,409);assert.equal(replay.value.code,'workspace_request_conflict');assert.equal(x.calls.length,1);
+ const same=await x.request('/agent/workspaces/create',body);assert.equal(same.value.id,first.value.id);assert.equal(x.calls.length,1);
+ });

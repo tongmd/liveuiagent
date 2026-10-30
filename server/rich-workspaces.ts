@@ -60,7 +60,7 @@ export function createRichWorkspaces(db:Database.Database,options:{userOf:(req:e
  function start(req:express.Request,id?:string){const owner=ownerOf(req),body=req.body||{},prompt=promptOf(body.prompt);
   const requestId=body.clientRequestId;if(requestId!==undefined&&(typeof requestId!=='string'||!/[A-Za-z0-9]/.test(requestId)||!/^[-A-Za-z0-9_.:]{1,128}$/.test(requestId)))throw fail('Invalid request identifier');
   const signature=createHash('sha256').update(JSON.stringify({appId:id||null,prompt,records:body.records??null})).digest('hex');
-  if(requestId){const prior=db.prepare('SELECT signature,job_id FROM rich_workspace_requests WHERE owner=? AND request_id=?').get(owner,requestId) as any;if(prior){if(prior.signature!==signature)throw fail('Request identifier already belongs to different input',409,'workspace_request_conflict');return jobOf(owner,prior.job_id);}}
+  if(requestId){const prior=db.prepare('SELECT signature,job_id FROM rich_workspace_requests WHERE owner=? AND request_id=?').get(owner,requestId) as any;if(prior){if(prior.signature!==signature)throw fail('Request identifier already belongs to different input',409,'workspace_request_conflict');const previous=jobOf(owner,prior.job_id);if(body.harness!==undefined&&body.harness!==previous.execution?.harness)throw fail('Request identifier already belongs to a different harness',409,'workspace_request_conflict');return previous;}}
   const snapshot=id?load(owner,id):undefined;
   if(id)req.body={...body,appId:id};
   if(id&&body.expectedVersion!==snapshot.version)throw fail('应用已变化，请重新打开后再提交',409,'workspace_conflict');
