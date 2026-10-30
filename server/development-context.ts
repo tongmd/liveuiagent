@@ -93,6 +93,11 @@ export function createDevelopmentContext(db:Database.Database,options:{runtimeRo
      const walk=(relative:string,kind:string)=>{
       const folder=path.join(accountRoot,relative);
       try{
+       let ancestor=base;
+       for(const segment of [accountRef,...relative.split('/')]){
+        ancestor=path.join(ancestor,segment);const item=fs.lstatSync(ancestor);
+        if(item.isSymbolicLink()||!item.isDirectory())throw new Error('unsafe ancestor');
+       }
        const stat=fs.lstatSync(folder);if(stat.isSymbolicLink()||!stat.isDirectory()){gaps.push('DSH unsafe directory excluded: '+accountRef+'/'+relative);return;}
        for(const item of fs.readdirSync(folder,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))){
         const child=relative+'/'+item.name;
