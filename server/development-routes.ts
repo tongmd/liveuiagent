@@ -159,7 +159,7 @@ export function installDevelopmentRoutes(app:express.Express,_db:Database.Databa
     try{res.setHeader('Cache-Control','private, no-store');await handler(req,res);}catch(error){next(error);}
   };
   const globalStatus=()=>{const status=workspace?.status()??{activeCount:0,active:[],capacity:0};return {...status,inferenceCount:Math.max(status.activeCount,(status as {inferenceCount?:number}).inferenceCount??0,providerPending)};};
-  app.get('/agent/development/status',route((req,res)=>{const owner=ownerOf(req);res.json({configured:true,...workspace!.status(owner),inferenceCount:globalStatus().inferenceCount});}));
+  app.get('/agent/development/status',route((req,res)=>{const owner=ownerOf(req);res.json({configured:true,automaticDeploymentEnabled:autoDeployOwners.includes(owner),...workspace!.status(owner),inferenceCount:globalStatus().inferenceCount});}));
   app.get('/agent/development/conversations',route(async(req,res)=>{const owner=ownerOf(req);res.json({conversations:await workspace!.list(owner)});}));
   app.get('/agent/development/conversations/:id',route(async(req,res)=>{const owner=ownerOf(req);res.json(await workspace!.getConversation(owner,String(req.params.id)));}));
   app.get('/agent/development/jobs/:id',route(async(req,res)=>{const owner=ownerOf(req);const job=await workspace!.getJob(owner,String(req.params.id));res.json({...job,...(job.result?{presentation:output(job)}:{})});}));

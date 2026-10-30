@@ -96,11 +96,12 @@ test('a finished model turn with failed tests reports failed validation, never d
 
 test('HTTP source result queues deployment and GET presentation follows only trusted owner receipt',async()=>{
  const f=await fixture('auto');try{
+  const aliceStatus:any=await(await f.request('/agent/development/status')).json(),bobStatus:any=await(await f.request('/agent/development/status',undefined,'bob')).json();assert.equal(aliceStatus.automaticDeploymentEnabled,true);assert.equal(bobStatus.automaticDeploymentEnabled,false);assert.equal(aliceStatus.autoDeployOwners,undefined);
   const req={target:'liveui',prompt:'修改liveUI源码',clientRequestId:'automatic',autoDeployOwners:['bob']};
   const result:any=await(await f.request('/agent/run',req)).json();assert.equal(result.development.deployment.status,'queued');assert.equal(result.development.deployed,false);assert.match(result.answer,/自动部署队列/);
   const ownerDir=path.join(f.dir,'jobs',createHash('sha256').update('alice').digest('hex'));
   const requestText=await fs.readFile(path.join(ownerDir,'deployment-requests',result.jobId+'.json'),'utf8'),request=JSON.parse(requestText);
-  const receipt={version:1,owner:'alice',jobId:result.jobId,conversationId:result.developmentConversationId,workspaceHash:request.workspaceHash,requestSha256:createHash('sha256').update(requestText).digest('hex'),status:'deployed',receipt:{transactionId:'actual-test-fixture',health:'ok'}};
+  const receipt={version:1,owner:'alice',jobId:result.jobId,conversationId:result.developmentConversationId,workspaceHash:request.workspaceHash,requestSha256:createHash('sha256').update(requestText).digest('hex'),status:'deployed',incidentId:'actual-test-fixture',receipt:{transactionId:'auto-1143-'+createHash('sha256').update('actual-test-fixture').digest('hex').slice(0,32),status:'deployed',health:'ok'}};
   await fs.mkdir(path.join(ownerDir,'deployments'));await fs.writeFile(path.join(ownerDir,'deployments',result.jobId+'.json'),JSON.stringify(receipt));
   const recovered:any=await(await f.request('/agent/development/requests/automatic')).json();assert.equal(recovered.result.deployed,true);assert.equal(recovered.presentation.development.deployed,true);assert.match(recovered.presentation.answer,/已部署到运行中的 liveUI/);assert.doesNotMatch(recovered.presentation.answer,/未部署/);
   assert.equal((await f.request('/agent/development/jobs/'+result.jobId,undefined,'bob')).status,404);

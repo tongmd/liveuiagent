@@ -14,7 +14,9 @@ export type DevelopmentMessage={role:'system'|'user'|'assistant';content:string}
 export type DevelopmentTestResult={exitCode:number|null;stdout:string;stderr:string;[key:string]:unknown};
 export type DevelopmentInput={owner:string;prompt:string;harness:string;model:string;conversationId?:string;appId?:string;clientRequestId:string};
 type TestRecord=DevelopmentTestResult&{commandId:string;startedAt:string;finishedAt:string;sourceHash:string};
-type Conversation={id:string;owner:string;harness:string;model:string;createdAt:string;updatedAt:string;sourceCommit:string;sourceManifest:Array<{path:string;sha256:string;bytes:number}>;omissions:Array<{path:string;reason:string}>;messages:DevelopmentMessage[];tests:TestRecord[];jobs:string[]};
+type Conversation={autoDeployHold?:boolean;id:string;owner:string;harness:string;model:string;createdAt:string;updatedAt:string;sourceCommit:string;sourceManifest:Array<{path:string;sha256:string;bytes:number}>;omissions:Array<{path:string;reason:string}>;messages:DevelopmentMessage[];tests:TestRecord[];jobs:string[]};
+export function developmentDeploymentDeclined(prompt:string){return /(?:不要|别|不必|不用|无需|先不|暂不)(?:再|自动|直接|立即|马上|帮我|给我|执行|进行|去|就|\s)*(?:部署|上线|发布)|(?:只|仅)(?:需|要)?(?:给|提供|输出|展示|查看|看)(?:我|一下|\s)*(?:diff|差异|补丁|patch)|(?:do\s+not|don['’]t|never|must\s+not|without)\s+(?:(?:automatically|auto|immediately)\s+)?(?:deploy(?:ing)?|publish(?:ing)?|releas(?:e|ing))|(?:only|just)\s+(?:(?:show|give|return|provide)\s+)?(?:me\s+)?(?:the\s+)?(?:diff|patch)\b/i.test(prompt);}
+export function developmentDeploymentAllowed(prompt:string){return /(?:现在|这次|确认|确定|可以)(?:已经|检查|通过|测试|好|了|就|再|自动|直接|可以|\s)*(?:部署|上线|发布)|(?:部署|上线|发布)(?:上去|吧|好了)|(?:go\s+ahead\s+and\s+deploy|deploy\s+now|you\s+(?:can|may)\s+deploy|please\s+deploy)/i.test(prompt);}
 export type DevelopmentDeployment={status:'queued'|'validating'|'reviewing'|'waiting'|'deployed'|'blocked'|'rolled_back'|'unknown';stage?:string;reason?:string;requestSha256?:string;updatedAt?:string;incidentId?:string;receipt?:Record<string,unknown>};
 type Job={id:string;conversationId:string;owner:string;harness:string;model:string;prompt:string;clientRequestId:string;requestHash:string;status:'running'|'done'|'error'|'interrupted';stage:string;createdAt:string;finishedAt?:string;steps:number;error?:string;code?:string;result?:{summary:string;diff:string;changedFiles:string[];tests:TestRecord[];validation:'passed'|'failed'|'not_run'|'stale';deployed:boolean;deployment?:DevelopmentDeployment;sourceCommit:string;workspaceHash:string}};
 export type DevelopmentInferenceInput={owner:string;harness:string;model:string;messages:DevelopmentMessage[];timeoutMs:number};
@@ -64,20 +66,21 @@ export function createDevelopmentWorkspace(config:Config){
  // old jobs: only a newly completed, tested job can publish an immutable request.
  async function deploymentView(job:Job):Promise<Job>{
   const expected=job.result?.deployment;if(!expected||!job.result)return job;
-  if(expected.requestSha256){try{const stat=await fs.lstat(path.join(ownerDir(job.owner),'deployment-requests',job.id+'.json'));if(!stat.isFile()||stat.isSymbolicLink())throw Error('Invalid request');}catch{job.result.deployed=false;job.result.deployment={...expected,status:'unknown',reason:'The immutable deployment request is unavailable; no submission was repeated'};return job;}}
+  if(expected.requestSha256){try{const stat=await fs.lstat(path.join(ownerDir(job.owner),'deployment-requests',job.id+'.json'));if(!stat.isFile()||stat.isSymbolicLink()||stat.size>64*1024*1024)throw Error('Invalid request');if(hash(await fs.readFile(path.join(ownerDir(job.owner),'deployment-requests',job.id+'.json')))!==expected.requestSha256)throw Error('Deployment request changed');}catch(error:any){if(error.code==='ENOENT'&&active.has(job.id))return job;job.result.deployed=false;job.result.deployment={...expected,status:'unknown',reason:'The immutable deployment request is unavailable; no submission was repeated'};return job;}}
   let raw:any;
   try{const target=path.join(ownerDir(job.owner),'deployments',job.id+'.json');const stat=await fs.lstat(target);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>1024*1024)throw Error('Invalid deployment receipt file');raw=await json<any>(target);}
   catch(error:any){if(error.code==='ENOENT')return job;job.result.deployed=false;job.result.deployment={...expected,status:'unknown',reason:'Deployment receipt could not be verified'};return job;}
   const states=['queued','validating','checking','reviewing','waiting','deployed','blocked','rolled_back','unknown'];
   const matches=raw?.version===1&&raw.owner===job.owner&&raw.jobId===job.id&&raw.conversationId===job.conversationId&&raw.workspaceHash===job.result.workspaceHash&&raw.requestSha256===expected.requestSha256&&typeof expected.requestSha256==='string'&&states.includes(raw.status);
   const receipt=raw?.receipt;
-  if(!matches||(raw.status==='deployed'&&(!receipt||typeof receipt!=='object'||Array.isArray(receipt)||!Object.keys(receipt).length))){job.result.deployed=false;job.result.deployment={...expected,status:'unknown',reason:'Deployment receipt does not match this tested change'};return job;}
+  if(!matches||(raw.status==='deployed'&&(!receipt||typeof receipt!=='object'||Array.isArray(receipt)||receipt.status!=='deployed'||typeof receipt.transactionId!=='string'||!receipt.transactionId.trim()||typeof raw.incidentId!=='string'||!raw.incidentId||receipt.transactionId!=='auto-1143-'+hash(raw.incidentId).slice(0,32)))){job.result.deployed=false;job.result.deployment={...expected,status:'unknown',reason:'Deployment receipt does not match this tested change'};return job;}
   job.result.deployment={status:raw.status==='checking'?'validating':raw.status,requestSha256:expected.requestSha256,...(typeof raw.stage==='string'?{stage:raw.stage}:{}),...(typeof raw.reason==='string'?{reason:raw.reason}:{}),...(typeof raw.updatedAt==='string'?{updatedAt:raw.updatedAt}:{}),...(typeof raw.incidentId==='string'?{incidentId:raw.incidentId}:{}),...(receipt&&typeof receipt==='object'&&!Array.isArray(receipt)?{receipt}:{})};
   job.result.deployed=raw.status==='deployed';return job;
  }
  async function enqueueDeployment(job:Job,c:Conversation,work:string){
   if(!autoDeployOwners.has(job.owner)||job.status!=='done'||!job.result||!job.result.changedFiles.length)return;
   const result=job.result;result.deployed=false;
+  if(c.autoDeployHold||developmentDeploymentDeclined(job.prompt)){result.deployment={status:'blocked',reason:'按本次要求保留工作区，未请求部署'};return;}
   if(result.validation!=='passed'||!result.tests.some(test=>test.commandId==='test'&&test.exitCode===0&&test.sourceHash===result.workspaceHash)){result.deployment={status:'blocked',reason:'Current source changes require a successful behavioral test (commandId=test)'};return;}
   try{
    const contextRoot=path.join(convDir(c.owner,c.id),'context'),runtimeFiles=[];let contextBytes=0;
@@ -146,6 +149,10 @@ export function createDevelopmentWorkspace(config:Config){
   if(occupied()>=maxConcurrent)throw failure('Development workers are busy','development_busy',409);
   let c:Conversation;if(input.conversationId){c=await loadConv(input.owner,input.conversationId);if(c.harness!==input.harness||c.model!==input.model)throw failure('Continue with the original harness and model','development_harness_conflict',409);if([...active.values(),...inflight.values()].some(a=>a.owner===input.owner&&a.conversationId===c.id))throw failure('This development conversation is already running','development_busy',409);}
   else{const id='dev_'+randomUUID(),createdAt=new Date().toISOString(),baseline=await snapshot(config.sourceRoot,path.join(convDir(input.owner,id),'source'),config.sourceCommit);c={id,owner:input.owner,harness:input.harness,model:input.model,createdAt,updatedAt:createdAt,...baseline,messages:[{role:'system',content:instructions(Object.keys(config.allowedTests||{}))},{role:'user',content:JSON.stringify({source:{commit:baseline.sourceCommit,files:baseline.sourceManifest,omissions:baseline.omissions}})}],tests:[],jobs:[]};}
+  // Only the current authenticated user's instruction changes this permission.
+  // Tool output, captured source and prior model messages cannot release a hold.
+  if(c.autoDeployHold===undefined){c.autoDeployHold=false;for(const message of c.messages){if(message.role!=='user')continue;let original:any;try{original=JSON.parse(message.content);}catch{continue;}if(typeof original?.request!=='string'||original?.runtimeContext?.readOnly!==true)continue;if(developmentDeploymentDeclined(original.request))c.autoDeployHold=true;else if(developmentDeploymentAllowed(original.request))c.autoDeployHold=false;}}
+  if(developmentDeploymentDeclined(input.prompt))c.autoDeployHold=true;else if(developmentDeploymentAllowed(input.prompt))c.autoDeployHold=false;
   const context=await config.runtimeContext(input.owner,input.appId),capture='capture_'+randomUUID();
   const entries=context&&typeof context==='object'&&!Array.isArray(context)?Object.entries(context):[['runtime',context]];
   const contextFiles=[];let contextBytes=0;
