@@ -1,6 +1,6 @@
 # LiveUIAgent
 
-[Website](https://liveuibench.stonezhang.com/) | [Arxiv](https://arxiv.org/abs/2610.27977) | [LiveUIBench](https://github.com/tongmd/liveuibench) | [Deployment](deploy/README.md) | [DSH integration](packages/dsh-plugin/README.md) | [System design](SYSTEM_DESIGN.md) | [Issues](https://github.com/tongmd/liveuiagent/issues)
+[Join the waitlist](https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform) | [Product](https://guios.stonezhang.com/) | [Paper website](https://liveuibench.stonezhang.com/) | [Arxiv](https://arxiv.org/abs/2610.27977) | [LiveUIBench](https://github.com/tongmd/liveuibench) | [Deployment](deploy/README.md) | [DSH integration](packages/dsh-plugin/README.md) | [System design](SYSTEM_DESIGN.md) | [Issues](https://github.com/tongmd/liveuiagent/issues)
 
 LiveUIAgent is an open-source runtime for personalized applications. Describe what you need, let an agent create the interface and behavior, and revise the application while keeping its saved state. A shared runtime connects the interface, memory, and service actions.
 
