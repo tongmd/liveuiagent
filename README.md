@@ -7,6 +7,19 @@ LiveUIAgent is an open-source runtime for personalized applications. Describe wh
 ![LiveUIAgent application workflow](assets/overview.png)
 
 
+## Applications
+
+Four independent applications generated with Codex: room layout, 3D packing, function comparison, and talk planning. Rotate the 3D views, select chart points and diagram nodes, and reopen an application with its saved state.
+
+<p>
+  <a href="assets/demos/room.gif"><img src="assets/demos/room.gif" width="400" alt="Room layout: rotate and zoom the 3D workspace, then reopen the saved view" /></a>
+  <a href="assets/demos/packing.gif"><img src="assets/demos/packing.gif" width="400" alt="3D packing: inspect the arrangement from different angles and reopen the saved view" /></a>
+</p>
+<p>
+  <a href="assets/demos/functions.gif"><img src="assets/demos/functions.gif" width="400" alt="Function comparison: select points on the curves and reopen the saved selection" /></a>
+  <a href="assets/demos/talk.gif"><img src="assets/demos/talk.gif" width="400" alt="Talk planning: select a section in the timing diagram and reopen the saved selection" /></a>
+</p>
+
 ## Get Started
 
 Requires Node.js 22.19 or later and npm. Linux and macOS are supported by the local workflow.
