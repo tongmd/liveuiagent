@@ -261,6 +261,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     return {personalContext:JSON.parse(llm?.personalContext || '[]'),...(appId ? {appId} : {})};
   }
   async function start(req: express.Request, appId?: string) {
+    if(appId)req.body={...req.body,appId};
     const prompt = req.body?.prompt;
     if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 16000) throw error('Describe what you want to do');
     const selected = await execution(req);
@@ -311,6 +312,9 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     const actionPrompt=withOutputLanguage(body?.prompt || body?.actionId);
     const groundingPayload=dshGroundingPayload(String(body?.prompt||body?.actionId||''),body?.context,body?.eventPayload);
     const saved=await dsh(req,'apps/'+id);
+    req.body={...req.body,appId};
+    const interactionLlm=llmOf(req);
+    await personal.prepare(req,interactionLlm);
     const selected = await execution(req);
     if(body?.context?.uiProtocol==='liveui-tree-v1') {
       if(!String(saved.html||'').includes('liveui-tree-v1'))throw error('This app does not support structured UI generation',409);
@@ -318,7 +322,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       const previousAppId=req.body.appId;req.body.appId=appId;
       let llm:any;try{llm=llmOf(req);}finally{if(previousAppId===undefined)delete req.body.appId;else req.body.appId=previousAppId;}
       const owner=userOf(req);
-      const experience=buildUiExperienceContext({app:saved.app,memories:personal.recall(owner,appId)});
+      const experience=buildUiExperienceContext({app:saved.app,memories:interactionLlm?.personalContext?JSON.parse(interactionLlm.personalContext):personal.recall(owner,appId)});
       const job=hostActions.createUi(owner,appId,String(llm?.model||selected.model),{name:String(saved.app.name||'应用修改'),prompt:String(body.prompt||'')});
       void generateStructuredUi(String(body.prompt||''),body.context,llm,experience).then(result=>hostActions.finishUi(owner,job,result,undefined,body.context?.tree),failure=>hostActions.finishUi(owner,job,null,failure)).catch(()=>{console.error('Could not persist structured UI job outcome: '+job.id);});
       return job;
@@ -397,6 +401,7 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
       const a=await dsh(req,'apps/'+id);
       const fields=Array.isArray(req.body?.fields)?req.body.fields.slice(0,12).filter((f:any)=>typeof f?.value==='string'&&f.value.trim()&&f.value.length<=2000).map((f:any)=>({label:String(f.label||'').slice(0,100),value:f.value})):[];
       if(!fields.length){res.json({ok:true});return;}
+      req.body={...req.body,appId};
       res.status(202).json({ok:true});
       void personal.observe(userOf(req),{text:JSON.stringify({userInputs:fields}),appId,kind:'app_form_input',app:{name:a.app.name,description:a.app.description}},llmOf(req)).catch(()=>{});
     }catch(e){next(e)}});

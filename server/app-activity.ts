@@ -1,5 +1,6 @@
 import type Database from 'better-sqlite3';
 import {isDeepStrictEqual} from 'node:util';
+import {harnessLabel} from './harness-catalog.js';
 import {redactSecrets} from './llm-settings.js';
 
 /** Receipts use the same account-scoped history as the interaction panel. */
@@ -42,5 +43,5 @@ export function describeUiChanges(before:any,after:any):string {
 }
 
 export function activityOutcome(job:any,summary:string,saved:boolean){
-  return [(saved?'应用已更新并保存':'已生成修改，尚未确认保存'),summary,job.execution?.model,Math.max(0,Math.round((Date.parse(job.finishedAt||new Date().toISOString())-Date.parse(job.createdAt))/1000))+'秒'].filter(Boolean).join('\n');
+  return [(saved?'应用已更新并保存':'已生成修改，尚未确认保存'),summary,job.execution?.harness?harnessLabel(job.execution.harness):'',job.execution?.model,Math.max(0,Math.round((Date.parse(job.finishedAt||new Date().toISOString())-Date.parse(job.createdAt))/1000))+'秒'].filter(Boolean).join('\n');
 }

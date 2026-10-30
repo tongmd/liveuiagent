@@ -46,7 +46,7 @@
     message.classList.toggle('is-error', error);
     message.classList.toggle('is-pending', pending);
   }
-  function currentModel() { return runtime?.harness === 'codex' ? runtime?.model?.id || '' : settings?.effective?.model || ''; }
+  function currentModel() { return runtime?.model?.id || settings?.effective?.model || ''; }
   function choices() { return Array.isArray(runtime?.choices) ? runtime.choices.map(item => ({ ...item, label: item.id === 'native' ? 'LiveUIAgent' : item.label })) : []; }
   function harnessLabel(id) { return choices().find(item => item.id === id)?.label || (id === 'dsh' ? 'DSH' : id === 'native' ? 'LiveUIAgent' : id || 'Not loaded'); }
   function runtimeWarning() {
@@ -56,7 +56,7 @@
 
   function renderSettings() {
     const model = currentModel();
-    const models = runtime?.harness === 'codex' ? (model ? [model] : []) : [...new Set([model, ...(settings?.effective?.models || [])].filter(Boolean))];
+    const models = runtime?.harness === 'codex' ? (model ? [model] : []) : [...new Set([model, ...(runtime?.model?.models || settings?.effective?.models || [])].filter(Boolean))];
     modelSelect.replaceChildren(...(models.length ? models.map(id => option(id, id)) : [option('', 'Configure a model')]));
     modelSelect.value = model;
     modelSelect.disabled = busy || !models.length || runtime?.harness === 'codex';
@@ -87,6 +87,7 @@
     busy = true; renderSettings(); status('Saving model…', false, true);
     try {
       settings = await api('/agent/settings', 'PUT', { model: chosen });
+      runtime = await api('/agent/runtime-settings');
       window.__liveuiSettings = settings;
       window.dispatchEvent(new CustomEvent('liveui:settings', { detail: settings }));
       status(`Model saved: ${currentModel() || 'Not configured'}.`);
@@ -99,6 +100,9 @@
     busy = true; renderSettings(); status('Saving harness…', false, true);
     try {
       runtime = await api('/agent/runtime-settings', 'PATCH', { harness: chosen });
+      settings = await api('/agent/settings');
+      window.__liveuiSettings = settings;
+      window.dispatchEvent(new CustomEvent('liveui:settings', { detail: settings }));
       window.dispatchEvent(new CustomEvent('liveui:runtime', { detail: runtime }));
       status(runtimeWarning() || `New apps will use ${harnessLabel(runtime.harness)}. Existing apps keep their original harness.`, !!runtimeWarning());
     } catch (error) { status(error.message, true); }
@@ -118,7 +122,7 @@
     if (runtimeWarning()) panel.append(el('p', { class: 'liveui-notice', text: runtimeWarning() }));
     for (const item of choices()) panel.append(el('article', { class: 'liveui-runtime-option' }, [
       el('strong', { text: `${item.label} · ${item.available ? 'Available' : 'Unavailable'}` }),
-      el('p', { text: item.reason || (item.id === 'native' ? 'Build interactive apps with actions managed by LiveUIAgent.' : item.id === 'codex' ? 'Codex reasoning with LiveUIAgent actions.' : 'Native agent reasoning with DSH.') })
+      el('p', { text: item.reason || item.description || (item.id === 'native' ? 'Build interactive apps with actions managed by LiveUIAgent.' : item.id === 'codex' ? 'Codex reasoning with LiveUIAgent actions.' : 'Native agent reasoning with DSH.') })
     ]));
     panel.append(el('p', { class: 'liveui-muted', text: 'Harness changes apply to new apps. Existing apps use their original harness for edits and actions.' }));
     panel.append(button('Model and API settings', () => {

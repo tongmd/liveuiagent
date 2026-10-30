@@ -1,4 +1,7 @@
 import 'dotenv/config';
+import {domesticHarnessFromEnv} from './domestic-harness-inference.js';
+import {domesticHarnesses,harnessIds,harnessModels,selectHarnessModel,isDomesticHarness,harnessLabel} from './harness-catalog.js';
+import type {HarnessId} from './runtime-settings.js';
 import { createRichWorkspaces } from './rich-workspaces.js';
 import { createCodexNativeInference } from './codex-native-inference.js';
 import { createDshNativeInference } from './dsh-native-inference.js';
@@ -42,6 +45,7 @@ const db = openDb(dbPath);
 ensureLlmSettingsTable(db);
 const nativeHarnessBindings=createNativeHarnessBindings(db);
 const nativeCodex=createCodexNativeInference();
+const domesticRunners=Object.fromEntries(domesticHarnesses.map(({id})=>[id,domesticHarnessFromEnv(id,path.join(path.dirname(dbPath),'domestic-harness-workers'))]));
 const nativeDshCommand=process.env.LIVEUI_NATIVE_DSH_COMMAND?.trim();
 const nativeDsh=nativeDshCommand?createDshNativeInference({
   root:path.resolve(process.env.LIVEUI_NATIVE_DSH_ROOT||path.join(path.dirname(dbPath),'native-dsh-workers')),
@@ -68,7 +72,7 @@ const evaluatorArtifacts=createEvaluatorArtifacts(process.env.LIVEUI_EVALUATION_
 evaluatorArtifacts.install(app);
 const personal = createPersonalization(db, requestUser, llmConfigFromRequest);
 personal.install(app);
-if (process.env.LIVEUI_DEFAULT_HARNESS && !['native','dsh','codex'].includes(process.env.LIVEUI_DEFAULT_HARNESS)) throw new Error('LIVEUI_DEFAULT_HARNESS must be native, dsh or codex');
+if (process.env.LIVEUI_DEFAULT_HARNESS && !harnessIds.includes(process.env.LIVEUI_DEFAULT_HARNESS as HarnessId)) throw new Error('LIVEUI_DEFAULT_HARNESS must name a supported harness');
 const completeApps=createCompleteApps(db,personal,requestUser,llmConfigFromRequest,{
   harnessFor:(req,appId)=>runtimeSettings.forRequest(req,appId),
   executionOf(req) {
@@ -80,7 +84,14 @@ const completeApps=createCompleteApps(db,personal,requestUser,llmConfigFromReque
 });
 const runtimeSettings=createRuntimeSettings(db,{
   userOf:requestUser,
-  defaultHarness:process.env.LIVEUI_DEFAULT_HARNESS==='codex'?'codex':process.env.LIVEUI_DEFAULT_HARNESS==='dsh'?'dsh':'native',
+  defaultHarness:(process.env.LIVEUI_DEFAULT_HARNESS||'native') as HarnessId,
+  onSelect(req,harness){
+    if(isDomesticHarness(harness)||harness==='dsh'){
+      const view=llmSettingsView(db,requestUser(req));
+      const model=selectHarnessModel(harness,view.effective.models,view.effective.model);
+      if(model)saveUserLlmSettings(db,requestUser(req),{model});
+    }
+  },
   appHarnessOf:(req,appId)=>nativeHarnessBindings.get(requestUser(req),appId),
   choicesOf:req=>[
     {id:'native',label:'LiveUIAgent',available:true},
@@ -88,12 +99,17 @@ const runtimeSettings=createRuntimeSettings(db,{
       ...(!nativeCodex?{reason:'Codex relay is not configured'}:!requestUser(req)?{reason:'Sign in to use Codex'}:!nativeCodex.allowsUser(requestUser(req))?{reason:'Codex is not enabled for this account'}:{})},
     {id:'dsh',label:'DeepSeek Harness',available:Boolean(nativeDsh||completeApps.configured)&&Boolean(requestUser(req)),
       ...(!nativeDsh&&!completeApps.configured?{reason:'DSH service is not configured'}:!requestUser(req)?{reason:'Sign in to use DeepSeek Harness'}:{})},
+    ...domesticHarnesses.filter(({id})=>harnessModels(id,llmSettingsView(db,requestUser(req)).effective.models).length>0).map(({id,label})=>({
+      id,label,available:Boolean(domesticRunners[id]&&requestUser(req)),description:`${label} · ${harnessModels(id,llmSettingsView(db,requestUser(req)).effective.models).join(', ')}`,
+      ...(!domesticRunners[id]?{reason:`${label} runtime is not configured`}:!requestUser(req)?{reason:'Sign in to use this harness'}:{}),
+    })),
   ],
   async modelOf(req,harness) {
     if(harness==='codex')return nativeCodex?.view() ?? {id:null,configurable:false,providerConfigurable:false,reason:'Codex relay is not configured'};
     const view=llmSettingsView(db,requestUser(req));
+    if(isDomesticHarness(harness))return {id:selectHarnessModel(harness,view.effective.models,view.effective.model),models:harnessModels(harness,view.effective.models),source:view.effective.keySource,configurable:true,providerConfigurable:true,delivery:'native'};
     if(harness==='native')return {id:view.effective.model,source:view.effective.keySource,configurable:true};
-    if(nativeDsh)return {id:view.effective.model,source:view.effective.keySource,configurable:true,providerConfigurable:true,delivery:'native'};
+    if(nativeDsh)return {id:selectHarnessModel('dsh',view.effective.models,view.effective.model)||view.effective.model,models:harnessModels('dsh',view.effective.models).length?harnessModels('dsh',view.effective.models):view.effective.models,source:view.effective.keySource,configurable:true,providerConfigurable:true,delivery:'native'};
     try {
       const capability=await completeApps.capabilities(req);
       return {id:view.effective.model||capability.model,source:view.effective.keySource,configurable:Boolean(capability.modelSelection),providerConfigurable:Boolean(capability.providerOverride),runnerDefault:capability.model};
@@ -101,7 +117,10 @@ const runtimeSettings=createRuntimeSettings(db,{
   },
 });
 runtimeSettings.install(app);
-const richWorkspaces=createRichWorkspaces(db,{userOf:requestUser,harnessFor:req=>runtimeSettings.forRequest(req),codexOf:req=>{if(!nativeCodex?.allowsUser(requestUser(req)))throw Object.assign(new Error('Codex is not available for this account'),{status:403});return nativeCodex.config();},bindHarness:(owner,appId)=>nativeHarnessBindings.save(owner,appId,'codex'),recall:(owner,appId,prompt)=>personal.recall(owner,appId)});
+const richWorkspaces=createRichWorkspaces(db,{userOf:requestUser,harnessFor:(req,id)=>runtimeSettings.forRequest(req,id),llmOf:(req,id)=>{
+  const selected=Object.assign(Object.create(req),{body:{...req.body,...(id?{appId:id}:{})}});
+  return llmConfigFromRequest(selected);
+},prepare:(req,llm,appId)=>personal.prepare(req,llm),memoryStatus:req=>personal.requestStatus(req),bindHarness:(owner,appId,harness)=>nativeHarnessBindings.save(owner,appId,harness as HarnessId),recall:(owner,appId,prompt)=>personal.recall(owner,appId)});
 richWorkspaces.install(app);
 completeApps.install(app);
 
@@ -122,6 +141,14 @@ function llmConfigFromRequest(req: express.Request): LlmRuntimeConfig | undefine
     apiBase: String(explicit.apiBase ?? req.header('x-liveuiagent-llm-base') ?? ''),
     model: String(explicit.model ?? req.header('x-liveuiagent-llm-model') ?? ''),
   };
+  if(isDomesticHarness(harness)||harness==='dsh') {
+    const view=llmSettingsView(db,requestUser(req));
+    // Browser model state may belong to a different app. Affinity picks a model
+    // from this app's harness family using the existing provider route table.
+    const model=selectHarnessModel(harness,view.effective.models,requested.model||view.effective.model);
+    if(isDomesticHarness(harness)&&!model)throw Object.assign(new Error('No API model is available for this harness'),{status:503,code:'harness_model_unavailable'});
+    if(model)requested.model=model;
+  }
   const resolved = resolveLlm(db, requestUser(req), requested);
   for (const warning of resolved.warnings) console.warn(`[llm] ${requestUser(req) || 'shared'}: ${warning}`);
   if (resolved.llm) resolved.llm.personalContext = JSON.stringify(personal.context(requestUser(req), String(body.appId || body.selectedAppId || 'global')));
@@ -131,6 +158,15 @@ function llmConfigFromRequest(req: express.Request): LlmRuntimeConfig | undefine
     const provider=resolved.llm.apiBase&&resolved.llm.apiKey?{apiBase:resolved.llm.apiBase,apiKey:resolved.llm.apiKey}:undefined;
     resolved.llm.nativeInferenceConcurrency=nativeDsh.maxConcurrent;
     resolved.llm.chatCompletion=(request,options)=>nativeDsh.chatCompletion(request,{timeoutMs:options?.timeoutMs??120000,roleLabel:options?.roleLabel,provider});
+  }
+  if(isDomesticHarness(harness)) {
+    if(body.delivery==='html')throw Object.assign(new Error('This harness uses Native app delivery'),{status:422,code:'harness_delivery_unsupported'});
+    const runner=domesticRunners[harness],llm=resolved.llm;
+    if(!runner||!llm?.apiBase||!llm.apiKey)throw Object.assign(new Error('Harness or API connection is unavailable'),{status:503,code:'harness_unavailable'});
+    if(!harnessModels(harness,[String(llm.model)]).length)throw Object.assign(new Error('Harness model route mismatch'),{status:409,code:'harness_model_mismatch'});
+    const provider={apiBase:llm.apiBase,apiKey:llm.apiKey};
+    llm.nativeInferenceConcurrency=runner.maxConcurrent;
+    llm.chatCompletion=(request,options)=>runner.chatCompletion(request,{provider,timeoutMs:options?.timeoutMs,onProgress:step=>llm.onProgress?.(step)});
   }
   return resolved.llm;
 }
@@ -190,7 +226,9 @@ async function respondWithProgress(
   const llm = llmConfigFromRequest(req);
   const owner = requestUser(req);
   const execute=async()=>{await personal.prepare(req,llm);const result=await exec(llm);return result&&typeof result==='object'?{...result,execution:{harness:runtimeSettings.forRequest(req,req.body?.appId||req.body?.selectedAppId),delivery:'native',model:llm?.model||llmSettingsView(db,owner).effective.model},contextualMemory:personal.requestStatus(req)}:result;};
-  const taskRowId = taskLabel ? recordTaskStart(owner, taskLabel) : 0;
+  const taskHarness = runtimeSettings.forRequest(req,req.body?.appId||req.body?.selectedAppId);
+  const taskPrompt = typeof req.body?.prompt==='string' ? req.body.prompt : req.body?.actionId ? JSON.stringify({appId:req.body.appId,actionId:req.body.actionId,input:req.body.eventPayload}) : '';
+  const taskRowId = taskLabel ? recordTaskStart(owner, taskLabel, taskPrompt) : 0;
   const finishTask = (status: 'done' | 'error', text: string, code?: string) => {
     if (!taskRowId) return;
     // 配置弹窗回路(llm_config_required)不是任务失败:删行,别在消息中心刷屏。
@@ -198,7 +236,7 @@ async function respondWithProgress(
       db.prepare('DELETE FROM chat_history WHERE id = ?').run(taskRowId);
       return;
     }
-    recordTaskEnd(taskRowId, status, `${text} · ${Math.round((Date.now() - startedAt) / 1000)}s`);
+    recordTaskEnd(taskRowId, status, redactSecrets(`${text} · ${harnessLabel(taskHarness)} · ${llm?.model||''} · ${Math.round((Date.now() - startedAt) / 1000)}s`));
   };
   if (!String(req.header('accept') || '').includes('text/event-stream')) {
     try {
@@ -382,9 +420,9 @@ db.exec(`
 // 服务重启时上一进程遗留的 running 任务行已死,如实标记中断,别永远转圈。
 db.prepare(`UPDATE chat_history SET status = 'error', text = CASE WHEN text = '' THEN 'Task interrupted by a server restart' ELSE text END WHERE kind = 'task' AND status = 'running'`).run();
 
-function recordTaskStart(owner: string, label: string): number {
-  const info = db.prepare(`INSERT INTO chat_history (owner, role, text, prompt, kind, status, label) VALUES (?, 'agent', '', '', 'task', 'running', ?)`)
-    .run(owner, label.slice(0, 120));
+function recordTaskStart(owner: string, label: string, prompt: string): number {
+  const info = db.prepare(`INSERT INTO chat_history (owner, role, text, prompt, kind, status, label) VALUES (?, 'agent', '', ?, 'task', 'running', ?)`)
+    .run(owner, redactSecrets(prompt).slice(0,12000), redactSecrets(label).slice(0, 120));
   trimChatHistory(owner);
   return Number(info.lastInsertRowid);
 }
@@ -599,6 +637,7 @@ async function shutdown() {
   httpServer.closeIdleConnections();
   try {
     await nativeDsh?.dispose();
+    for(const runner of Object.values(domesticRunners))runner?.dispose();
     await closed;
     clearTimeout(force);
     db.close();

@@ -1,8 +1,8 @@
 import type Database from 'better-sqlite3';
 import type express from 'express';
 
-export type HarnessId = 'native' | 'dsh' | 'codex';
-export type HarnessChoice = { id: HarnessId; label: string; available: boolean; reason?: string };
+export type HarnessId = 'native' | 'dsh' | 'codex' | 'qwen' | 'kimi' | 'zcode';
+export type HarnessChoice = { id: HarnessId; label: string; available: boolean; reason?: string; description?: string };
 
 export function runtimeError(message: string, code: string, status = 400) {
   return Object.assign(new Error(message), { code, status });
@@ -14,6 +14,7 @@ export function createRuntimeSettings(db: Database.Database, options: {
   choicesOf: (req: express.Request) => HarnessChoice[];
   modelOf: (req: express.Request, harness: HarnessId) => Promise<Record<string, unknown>>;
   defaultHarness?: HarnessId;
+  onSelect?: (req: express.Request, harness: HarnessId) => void;
   appHarnessOf?: (req: express.Request, appId: string) => HarnessId | undefined;
 }) {
   db.exec(`CREATE TABLE IF NOT EXISTS user_runtime_settings (
@@ -68,9 +69,12 @@ export function createRuntimeSettings(db: Database.Database, options: {
           throw runtimeError('Expected { harness }. Model and provider settings use /agent/settings.', 'runtime_settings_invalid');
         }
         const harness = validate(req, req.body.harness);
+        db.transaction(()=>{
+        options.onSelect?.(req,harness);
         db.prepare(`INSERT INTO user_runtime_settings(owner, harness, updated_at) VALUES (?, ?, ?)
           ON CONFLICT(owner) DO UPDATE SET harness = excluded.harness, updated_at = excluded.updated_at`)
           .run(options.userOf(req), harness, new Date().toISOString());
+        })();
         res.json(await view(req));
       } catch (error) { next(error); }
     });

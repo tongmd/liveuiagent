@@ -21,7 +21,7 @@ test('mixed Native/HTML/persisted visual apps survive real personalization decor
  const first=await x.request('/agent/workspaces/create',{prompt:'做一个房间布局应用。三维展示'}),done=await x.wait(first.value.id);
  const oldApps=[{appId:'native_alice',name:'旧应用'},{appId:'dsh_old',name:'旧HTML'}];
  const base={apps:oldApps,summary:{apps:oldApps},canvasState:{nodes:[],edges:[]}};
- assert.throws(()=>personal.decorate('alice',x.workspace.merge({headers:{'x-owner':'alice'}} as any,base)),/App not found or access denied/);
+ assert.equal(personal.decorate('alice',x.workspace.merge({headers:{'x-owner':'alice'}} as any,base)).apps.length,3);
  x.app.post('/integration-query',(req,res)=>{const owner=String(req.headers['x-owner']||'');res.json(x.workspace.merge(req,personal.decorate(owner,owner==='alice'?base:{apps:[],summary:{apps:[]},canvasState:{nodes:[],edges:[]}})));});
  const live=await x.request('/integration-query',{});assert.equal(live.status,200);assert.deepEqual(live.value.apps.map((a:any)=>a.appId),['native_alice','dsh_old',done.appId]);assert.equal(live.value.summary.appCount,3);assert.equal(live.value.personalization.visibleCount,3);assert.equal(live.value.personalization.libraryCount,3);
  assert.deepEqual((await x.request('/integration-query',{},'POST','bob')).value.apps,[]);

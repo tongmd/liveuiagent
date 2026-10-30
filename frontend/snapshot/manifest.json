@@ -37,8 +37,8 @@
     },
     {
       "file": "runtime-controls.js",
-      "sha256": "e10173a62b8dc1bfb4d21c90c75d3cb98ce2183bad5023a2bdcf594c7a8200a3",
-      "bytes": 19132
+      "sha256": "db9fc2ec4cd3238ec2854799d4de5cc87155323905af3df7d9d4bb11f309bd88",
+      "bytes": 19371
     },
     {
       "file": "runtime-controls.css",
@@ -72,8 +72,8 @@
     },
     {
       "file": "rich-workspaces.js",
-      "sha256": "66e58ccb1bed5c855bc43773627e299ae2c2e367f52864b5f8f3491557271239",
-      "bytes": 8711
+      "sha256": "04e4bd72d6fc2fe21e3514fd894b3059d2b11777c056fddab3625652ec3d9b9e",
+      "bytes": 8717
     },
     {
       "file": "rich-workspaces.css",

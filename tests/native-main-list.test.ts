@@ -56,7 +56,7 @@ test('actual runtime commits verified empty rows through reopen, but failed or o
   if(mode==='verified')await invoke();else await assert.rejects(invoke(),/did not pass verification|native result review rejected/);
   const stored=JSON.parse(f.stored().runtime_state_json);assert.deepEqual(stored.entities,mode==='verified'?[]:[{id:'old-1',name:'Old parcel',detail:'Previously observed'}]);
   assert.deepEqual(stored.entityStats,mode==='verified'?[]:[{label:'Parcels',value:'1'}]);
-  const reopened=await f.runtime.queryState({user:'fixture-owner'});assert.deepEqual(reopened.apps[0].runtimeState.entities,stored.entities);assert.equal(reopened.apps[0].appPackage.ui.meta.a2ui.initialData.entities.length,mode==='verified'?0:1);
+  const reopened=await f.runtime.queryState({user:'fixture-owner'});if(mode==='verified'){assert.ok(stored.selectedRecordId);assert.ok(Object.values(reopened.apps[0].appData).flat().some((row:any)=>row.id===stored.selectedRecordId),'selected record must survive reopen and reference actual persisted data');}else{assert.equal(stored.selectedRecordId,undefined,'rejected turns must not change selection');}assert.deepEqual(reopened.apps[0].runtimeState.entities,stored.entities);assert.equal(reopened.apps[0].appPackage.ui.meta.a2ui.initialData.entities.length,mode==='verified'?0:1);
   const requirements=captures.find(x=>x.sys.includes('You analyze a GUI'));assert.deepEqual(requirements.input.priorProjection,{entities:[{id:'old-1',name:'Old parcel',detail:'Previously observed'}],stats:[{label:'Parcels',value:'1'}]});assert.deepEqual(requirements.input.viewContext,descriptor);assert.equal(requirements.input.goal,undefined,'view metadata must not inject new goal obligations');
  }
 });
