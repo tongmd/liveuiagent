@@ -30,3 +30,11 @@ body:has(.history-panel) .liveui-catalog-heading{visibility:hidden}
 @media(max-width:1150px){.concept-material.studio-shell .material-standalone .morph-lab .liveui-material-catalog{grid-template-columns:repeat(3,minmax(0,1fr))!important;gap:20px}}
 @media(max-width:820px){.concept-material.studio-shell .material-standalone .morph-lab .liveui-material-catalog{inset:130px 18px 200px!important;grid-template-columns:repeat(2,minmax(0,1fr))!important;gap:16px}.liveui-catalog-heading{left:26px;right:26px;top:82px}}
 @media(max-width:480px){.concept-material.studio-shell .material-standalone .morph-lab .liveui-material-catalog{inset:126px 10px 230px!important;grid-template-columns:minmax(0,1fr)!important;padding:4px 8px 24px;gap:18px}.liveui-catalog-heading{left:18px;right:18px;top:78px;gap:8px}.liveui-catalog-heading h2{font-size:19px}.liveui-catalog-heading .catalog-count{margin-left:8px;font-size:11px}.liveui-catalog-heading input{width:145px}}
+
+/* Open the app directly; keep deletion separate from the opening button. */
+.liveui-gallery-card .gallery-open{display:flex;flex:1;flex-direction:column;align-items:stretch;width:100%;min-width:0;min-height:0;padding:0;border:0;border-radius:inherit;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.liveui-gallery-card .gallery-open:focus-visible{outline:3px solid #527c6c;outline-offset:-3px}
+.liveui-gallery-card .gallery-delete{position:absolute;z-index:2;top:10px;right:10px;display:grid;place-items:center;width:40px;height:40px;padding:0;border:1px solid #dfe5e3;border-radius:10px;background:#fffffff2;color:#65746e;cursor:pointer}
+.liveui-gallery-card .gallery-delete:hover{color:#9f3434;border-color:#cfa9a9;background:#fff}
+.liveui-gallery-card .gallery-delete:focus-visible{outline:3px solid #527c6c;outline-offset:2px}
+.liveui-gallery-card .gallery-busy{right:58px}

@@ -1,14 +1,14 @@
 {
   "formatVersion": 2,
   "file": "index.html",
-  "sha256": "9b4cee3229ac8a4866d0f3a34da1bf31628f328b407cc8250f52b1c4dd212cf5",
+  "sha256": "97537ef5936e59dfbb5b2200c26b5a87c130fab0e9300941470a107fc478bd8b",
   "captured": "2026-10-21",
   "deployedRevisionDate": "2026-10-16",
   "resources": [
     {
       "file": "index.html",
-      "sha256": "9b4cee3229ac8a4866d0f3a34da1bf31628f328b407cc8250f52b1c4dd212cf5",
-      "bytes": 1395311
+      "sha256": "97537ef5936e59dfbb5b2200c26b5a87c130fab0e9300941470a107fc478bd8b",
+      "bytes": 1393854
     },
     {
       "file": "complete-apps.js",
@@ -82,13 +82,13 @@
     },
     {
       "file": "gallery-cards.js",
-      "sha256": "ae68d729ea544ab446a3ec37ab6d9ba541537ee0da2844abbff2139fc8a2df2f",
-      "bytes": 6147
+      "sha256": "4af483b04a82fd7cb6f44579c3c70bcf10ea492bd1c6e0a4c224acfe73677e2f",
+      "bytes": 6580
     },
     {
       "file": "gallery-cards.css",
-      "sha256": "48f67d3b66a5591f7ca76173d5f90a8388678f384a57bca8f8073f1806aa451d",
-      "bytes": 5697
+      "sha256": "844970d028d68b5f19161dd3e6e3d25e7efe2f29242f1b61cacf5f0bb34796cc",
+      "bytes": 6611
     }
   ]
 }

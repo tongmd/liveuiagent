@@ -20,7 +20,7 @@
     return cache.get(key);
   }
   const caption=app=>String(app.description||app.preview?.presentation?.tagline||'').replace(/\s+/g,' ').trim();
-  window.LiveUIAgentGalleryCard=function({app,onOpen,selected,busy}){
+  window.LiveUIAgentGalleryCard=function({app,onOpen,onRemove,selected,busy}){
     const R=window.__liveuiagentReact,h=R.createElement,root=R.useRef(null),cover=R.useRef(null);
     const [saved,setSaved]=R.useState(null),[ready,setReady]=R.useState(false);
     const accent=/^#[\da-f]{6}$/i.test(app.preview?.accent||'')?app.preview.accent:'#526b61';
@@ -44,11 +44,14 @@
       return()=>{resize.disconnect();try{runtime.render(stage,{type:'Text',text:''});}catch{}shadow.replaceChildren();};
     },[saved]);
     const kind=({Scene3D:'三维空间',Plot:'图表',Diagram:'关系图'})[saved?.visual?.type]||(saved?.photos?.length?'照片':'');
-    return h('button',{ref:root,type:'button',className:'morph-material liveui-gallery-card'+(selected?' is-selected':''),'data-app-id':app.appId,'data-personal-material':true,'data-search-text':app.name+' '+caption(app),'aria-label':'打开 '+app.name,onClick:onOpen,style:{'--gallery-accent':accent}},
+    return h('article',{ref:root,className:'morph-material liveui-gallery-card'+(selected?' is-selected':''),'data-app-id':app.appId,'data-personal-material':true,'data-search-text':app.name+' '+caption(app),style:{'--gallery-accent':accent}},
+      h('button',{type:'button',className:'gallery-open','aria-label':'打开 '+app.name,onClick:onOpen},
       h('span',{className:'gallery-cover'+(ready?' has-visual':''),'aria-hidden':true},h('span',{ref:cover,className:'gallery-visual'}),
         !ready&&saved?.photos?.length?h('span',{className:'gallery-photos'},saved.photos.map((src,i)=>h('img',{src,alt:'',key:i,loading:'lazy'}))):null,
         !ready&&!saved?.photos?.length?h('span',{className:'gallery-fallback'},(!app.completeApp&&!app.richWorkspace&&items.length)?items.map((item,i)=>h('span',{key:i,className:'gallery-record'},h('i',null,String(i+1).padStart(2,'0')),h('span',null,String(item.name||item.title)))):h('span',{className:'gallery-monogram'},glyph),h('span',{className:'gallery-cover-line'})):null,
         kind?h('span',{className:'gallery-kind'},kind):null),
-      h('span',{className:'gallery-copy'},h('span',{className:'gallery-title'},h('strong',null,app.name),h('span',{className:'gallery-arrow','aria-hidden':true},'↗')),h('span',{className:'gallery-description'},caption(app))),busy?h('span',{className:'gallery-busy'},'正在更新…'):null);
+      h('span',{className:'gallery-copy'},h('span',{className:'gallery-title'},h('strong',null,app.name),h('span',{className:'gallery-arrow','aria-hidden':true},'↗')),h('span',{className:'gallery-description'},caption(app))),busy?h('span',{className:'gallery-busy'},'正在更新…'):null),
+      onRemove?h('button',{type:'button',className:'gallery-delete','aria-label':'Delete '+app.name,title:'删除应用',onClick:event=>{event.stopPropagation();onRemove();}},
+        h('svg',{width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.6,'aria-hidden':true},h('path',{d:'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7M14 10v7'}))):null);
   };
 })();
