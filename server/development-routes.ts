@@ -14,11 +14,25 @@ export function wantsLiveuiDevelopment(body:unknown):boolean {
   if(value.target==='liveui')return true;
   if(typeof value.developmentConversationId==='string'&&value.developmentConversationId.trim())return true;
   if(typeof value.prompt!=='string')return false;
-  const prompt=value.prompt.trim();
+  const prompt=value.prompt.trim().replace(/^\d+[.、)）]\s*/,'');
   if(/^["'“‘「『`>]/.test(prompt))return false;
-  if(wantsDevelopmentContinuation(prompt))return true;
+  if(wantsDevelopmentContinuation(prompt)||wantsHostUiEdit(prompt))return true;
   return /^(?:(?:请|请你|帮我|请帮我|直接|现在)\s*)?(?:(?:用|使用)\s*(?:codex|native|dsh|qwen|kimi|zcode)\s*)?(?:修改|修复|改进|调整|更新|改|调试)(?:一下|好)?\s*liveui\s*(?:本身|宿主|源码|源代码|的源码|的源代码|的宿主)/i.test(prompt)
     || /^(?:please\s+)?(?:fix|modify|edit|debug|update)\s+(?:the\s+)?liveui\s+(?:itself|host|source(?:\s+code)?)(?:\b)/i.test(prompt);
+}
+
+/** Natural host UI requests can name the subject first. Require a concrete
+ * host control and an edit verb; quoted examples and generated Apps stay Apps. */
+function wantsHostUiEdit(prompt:string):boolean {
+  const first=prompt.split(/[\n。！？!?]/,1)[0].trim();
+  const prefix='(?:(?:请你|请帮我|帮我|请|直接|现在)\\s*)?';
+  const host='live\\s*ui\\s*(?:本身|宿主)?(?:的)?\\s*';
+  const control='(?:回复(?:信息|消息)?(?:的)?(?:UI|界面)?|消息(?:回复|界面)?|聊天(?:界面|窗口)?|界面|UI|布局|弹窗|输入框|输入区|导航|应用列表|开发入口)';
+  const edit='(?:重新设计|修改|修复|改进|调整|更新|重做|改|修)';
+  const actionFirst=new RegExp('^'+prefix+edit+'(?:一下|好)?\\s*'+host+control,'i');
+  const subjectFirst=new RegExp('^'+prefix+'(?:把|将)?\\s*'+host+control+'[^。！？!?\\n]{0,80}?(?:需要|应该|要|请|帮我|给我)?'+edit+'(?:一下|好|成|为|掉|进)?','i');
+  if(/(?:不要|不必|不用|无需|别)(?:再)?(?:修改|修复|改|调整|重做)/i.test(first))return false;
+  return actionFirst.test(first)||subjectFirst.test(first);
 }
 
 function wantsDevelopmentContinuation(prompt:string){return /^(?:请\s*)?继续(?:修改|修复|改进|调整|调试)\s*liveui(?:\s*(?:本身|宿主|源码|源代码))?(?:[\s，。,:：]|$)/i.test(prompt.trim());}
