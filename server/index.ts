@@ -2,6 +2,9 @@ import 'dotenv/config';
 import {domesticHarnessFromEnv} from './domestic-harness-inference.js';
 import {domesticHarnesses,harnessIds,harnessDefinition,selectHarnessModel,harnessLabel} from './harness-catalog.js';
 import {createHarnessIntegration} from './harness-integration.js';
+import {installDevelopmentRoutes} from './development-routes.js';
+import {createDevelopmentContext} from './development-context.js';
+import {createDevelopmentTestRunner} from './development-test-runner.js';
 import type {HarnessId} from './runtime-settings.js';
 import { createRichWorkspaces } from './rich-workspaces.js';
 import { createCodexNativeInference } from './codex-native-inference.js';
@@ -136,6 +139,12 @@ const runtimeSettings=createRuntimeSettings(db,{
   async modelOf(req,harness){return harnessIntegration.model(harness,harnessSelection(req));},
 });
 runtimeSettings.install(app);
+const development=installDevelopmentRoutes(app,db,{
+  userOf:requestUser,llmOf:llmConfigFromRequest,harnessFor:req=>runtimeSettings.forRequest(req),
+  context:createDevelopmentContext(db,{runtimeRoot:root,memoryOf:(owner,appId)=>personal.recall(owner,appId),dshRoot:process.env.LIVEUI_DEVELOPMENT_DSH_ROOT}),
+  ...(process.env.LIVEUI_DEVELOPMENT_TEST_RUNNER?{runTest:createDevelopmentTestRunner(process.env.LIVEUI_DEVELOPMENT_TEST_RUNNER),
+    allowedTests:{syntax:['Parse JavaScript files without execution'],test:['Run tests/development.test.mjs in the isolated test environment']}}:{}),
+});
 const richWorkspaces=createRichWorkspaces(db,{userOf:requestUser,harnessFor:(req,id)=>runtimeSettings.forRequest(req,id),llmOf:(req,id)=>{
   const selected=Object.assign(Object.create(req),{body:{...req.body,...(id?{appId:id}:{})}});
   return llmConfigFromRequest(selected);
@@ -631,6 +640,7 @@ async function shutdown() {
   const closed=new Promise<void>(resolve=>httpServer.close(()=>resolve()));
   httpServer.closeIdleConnections();
   try {
+    await development.dispose();
     await nativeDsh?.dispose();
     for(const runner of Object.values(domesticRunners))runner?.dispose();
     await closed;
