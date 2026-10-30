@@ -15,7 +15,7 @@ test('optional repair sends original bounded output plus precise field rule to t
  }},undefined,{validationRepairs:1,timeoutMs:1000});
  assert.equal(calls.length,2);assert.deepEqual(result.data.tree,scene);assert.equal(result.timing.attempts,2);assert.equal(result.diagnostic.attempts,2);
  assert.match(result.diagnostic.firstValidationError!.message,/scene\.objects\[0\]\.scale/);
- assert.doesNotMatch(JSON.stringify(result.diagnostic),/private-object-name|"data"|"tree"/);
+ assert.doesNotMatch(JSON.stringify(result.diagnostic),/private-object-name|"data"\s*:|"tree"\s*:/);
  assert.equal(calls[1].request.model,'selected-model');
  assert.deepEqual(calls[1].request.messages.slice(0,2),calls[0].request.messages);
  assert.equal(calls[1].request.messages[2].content,JSON.stringify(first));

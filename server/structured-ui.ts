@@ -1,5 +1,6 @@
 import { validateStructuredUiStyle } from './structured-ui-style.js';
 import { isDeepStrictEqual } from 'node:util';
+import { createHash } from 'node:crypto';
 import { UI_EXPERIENCE_GUIDANCE } from './ui-experience-context.js';
 import type { LlmRuntimeConfig } from './liveuiagent.js';
 
@@ -88,6 +89,30 @@ function contextReferences(context: unknown) {
   return { records: referenceIds(context.records, 'records'), photos: referenceIds(context.photos, 'photos') };
 }
 
+type ValidationIssue = {nodePath:string;field?:string;rule:string;received?:{type:string;value?:number|boolean|string}};
+// Only static protocol paths and rules leave the validator. User strings, IDs,
+// labels, property names, arrays and objects are never copied into diagnostics.
+function validationIssue(raw:unknown,error:any,nodePath:string):ValidationIssue {
+  const message=String(error.message);
+  const style=message.startsWith('Invalid structured UI: '+nodePath+'.style: ');
+  const tail=style?message.slice(('Invalid structured UI: '+nodePath+'.style: ').length):message.replace(/^Invalid rich component: /,'');
+  const candidate=tail.split(':')[0];
+  const styleField=/^(mobile\.)?(direction|tone|align|gap|padding|columns|fontFamily|width|maxWidth|widthPercent|span|radius|borderWidth|fontSize|fontWeight|lineHeight|height|aspectRatio|color|background|borderColor|columnWeights|mobile)$/;
+  const richField=/^scene(?:\.(objects(?:\[[0-9]{1,2}\])?(?:\.(id|shape|position|scale|color|label|rotation))?|background|grid|title))?$/;
+  let field=style&&styleField.test(candidate)?'style.'+candidate:!style&&richField.test(candidate)?candidate:undefined;
+  if(!field)field=({'Invalid structured UI: unsupported node type':'type','Invalid structured UI: invalid text':'text','Invalid structured UI: checked must be boolean':'checked','Invalid structured UI: unknown record reference':'recordId','Invalid structured UI: unknown photo reference':'photoId','Invalid structured UI: container needs bounded children':'children'} as Record<string,string>)[message];
+  const issue:ValidationIssue={nodePath,...(field?{field}:{}),rule:message.slice(0,300)};
+  if(field){
+    let value:any=raw;
+    for(const key of field.replace(/\[([0-9]+)\]/g,'.$1').split('.'))value=value?.[key];
+    const type=value===null?'null':Array.isArray(value)?'array':typeof value;
+    const enums:Record<string,string[]>={type:[...TYPES],shape:['box','sphere','cylinder','cone','torus'],direction:['row','column'],tone:['default','muted','accent'],align:['start','center','end'],fontFamily:['sans','serif','mono']};
+    const knownEnum=typeof value==='string'&&enums[field.split('.').at(-1)!]?.includes(value);
+    issue.received={type,...(typeof value==='number'&&Number.isFinite(value)||typeof value==='boolean'||knownEnum?{value}:{})};
+  }
+  return issue;
+}
+
 /** No HTML/CSS/URL/event strings are executable properties in this protocol. Text is textContent only. */
 export function validateStructuredUiTree(tree: unknown, context: unknown): StructuredUiNode {
   const refs = contextReferences(context);
@@ -96,6 +121,12 @@ export function validateStructuredUiTree(tree: unknown, context: unknown): Struc
   const usedRecords = new Set<string>(), usedPhotos = new Set<string>();
   let count = 0, textLength = 0, sceneCount = 0;
   function visit(raw: unknown, depth: number, path='tree'): StructuredUiNode {
+    try { return visitNode(raw,depth,path); } catch(error:any) {
+      if(error?.code==='invalid_structured_ui'&&!error.validationIssue)error.validationIssue=validationIssue(raw,error,path);
+      throw error;
+    }
+  }
+  function visitNode(raw: unknown, depth: number, path:string): StructuredUiNode {
     if (depth > 10 || ++count > 200) invalid('tree exceeds depth or node limit');
     if (!object(raw) || !TYPES.has(raw.type)) invalid('unsupported node type');
     if(raw.type==='Scene3D'&&++sceneCount>4)invalid('at most 4 Scene3D views per tree');
@@ -276,7 +307,7 @@ export async function generateStructuredUi(prompt: string, context: unknown, llm
   let timer: ReturnType<typeof setTimeout> | undefined;
   let cancelListener: (()=>void) | undefined;
   let attempts=0;
-  const diagnostic:{attempts:number;firstValidationError?:{code:string;message:string}}={attempts:0};
+  const diagnostic:{attempts:number;firstValidationError?:{code:string;message:string};responses:Array<{attempt:number;contentSha256:string;contentBytes:number;validation?:ValidationIssue}>}={attempts:0,responses:[]};
   const timeout=()=>Object.assign(new Error('Structured UI generation timed out'),{code:'structured_ui_timeout',status:504});
   const cancelled=()=>Object.assign(new Error('Structured UI generation was cancelled'),{name:'AbortError',code:'structured_ui_cancelled',status:499});
   const checkDeadline=()=>{if(executionOptions.signal?.aborted)throw cancelled();if(Date.now()>=deadline)throw timeout();};
@@ -315,6 +346,8 @@ export async function generateStructuredUi(prompt: string, context: unknown, llm
       const completion:any=await Promise.race([infer(nextRequest,budget),stop]);
       checkDeadline();
       const content=completion?.choices?.[0]?.message?.content;
+      const responseDiagnostic=typeof content==='string'?{attempt:attempts,contentSha256:createHash('sha256').update(content,'utf8').digest('hex'),contentBytes:Buffer.byteLength(content,'utf8')}:undefined;
+      if(responseDiagnostic)diagnostic.responses.push(responseDiagnostic);
       // Do not replay a missing/oversized completion: there is no bounded model
       // output to repair. Only parsing/schema errors below authorize repair.
       if(typeof content!=='string'||Buffer.byteLength(content,'utf8')>64000)invalid('provider returned invalid content');
@@ -332,6 +365,8 @@ export async function generateStructuredUi(prompt: string, context: unknown, llm
         return {text:result.text,data:{tree},...(supplied.requestId!==undefined?{requestId:supplied.requestId as string}:{}),timing:{durationMs:Date.now()-startedAt,attempts},diagnostic};
       }catch(error:any){
         if(error?.code!=='invalid_structured_ui')throw error;
+        const entry=diagnostic.responses.at(-1);
+        if(entry)entry.validation=error.validationIssue??{nodePath:'response',rule:summary(error).message};
         diagnostic.firstValidationError??=summary(error);
         if(attempts>validationRepairs)throw error;
         checkDeadline();

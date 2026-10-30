@@ -52,3 +52,16 @@ test('workspace activity survives completion and failure with the original reque
  assert.equal(replay.status,409);assert.equal(replay.value.code,'workspace_request_conflict');assert.equal(x.calls.length,1);
  const same=await x.request('/agent/workspaces/create',body);assert.equal(same.value.id,first.value.id);assert.equal(x.calls.length,1);
  });
+
+test('failed rich job persists two safe attempt diagnostics, exact font rule and content hashes',async t=>{
+ const x=await setup(t);const privateText='secret-model-text-must-not-be-persisted';
+ x.set({text:privateText,data:{tree:{type:'Stack',children:[{type:'Text',text:privateText,style:{fontSize:48}}]}}});
+ const started=await x.request('/agent/workspaces/create',{prompt:'创建三维应用'}),failed=await x.wait(started.value.id);
+ assert.equal(failed.status,'error');assert.equal(x.calls.length,2);assert.equal(failed.validation.attempts,2);
+ const readback=(await x.request('/agent/workspaces/jobs/'+started.value.id)).value;
+ assert.deepEqual(readback.validation,failed.validation);assert.equal(readback.validation.responses.length,2);
+ for(const item of readback.validation.responses){assert.equal(item.validation.nodePath,'tree.children[0]');assert.equal(item.validation.field,'style.fontSize');assert.deepEqual(item.validation.received,{type:'number',value:48});assert.match(item.contentSha256,/^[a-f0-9]{64}$/);assert.ok(item.contentBytes>0);}
+ assert.doesNotMatch(JSON.stringify(readback),new RegExp(privateText));
+ const saved=x.db.prepare('SELECT job_json FROM rich_workspace_jobs WHERE owner=? AND job_id=?').get('alice',started.value.id) as any;
+ assert.deepEqual(JSON.parse(saved.job_json).validation,readback.validation);assert.doesNotMatch(saved.job_json,new RegExp(privateText));
+});
