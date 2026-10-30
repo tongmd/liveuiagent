@@ -26,3 +26,26 @@ test('progress-only transport error keeps job identity without claiming success'
  const {api}=fixture(),turn=api.begin('修改liveUI','request');api.observe(turn,{jobId:'job_1',developmentConversationId:'dev_1'});
  const error=new Error('Network disconnected');api.stopped(turn,error);assert.equal(error.jobId,'job_1');assert.equal(error.clientRequestId,'request');assert.match(error.message,/Network disconnected/);assert.doesNotMatch(error.message,/测试通过/);
 });
+test('deployment labels require an actual receipt and distinguish rollback from completion',()=>{
+ const {api}=fixture();
+ const result=status=>({developmentConversationId:'dev_1',development:{validation:'passed',deployment:{status}}});
+ for(const status of ['queued','checking','validating','reviewing','waiting','blocked','rolled_back','unknown','deployed'])assert.doesNotMatch(api.resultLabel(result(status)),/^已上线$/);
+ assert.match(api.resultLabel(result('blocked')),/受阻/);assert.match(api.resultLabel(result('rolled_back')),/已回滚/);
+ const released=result('deployed');released.development.deployed=true;released.development.deployment.receipt={status:'deployed',transactionId:'tx_1'};assert.equal(api.resultLabel(released),'已上线');
+ released.development.deployment.receipt.status='rolled_back';assert.doesNotMatch(api.resultLabel(released),/^已上线$/);released.development.deployment.receipt={};assert.doesNotMatch(api.resultLabel(released),/^已上线$/);
+});
+test('new submissions own presentation immediately, even before their first progress',()=>{
+ const {api}=fixture(),old=api.begin('修改liveUI','old');api.observe(old,{jobId:'job_old',developmentConversationId:'dev_old'});
+ const recent=api.begin('新的普通请求','new');assert.equal(api.canPresent(old),false);assert.equal(api.canPresent(recent),true);
+});
+test('six unsuccessful GET reconnects stop observing without claiming deployment or resubmitting',async()=>{
+ const selection={harness:'codex',model:'gpt-fixture'},storage=new Map(),updates=[];let reads=0;
+ const context={window:{},setTimeout:fn=>setTimeout(fn,0),document:{querySelector:selector=>({value:selector.includes('harness')?selection.harness:selection.model})},sessionStorage:{getItem:key=>storage.get(key),setItem:(key,value)=>storage.set(key,value)}};
+ vm.runInNewContext(source,context);const api=context.window.LiveUIDevelopment;
+ api.attach({read:async()=>{reads++;throw Object.assign(Error('Restarting'),{status:503})},present:(_turn,_result,label)=>updates.push(label)});
+ const turn=api.begin('修改liveUI','r');api.observe(turn,{jobId:'job_1',developmentConversationId:'dev_1'});
+ api.follow(turn,{developmentConversationId:'dev_1',development:{deployment:{status:'queued'}}});
+ for(let i=0;i<100&&!updates.some(x=>x.includes('刷新可继续'));i++)await new Promise(resolve=>setTimeout(resolve,5));
+ assert.equal(reads,6);assert(updates.some(x=>x.includes('待核查')));assert(!updates.some(x=>x==='已上线'));
+ assert.equal(JSON.parse(storage.values().next().value)['["codex","gpt-fixture"]'].tracking,true);
+});
