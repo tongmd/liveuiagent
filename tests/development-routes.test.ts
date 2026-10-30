@@ -41,7 +41,7 @@ async function fixture(mode='success'){
  return {request,dev,calls,contexts,selection,get invocations(){return invocations},async close(){await dev.dispose();server.closeAllConnections();pserver.closeAllConnections();await Promise.all([new Promise<void>(r=>server.close(()=>r())),new Promise<void>(r=>pserver.close(()=>r()))]);db.close();await fs.rm(dir,{recursive:true,force:true});}};
 }
 test('host editing uses explicit intent, not app requests or quoted source',()=>{
- for(const prompt of ['修改 liveUI 本身，把按钮改一下','修复liveUI宿主，处理错误','请帮我修改liveUI源码','Edit liveUI source code','继续修改liveUI，把入口改好'])assert.equal(wantsLiveuiDevelopment({prompt}),true,prompt);
+ for(const prompt of ['修改 liveUI 本身，把按钮改一下','修复liveUI宿主，处理错误','请帮我修改liveUI源码','帮我改liveUI本身的搜索框','Edit liveUI source code','继续修改liveUI，把入口改好'])assert.equal(wantsLiveuiDevelopment({prompt}),true,prompt);
  for(const prompt of ['用liveUI生成应用','创建一个说明如何修改liveUI本身的页面','“修改liveUI本身”是什么意思','> 修改liveUI源码','给应用增加游戏功能','继续','改一下'])assert.equal(wantsLiveuiDevelopment({prompt}),false,prompt);
  assert.equal(wantsLiveuiDevelopment({target:'liveui',prompt:'fix'}),true);
 });
@@ -56,6 +56,7 @@ test('six harness adapters run the same persistent read/edit/test conversation a
   assert.equal((await f.request('/agent/development/conversations/'+result.developmentConversationId,undefined,'bob')).status,404);
   const patch=await (await f.request('/agent/development/jobs/'+result.jobId+'/patch')).text();assert.equal(patch,result.development.diff);
   const recovered:any=await (await f.request('/agent/development/requests/'+harness)).json();assert.equal(recovered.id,result.jobId);
+ const status:any=await (await f.request('/agent/development/status')).json();assert.equal(status.inferenceCount,0);assert.equal(status.activeCount,0);
  }
  assert.equal(f.invocations,30);assert.ok(f.selection.every(x=>!x.appId&&!x.selectedAppId&&!x.delivery&&!x.hostContext&&!x.owner));assert.ok(f.contexts.every(x=>x.owner==='alice'&&x.appId==='dsh_owned'));
  assert.ok(f.calls.every(x=>x.messages.some((m:any)=>m.role==='system')));assert.ok(f.calls[4].messages.some((m:any)=>m.content.includes('answer = 1')));assert.ok(f.calls[4].messages.some((m:any)=>m.content.includes('actual owner memory')));assert.ok(f.calls[4].messages.some((m:any)=>m.content.includes('actual-runtime-sha'))===false,'unread runtime fields stay available in complete context files');
