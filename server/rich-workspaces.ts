@@ -14,8 +14,16 @@ function bounded(value:any,limit=100000){const text=JSON.stringify(value);if(!te
 function promptOf(value:any){if(typeof value!=='string'||!value.trim()||value.length>16000)throw fail('请描述你想完成的事情');return value.trim();}
 export function wantsRichWorkspace(body:any){
   if(body?.delivery==='workspace')return true;
-  const prompt=String(body?.prompt||'');
-  return /创建|生成|做一个|做个|搭建|开发|设计一个|build|create|make (?:me |an? )/i.test(prompt)&&/3d|三维|空间|图表|图形|曲线|配色|版式|阅读效果|可视化|关系图|流程图|散点|柱状|diagram|plot|workspace|visuali[sz]|室内|房间|几何|光学|电路/i.test(prompt);
+  // Explicit delivery stays authoritative. In particular a DSH HTML request
+  // must not be intercepted just because it mentions a three-dimensional view.
+  if(body?.delivery==='html')return false;
+  const prompt=String(body?.prompt||'').trim();
+  const visual=/\b3d\b|三维|空间|图表|图形|曲线|函数图|配色|版式|阅读效果|可视化|关系图|流程图|路线图|散点|柱状|\b(?:diagram|plot|chart|graph|workspace)\b|visuali[sz]|室内|房间|几何|光学|电路/i;
+  const request=/创建|生成|做(?:一[个款套]|个)|搭(?:一[个套]|个)|搭建|开发|设计|(?:帮我|给我|请)(?:画|绘制|展示)|(?:我想要|我需要|我要).*(?:应用|工具|工作台)|\b(?:build|create|make|design|draw|plot|visuali[sz]e)\b|\bI (?:want|need)\b/i;
+  // Explanations and negated requests should keep the normal conversation path.
+  const explanation=/^(?:(?:请|帮我)?(?:解释|介绍|讲解)|(?:what (?:is|are|does)|how (?:do|does|can|to)|explain|describe)\b)/i;
+  const negated=/^(?:(?:请)?(?:不要|别)|(?:do not|don't|never)\s+(?:build|create|make|design|draw|plot|visuali[sz]e)\b)/i;
+  return visual.test(prompt)&&request.test(prompt)&&!explanation.test(prompt)&&!negated.test(prompt);
 }
 export function workspaceName(originalRequest:string,tree:any,previous?:string) {
  const explicit=originalRequest.match(/(?:做|创建|生成|开发|搭建|设计)(?:一[个款种]|个)?([^。！？\n]{2,48}?)(?:应用|工具|工作台)/);
