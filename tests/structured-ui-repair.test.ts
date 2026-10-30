@@ -98,7 +98,7 @@ test('scene errors identify object index and field without exposing IDs, labels 
 
 
 test('unknown property names never enter a thrown error or persisted diagnostic',async()=>{
- for(const tree of [{...scene,'secret-token-in-property':'hidden'}, {...scene,style:{'secret-token-in-property':'hidden'}}]){
+ for(const tree of [{...scene,'secret-token-in-property':'hidden'}, {...scene,style:{'secret-token-in-property':'hidden'}}, {...scene,style:{'unknown\nsecret-token-in-property':'hidden'}}]){
   let calls=0;
   await assert.rejects(generateStructuredUi('Create',context,{model:'fixture',chatCompletion:async(request)=>{
    calls++;if(calls===2)assert.match(String((request.messages as any[])[2].content),/secret-token-in-property/);
