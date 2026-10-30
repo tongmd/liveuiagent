@@ -56,3 +56,14 @@ test('failed test remains failed even when model claims success',async()=>{
  const f=await fixture();let n=0;const m=createDevelopmentWorkspace({root:f.root,sourceRoot:f.source,runtimeContext:async()=>({}),allowedTests:{test:['node','--test']},runTest:async()=>({exitCode:1,stdout:'',stderr:'Assertion failed'}),infer:async()=>JSON.stringify(n++?{tool:'finish',summary:'Everything passed'}:{tool:'test',commandId:'test'})});
  try{const job=await m.submit(input());const result=await done(m,'stone',job.id);assert.equal(result.result?.validation,'failed');assert.equal(result.result?.tests[0].exitCode,1);assert.equal(result.result?.deployed,false);}finally{await m.dispose();await fs.rm(f.dir,{recursive:true,force:true});}
 });
+
+test('timeout keeps the inference slot occupied until the actual model settles',async()=>{
+ const f=await fixture();let entered!:()=>void,release!:()=>void;const started=new Promise<void>(r=>entered=r);const response=new Promise<void>(r=>release=r);
+ const m=createDevelopmentWorkspace({root:f.root,sourceRoot:f.source,maxConcurrent:1,timeoutMs:60,runtimeContext:async()=>({}),infer:async()=>{entered();await response;return JSON.stringify({tool:'finish',summary:'late answer'});}});
+ try{const job=await m.submit(input());await started;const final=await done(m,'stone',job.id);assert.equal(final.code,'development_timeout');assert.equal(m.status().activeCount,1);assert.equal(m.status().inferenceCount,1);assert.equal(m.status('other').inferenceCount,0);await assert.rejects(m.submit({...input(),clientRequestId:'next'}),/busy/);release();for(let i=0;i<100&&m.status().activeCount;i++)await new Promise(r=>setTimeout(r,5));assert.equal(m.status().activeCount,0);assert.equal((await m.getJob('stone',job.id)).status,'error');}finally{release();await m.dispose();await fs.rm(f.dir,{recursive:true,force:true});}
+});
+
+test('preparing directories do not break list and invalid model values fail closed',async()=>{
+ const f=await fixture();const m=createDevelopmentWorkspace({root:f.root,sourceRoot:f.source,runtimeContext:async()=>({}),infer:async()=>JSON.stringify({tool:'finish',summary:'done'})});
+ try{await fs.mkdir(path.join(f.root,sha('stone'),'conversations','dev_preparing','source'),{recursive:true});assert.deepEqual(await m.list('stone'),[]);await assert.rejects(m.submit({...input(),model:({bad:true} as any)}),/Invalid development/);}finally{await m.dispose();await fs.rm(f.dir,{recursive:true,force:true});}
+});
