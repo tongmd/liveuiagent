@@ -100,3 +100,15 @@ test('raw credentials in source assignments and URL userinfo are redacted',()=>{
  const result=JSON.stringify(cleanDevelopmentContext({runtime:'const apiKey="raw-sensitive-value"; fetch("https://u:URLPASSWORD@example.test"); cookie=COOKIESECRET'}));
  for(const value of ['raw-sensitive-value','URLPASSWORD','COOKIESECRET'])assert(!result.includes(value),value);
 });
+
+test('DSH directory traversal refuses a linked apps ancestor before listing private names',async()=>{
+ const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'dev-ancestor-'));const db=new Database(':memory:');
+ try{
+  const root=path.join(tmp,'accounts'),dir=path.join(root,createHash('sha256').update('alice').digest('hex'));
+  fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'state.json'),JSON.stringify({apps:[{id:'app-a'}],jobs:[]}));
+  const external=path.join(tmp,'outside');fs.mkdirSync(path.join(external,'app-a'),{recursive:true});
+  fs.writeFileSync(path.join(external,'app-a','PRIVATE_DIRECTORY_NAME.txt'),'PRIVATE_BODY');fs.symlinkSync(external,path.join(dir,'apps'));
+  const context=await createDevelopmentContext(db,{runtimeRoot:tmp,dshRoot:root})('alice','dsh_app-a');
+  assert.equal(context.appFiles.length,0);assert(!JSON.stringify(context).includes('PRIVATE_DIRECTORY_NAME'));assert(!JSON.stringify(context).includes('PRIVATE_BODY'));
+ }finally{db.close();fs.rmSync(tmp,{recursive:true,force:true});}
+});
