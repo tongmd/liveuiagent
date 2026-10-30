@@ -84,7 +84,7 @@ for (const harness of harnessIds) {
     invalid=true;
     const failed=await request('/agent/run',{selectedAppId:id,prompt:'再次改布局'});
     assert.equal(failed.status,502); assert.deepEqual((await request('/agent/workspaces/'+id)).value,after);
-    assert.deepEqual(calls.map(call=>call.adapter),[harness,harness,harness],'invalid tree must not retry or silently switch adapter');
+    assert.deepEqual(calls.map(call=>call.adapter),[harness,harness,harness,harness],'invalid tree gets only one repair using the same adapter');
     const reopened=createRichWorkspaces(db,{userOf:owner,harnessFor:(req,id)=>settings.forRequest(req,id)});
     assert.deepEqual(reopened.load('alice',id),after,'new runtime reads unchanged persisted tree and interactions');
   });

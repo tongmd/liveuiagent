@@ -79,12 +79,13 @@ export function createRichWorkspaces(db:Database.Database,options:{userOf:(req:e
    await options.prepare?.(req,llm,appId);job.contextualMemory=options.memoryStatus?.(req);
    const memories=llm.personalContext?JSON.parse(llm.personalContext):await options.recall?.(owner,appId,prompt);const experience=buildUiExperienceContext({app:initial.app,memories});
    const workspaceLlm:LlmRuntimeConfig={...llm};
-   const result=await generateStructuredUi(prompt,context(initial,viewport),workspaceLlm,experience,{timeoutMs:180000,maxTokens:6144,systemGuidance:WORKSPACE_GUIDANCE});
+   const result=await generateStructuredUi(prompt,context(initial,viewport),workspaceLlm,experience,{timeoutMs:180000,maxTokens:6144,validationRepairs:1,systemGuidance:WORKSPACE_GUIDANCE});
+   job.validation=result.diagnostic;
    const name=workspaceName(initial.app.description,result.data.tree,snapshot?.app.name);
    const updatedAt=new Date().toISOString();
    const next={app:{...initial.app,name,createdAt:initial.app.createdAt||job.createdAt,updatedAt,harness,model:llm.model,revision:initial.version+1},version:initial.version+1,tree:result.data.tree,records:initial.records,interactionState:initial.interactionState,lastRequest:prompt,requestHistory:[...(initial.requestHistory||[]),{prompt,at:updatedAt,jobId:job.id}].slice(-30)};
    db.transaction(()=>{if(snapshot){const current=load(owner,appId);if(current.version!==initial.version)throw fail('生成期间应用已变化，保留现有内容',409,'workspace_conflict');}else if(db.prepare('SELECT 1 FROM rich_workspaces WHERE owner=? AND app_id=?').get(owner,appId))throw fail('App identifier already exists',409);db.prepare('INSERT OR REPLACE INTO rich_workspaces VALUES (?,?,?)').run(owner,appId,JSON.stringify(next));options.bindHarness?.(owner,appId,harness);job.status='done';job.finishedAt=updatedAt;job.changeSummary=describeUiChanges(initial.tree,result.data.tree);job.result={appId,version:next.version,name,durationMs:Date.now()-began,modelRoundTripMs:result.timing.durationMs};saveJob(owner,job);})();
-  }catch(error:any){job.status='error';job.error=String(error?.message||error);job.code=error?.code||'workspace_generation_failed';job.finishedAt=new Date().toISOString();saveJob(owner,job);}finally{active.delete(lock);inferenceCount--;}})().catch(()=>console.error('Workspace outcome persistence failed: '+job.id));return job;
+  }catch(error:any){job.validation=error?.structuredUiDiagnostic??job.validation;job.status='error';job.error=String(error?.message||error);job.code=error?.code||'workspace_generation_failed';job.finishedAt=new Date().toISOString();saveJob(owner,job);}finally{active.delete(lock);inferenceCount--;}})().catch(()=>console.error('Workspace outcome persistence failed: '+job.id));return job;
  }
  function install(app:express.Express){
   app.get('/agent/workspaces/requests/:id',(req,res,next)=>{try{const owner=ownerOf(req);const row=db.prepare('SELECT job_id FROM rich_workspace_requests WHERE owner=? AND request_id=?').get(owner,req.params.id) as any;if(!row)throw fail('Request not found; no resubmission occurred',404,'workspace_request_missing');res.json(jobOf(owner,row.job_id));}catch(e){next(e)}});
