@@ -41,7 +41,7 @@ The first candidate run exposed a production relay that predated ordered host-me
 - Native reading journal: generated forms and preview; entered a book and note; saved; restored fields through the per-item edit control; changed the note; saved and reopened. Updated content and the selected record reference persisted, and the gallery displayed the saved book.
 - The native workflow also exposed intermittent empty responses from DeepSeek's independent verifier. Those attempts were recorded as failures, not successful writes. A separate selected-record defect was corrected with a persistence regression test. The representative save/edit/reopen flow passed; this does not mean every model invocation was successful.
 - Failure receipt: submitted an invalid native action with a known input; verified terminal error, preserved input, actual harness and model in the account's interaction history. Passed.
-- Deployment: applied 15 reviewed module/asset changes and the three CLI launch configurations, with production hash checks, private backups and idle-job checks. Existing user defaults and application data were retained; health returned `ok` and the owner's six runtime choices were available.
+- Deployment: applied 15 reviewed module/asset changes and the three CLI launch configurations, with production hash checks, private backups and idle-job checks. Existing user defaults and application data were retained; health returned `ok` and the owner's six runtime choices were available. A separate production QA account then passed Qwen creation → conditional preference → view-state save → default-harness change → revision using the original engine → reopen (116 seconds). The production browser also displayed the configured domestic entries.
 
 ## Reproduce
 
