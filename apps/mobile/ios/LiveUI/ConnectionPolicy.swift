@@ -17,7 +17,8 @@ struct Connection: Codable, Equatable {
     }
     func contains(_ candidate: URL) -> Bool {
         guard let base = url else { return false }
-        return candidate.scheme?.lowercased() == "https" && candidate.host?.lowercased() == base.host?.lowercased()
+        return candidate.user == nil && candidate.password == nil
+            && candidate.scheme?.lowercased() == "https" && candidate.host?.lowercased() == base.host?.lowercased()
             && (candidate.port ?? 443) == (base.port ?? 443)
     }
     func accepts(host: String, port: Int, protocolName: String?, realm: String?, method: String, failures: Int) -> Bool {

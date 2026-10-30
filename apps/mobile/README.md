@@ -38,3 +38,11 @@ The iOS project requires the full Xcode application and its iOS SDK. Command Lin
 - Refreshing reconnects to the server. The mobile app does not automatically replay a submitted model request.
 
 The Android and iOS projects contain their platform-specific verification instructions. A native build or simulated browser check is not a substitute for testing authentication, uploads, downloads, WebGL, and the keyboard on the target device.
+
+## Current file support
+
+Android opens the system document picker for file and photo selection. Same-origin HTTPS downloads use a 32 MiB limit; top-level Blob exports use an 8 MiB limit and the system Save dialog. Downloads from an opaque-origin sandboxed HTML iframe may need the system browser. Camera recording, microphone, and location permissions are not enabled in the Android wrapper.
+
+iOS uses WebKit's file picker and download handling, followed by the system share sheet. A download with a known size above 32 MiB is rejected; downloads with an unknown size can be canceled from the menu. These paths still require device testing for the particular generated application. Neither platform changes the server's own upload or request limits.
+
+Run `android/tests/run-policy-tests.sh` for Android URL and authentication-boundary checks. Android's instrumentation APK tests encrypted storage, tamper rejection, and logout in a separate test namespace. The shared iOS scheme includes authentication-boundary XCTest tests. The `Mobile apps` workflow builds both platforms, runs iOS tests, and launches the iOS app in a simulator; its unsigned iPhone build is not a device-installable IPA.

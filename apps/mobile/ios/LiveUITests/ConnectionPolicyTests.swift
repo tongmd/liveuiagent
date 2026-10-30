@@ -11,7 +11,7 @@ final class ConnectionPolicyTests: XCTestCase {
     }
     func testExactOrigin() {
         XCTAssertTrue(connection.contains(URL(string: "https://LIVEUI.example:443/api")!))
-        for address in ["http://liveui.example/", "https://liveui.example:8443/", "https://liveui.example.attacker.test/", "https://attacker.test/"] {
+        for address in ["http://liveui.example/", "https://liveui.example:8443/", "https://liveui.example.attacker.test/", "https://attacker.test/", "https://" + "injected:credential" + "@liveui.example/"] {
             XCTAssertFalse(connection.contains(URL(string: address)!))
         }
     }

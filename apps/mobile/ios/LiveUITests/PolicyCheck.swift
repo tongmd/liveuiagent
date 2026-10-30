@@ -8,7 +8,7 @@ struct PolicyCheck {
             precondition(Connection.validURL(bad) == nil)
         }
         precondition(c.contains(URL(string: "https://LIVEUI.example:443/api")!))
-        for bad in ["http://liveui.example/", "https://liveui.example:444/", "https://liveui.example.attacker.test/"] {
+        for bad in ["http://liveui.example/", "https://liveui.example:444/", "https://liveui.example.attacker.test/", "https://" + "injected:credential" + "@liveui.example/"] {
             precondition(!c.contains(URL(string: bad)!))
         }
         func accepts(host: String = "liveui.example", port: Int = 443, scheme: String = "https", realm: String = "LiveUIAgent", method: String = NSURLAuthenticationMethodHTTPBasic, failures: Int = 0) -> Bool {
@@ -21,6 +21,6 @@ struct PolicyCheck {
         precondition(!accepts(realm: "other"))
         precondition(!accepts(method: NSURLAuthenticationMethodServerTrust))
         precondition(!accepts(failures: 1))
-        print("17 connection/authentication policy checks passed")
+        print("18 connection/authentication policy checks passed")
     }
 }

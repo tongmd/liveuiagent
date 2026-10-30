@@ -63,7 +63,7 @@ struct BrowserView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, decidePolicyFor action: WKNavigationAction,
                      decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-            guard let url = action.request.url else { decisionHandler(.cancel); return }
+            guard let url = action.request.url, url.user == nil, url.password == nil else { decisionHandler(.cancel); return }
             if isLocalDocument(url) || (action.shouldPerformDownload && ["blob", "data"].contains(url.scheme ?? "")) {
                 decisionHandler(action.shouldPerformDownload ? .download : .allow)
                 return
@@ -132,6 +132,7 @@ struct BrowserView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                      for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+            guard let target = navigationAction.request.url, target.user == nil, target.password == nil else { return nil }
             if let url = navigationAction.request.url, isLocalDocument(url) { webView.load(navigationAction.request) }
             else if let url = navigationAction.request.url, ["https", "http"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
             return nil
