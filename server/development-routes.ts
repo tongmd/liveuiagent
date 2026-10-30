@@ -24,13 +24,16 @@ export function wantsLiveuiDevelopment(body:unknown):boolean {
 /** Natural host UI requests can name the subject first. Require a concrete
  * host control and an edit verb; quoted examples and generated Apps stay Apps. */
 function wantsHostUiEdit(prompt:string):boolean {
-  const first=prompt.split(/[\n。！？!?]/,1)[0].trim();
+  const first=prompt.split(/[，,\n。]/,1)[0].trim();
+  if(/[？?]|(?:如何|怎么|为什么|是否|吗|是什么意思)/.test(first))return false;
+  if(/(?:不要|不必|不用|无需|别|不需要|不应该)/.test(first))return false;
+  if(/(?:里|中)(?:生成的|的|面)?[^，。\n]*(?:App|应用|游戏)/i.test(first))return false;
   const prefix='(?:(?:请你|请帮我|帮我|请|直接|现在)\\s*)?';
   const host='live\\s*ui\\s*(?:本身|宿主)?(?:的)?\\s*';
   const control='(?:回复(?:信息|消息)?(?:的)?(?:UI|界面)?|消息(?:回复|界面)?|聊天(?:界面|窗口)?|界面|UI|布局|弹窗|输入框|输入区|导航|应用列表|开发入口)';
   const edit='(?:重新设计|修改|修复|改进|调整|更新|重做|改|修)';
   const actionFirst=new RegExp('^'+prefix+edit+'(?:一下|好)?\\s*'+host+control,'i');
-  const subjectFirst=new RegExp('^'+prefix+'(?:把|将)?\\s*'+host+control+'[^。！？!?\\n]{0,80}?(?:需要|应该|要|请|帮我|给我)?'+edit+'(?:一下|好|成|为|掉|进)?','i');
+  const subjectFirst=new RegExp('^'+prefix+'(?:把|将)?\\s*'+host+control+'\\s*(?:需要|应该|要|请|帮我|给我)?\\s*'+edit+'(?:一下|好|成|为|掉|进)?','i');
   if(/(?:不要|不必|不用|无需|别)(?:再)?(?:修改|修复|改|调整|重做)/i.test(first))return false;
   return actionFirst.test(first)||subjectFirst.test(first);
 }

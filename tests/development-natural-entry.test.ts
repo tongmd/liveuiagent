@@ -17,5 +17,8 @@ test('mentions, quoted tasks, generated Apps, questions and negative commands do
   '“liveUI回复界面要改”是什么意思','> liveUI回复界面要改',
   '1. “liveUI回复界面要改”是什么意思','不要修改liveUI的输入框',
   'liveUI回复界面不用改','liveUI回复界面不要修改',
+  'liveUI界面不要重新设计','liveUI回复界面不需要改',
+  'liveUI界面如何修改？','liveUI回复界面要改吗？',
+  'liveUI界面里生成的记账App要改','liveUI界面中的"修改"按钮是什么意思？',
  ])assert.equal(wantsLiveuiDevelopment({prompt}),false,prompt);
 });
