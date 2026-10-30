@@ -13,28 +13,32 @@ export function validateStructuredUiStyle(raw: any, version = 1): Record<string,
   const result: Record<string, any> = {};
   for (const [key,value] of Object.entries(raw)) {
     if (Object.hasOwn(enums,key)) {
-      if (typeof value !== 'string' || !enums[key].includes(value)) fail(key);
+      if (typeof value !== 'string' || !enums[key].includes(value)) fail(key+': expected one of '+enums[key].join(', '));
     } else if (Object.hasOwn(ranges,key)) {
       const [min,max] = ranges[key];
+      const integer=!['lineHeight','aspectRatio','widthPercent'].includes(key);
+      const rule=key==='fontWeight'?'expected one of 400, 500, 600, 700':'expected '+(integer?'integer':'finite number')+' in ['+min+','+max+']';
       if (typeof value !== 'number' || !Number.isFinite(value) || value < min || value > max
-        || !['lineHeight','aspectRatio','widthPercent'].includes(key) && !Number.isInteger(value)) fail(key);
-      if (key === 'fontWeight' && Number(value) % 100 !== 0) fail(key);
+        || integer && !Number.isInteger(value)) fail(key+': '+rule);
+      if (key === 'fontWeight' && Number(value) % 100 !== 0) fail(key+': '+rule);
     } else if (version === 2 && ['color','background','borderColor'].includes(key)) {
-      if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) fail(key);
+      if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) fail(key+': expected a #RRGGBB string');
     } else if (version === 2 && key === 'columnWeights') {
-      if (!Array.isArray(value) || value.length < 1 || value.length > 4 || value.some(n=>typeof n!=='number'||!Number.isFinite(n)||n<.25||n>4)) fail(key);
+      if (!Array.isArray(value) || value.length < 1 || value.length > 4 || value.some(n=>typeof n!=='number'||!Number.isFinite(n)||n<.25||n>4)) fail('columnWeights: expected an array of 1..4 finite numbers in [0.25,4]');
     } else if (version === 2 && key === 'mobile') {
-      if (!plain(value) || Object.hasOwn(value as object,'mobile')) fail('nested mobile');
-      result.mobile = validateStructuredUiStyle(value,2); continue;
-    } else fail('unsupported property '+key);
+      if (!plain(value) || Object.hasOwn(value as object,'mobile')) fail('mobile: expected a style object without nested mobile');
+      try { result.mobile = validateStructuredUiStyle(value,2); }
+      catch (error) { fail('mobile.'+(error as Error).message.replace(/^Invalid structured UI style: /,'')); }
+      continue;
+    } else fail('unsupported property');
     result[key] = Array.isArray(value) ? [...value] : value;
   }
-  if (result.width !== undefined && result.widthPercent !== undefined) fail('choose width or widthPercent');
-  if (result.columnWeights && result.columns !== undefined && result.columns !== result.columnWeights.length) fail('columns must match columnWeights');
+  if (result.width !== undefined && result.widthPercent !== undefined) fail('width: choose width or widthPercent, not both');
+  if (result.columnWeights && result.columns !== undefined && result.columns !== result.columnWeights.length) fail('columns: expected the number of entries in columnWeights');
   if (result.color && result.background) {
     const luminance = (hex: string) => [1,3,5].map(i=>parseInt(hex.slice(i,i+2),16)/255).map(n=>n<=.04045?n/12.92:((n+.055)/1.055)**2.4).reduce((sum,n,i)=>sum+n*[.2126,.7152,.0722][i],0);
     const a=luminance(result.color),b=luminance(result.background);
-    if ((Math.max(a,b)+.05)/(Math.min(a,b)+.05)<4.5) fail('text/background contrast');
+    if ((Math.max(a,b)+.05)/(Math.min(a,b)+.05)<4.5) fail('color/background: expected contrast ratio at least 4.5');
   }
   return result;
 }

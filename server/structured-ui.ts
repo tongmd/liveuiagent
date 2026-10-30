@@ -95,7 +95,7 @@ export function validateStructuredUiTree(tree: unknown, context: unknown): Struc
   boundedJson(tree, 64000);
   const usedRecords = new Set<string>(), usedPhotos = new Set<string>();
   let count = 0, textLength = 0, sceneCount = 0;
-  function visit(raw: unknown, depth: number): StructuredUiNode {
+  function visit(raw: unknown, depth: number, path='tree'): StructuredUiNode {
     if (depth > 10 || ++count > 200) invalid('tree exceeds depth or node limit');
     if (!object(raw) || !TYPES.has(raw.type)) invalid('unsupported node type');
     if(raw.type==='Scene3D'&&++sceneCount>4)invalid('at most 4 Scene3D views per tree');
@@ -131,17 +131,17 @@ export function validateStructuredUiTree(tree: unknown, context: unknown): Struc
       node.checked = raw.checked;
     }
     const mergedStyle={...(raw.style||{})};
-    for(const key of styleKeys)if(raw[key]!==undefined){if(mergedStyle[key]!==undefined&&mergedStyle[key]!==raw[key])invalid('conflicting style '+key);mergedStyle[key]=raw[key];}
+    for(const key of styleKeys)if(raw[key]!==undefined){if(mergedStyle[key]!==undefined&&mergedStyle[key]!==raw[key])invalid(path+'.style.'+key+': conflicting style');mergedStyle[key]=raw[key];}
     if (raw.style !== undefined || Object.keys(mergedStyle).length) {
-      if (raw.style!==undefined && !object(raw.style)) invalid('style must be an object');
+      if (raw.style!==undefined && !object(raw.style)) invalid(path+'.style: expected an object');
       try { node.style = validateStructuredUiStyle(mergedStyle,styleVersion); }
-      catch (error) { invalid((error as Error).message.replace(/unsupported property[\s\S]*/, 'unsupported property')); }
+      catch (error) { invalid(path+'.style: '+(error as Error).message.replace(/^Invalid structured UI style: /,'').replace(/unsupported property[\s\S]*/, 'unsupported property')); }
       if(!['Image','Scene3D','Plot','Diagram'].includes(raw.type)&&[node.style!,node.style!.mobile||{}].some(s=>s.height!==undefined||s.aspectRatio!==undefined))invalid('visual dimensions require a visual leaf');
     }
     if (CONTAINERS.has(raw.type)) {
       const children=raw.children??((raw.type==='Checklist'||raw.type==='List')&&raw.recordId?[]:undefined);
       if (!Array.isArray(children) || children.length > 80 || (!children.length && !raw.recordId)) invalid('container needs bounded children');
-      node.children = children.map((child: unknown) => visit(child, depth + 1));
+      node.children = children.map((child: unknown, index: number) => visit(child, depth + 1, path+'.children['+index+']'));
     }
     return node;
   }
@@ -335,7 +335,7 @@ export async function generateStructuredUi(prompt: string, context: unknown, llm
         if(attempts>validationRepairs)throw error;
         checkDeadline();
         nextRequest={...request,messages:[...request.messages,{role:'assistant',content},{role:'user',content:JSON.stringify({
-          correction:'Return one complete corrected JSON response using the original protocol. Fix the validator error; preserve the original request, all supplied records/photos, numerical values and supported renderer capabilities. Do not execute anything or claim completion of external tasks.',
+          correction:'Return one complete corrected JSON response using the original protocol. Fix the validator error. Inspect the entire tree, including every children array and mobile override, and correct all fields violating the same rule, not only the first reported location. Preserve the original request, all supplied records/photos, user-provided numerical data, physical dimensions and supported renderer capabilities. Correct invalid presentation values such as fontSize to satisfy their specified types and ranges. Do not execute anything or claim completion of external tasks.',
           validationError:summary(error),
         })}]};
       }
