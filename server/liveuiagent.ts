@@ -5598,6 +5598,9 @@ function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Reco
     functionSignature,
     intentResult: result,
     intentActionCount: nextCount,
+    // The latest committed turn is the current record. Keep a real persisted ID
+    // so reopen and follow-up editing never point at an unselected/stale turn.
+    selectedRecordId: nextRecord.id,
     entities: mergedEntities,
     // 聚合统计与已验证的主列表一起替换;未验证/缺省输出仍保留上一轮。
     entityStats: (Array.isArray((payload as Record<string, unknown>).entityStats) && (authoritativeEntities || ((payload as Record<string, unknown>).entityStats as unknown[]).length))

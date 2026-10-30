@@ -71,7 +71,7 @@ async function startRuntime(t, dshBase = '') {
 test('the frontend manifest verifies every sidecar and rejects tampering before copying', async () => {
   const { resources } = await verifyFrontendSnapshot();
   assert.deepEqual(new Set(resources.map((r) => r.file)), new Set([
-    'index.html', 'complete-apps.js', 'complete-apps.css', 'personalization.js', 'personalization.css',
+    'index.html', 'complete-apps.js', 'complete-apps.css', 'personalization.js', 'personalization.css', 'gallery-cards.js', 'gallery-cards.css',
     'liveui-bootstrap.js', 'activity-model.js', 'native-drafts.js', 'runtime-controls.js', 'runtime-controls.css', 'material-catalog.js', 'material-catalog.css', 'structured-ui-runtime.js', 'rich-workspaces.js', 'rich-workspaces.css',
   ]));
   const fixture = await scratchDirectory('frontend-integrity');

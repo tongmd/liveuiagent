@@ -1,6 +1,6 @@
 # LiveUIAgent
 
-[Website](https://liveuibench.stonezhang.com/) | [Arxiv](https://arxiv.org/abs/2610.27977) | [LiveUIBench](https://github.com/tongmd/liveuibench) | [Deployment](deploy/README.md) | [DSH integration](packages/dsh-plugin/README.md) | [Issues](https://github.com/tongmd/liveuiagent/issues)
+[Website](https://liveuibench.stonezhang.com/) | [Arxiv](https://arxiv.org/abs/2610.27977) | [LiveUIBench](https://github.com/tongmd/liveuibench) | [Deployment](deploy/README.md) | [DSH integration](packages/dsh-plugin/README.md) | [System design](SYSTEM_DESIGN.md) | [Issues](https://github.com/tongmd/liveuiagent/issues)
 
 LiveUIAgent is an open-source runtime for personalized applications. Describe what you need, let an agent create the interface and behavior, and revise the application while keeping its saved state. A shared runtime connects the interface, memory, and service actions.
 
@@ -44,9 +44,14 @@ Model requests use your configured provider. No model API calls are needed for t
 
 | Harness | Application representation | Configuration |
 | --- | --- | --- |
-| Native | Application specifications rendered by the shared runtime | Included in the local runtime |
+| LiveUIAgent (native) | Application specifications rendered by the shared runtime | Included in the local runtime |
 | Codex | Native component specifications with Codex reasoning and host-managed actions | Configure an authenticated Codex inference relay |
 | DeepSeek Harness | Native component specifications with DSH-backed agent reasoning | Set `LIVEUI_NATIVE_DSH_COMMAND` to an installed DSH CLI |
+| Qwen Code | Native applications and visual workspaces using the configured Qwen API model | Official Qwen Code CLI |
+| Kimi Code | Native applications and visual workspaces using the configured Kimi API model | Official Kimi Code CLI |
+| ZCode | Native applications and visual workspaces using the configured GLM API model | Official ZCode CLI |
+
+See [harness installation](deploy/domestic-harnesses.md) and the [complete system design](SYSTEM_DESIGN.md).
 
 New applications use A2UI component specifications. Agent roles pass validated contracts to a host executor, which owns permitted service calls and commits reviewed state. Existing HTML applications remain supported; API callers can explicitly request `delivery: "html"` for the [HTML plugin](packages/dsh-plugin/README.md) path.
 

@@ -9,6 +9,7 @@
     catch (error) { throw Object.assign(error, {transport:true}); }
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw Object.assign(Error(data.error || '请求失败（' + response.status + '）'), {status:response.status});
+    if(method!=='GET'||path.startsWith('jobs/')&&!['queued','running'].includes(data.status))window.__liveuiActivityRefresh?.();
     return data;
   };
   window.__liveuiWorkspaceSnapshots = window.__liveuiWorkspaceSnapshots || Object.create(null);
@@ -45,7 +46,7 @@
         catch(error) { if(!error.transport && ![502,503,504].includes(error.status)) throw error; if(++failures >= 6) throw Object.assign(Error('连接暂时中断，可继续查看原任务。'),{unconfirmed:true}); await delay(1500); continue; }
         if(job.status === 'done') return true;
         if(!['running','queued'].includes(job.status)) throw Error(job.error || '本次修改未完成，原页面已保留');
-        show('Codex 正在更新页面…'); await delay(700);
+        show(job.stage || '正在更新页面…'); await delay(700);
       }
     };
     const finish = async jobId => {
@@ -90,7 +91,7 @@
     }, [data]);
     const submit = async event => {
       event.preventDefault(); const prompt = draftRef.current.trim(); if(!prompt || task.current)return;
-      const clientRequestId=crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join(''); task.current='request:'+clientRequestId;setPending(task.current);setBusy(true);setUnconfirmed(false);show('Codex 正在更新页面…');
+      const clientRequestId=crypto.randomUUID?.() || Array.from(crypto.getRandomValues(new Uint8Array(16)),byte=>byte.toString(16).padStart(2,'0')).join(''); task.current='request:'+clientRequestId;setPending(task.current);setBusy(true);setUnconfirmed(false);show('正在更新页面…');
       try {
         await writes.current;
         const rect = container.current.getBoundingClientRect();
@@ -105,7 +106,7 @@
         unconfirmed ? h('button',{type:'button',onClick:()=>finish(task.current)},'继续查看') : null),
       h('div',{ref:container,className:'rich-workspace-content','aria-label':app.name || '应用工作区'}),
       h('form',{className:'rich-workspace-request',onSubmit:submit},
-        h('textarea',{'aria-label':'调整这个应用',placeholder:'告诉 Codex 想怎样调整',rows:2,maxLength:12000,value:draft,onChange:event=>{draftRef.current=event.target.value;setDraft(event.target.value);}}),
+        h('textarea',{'aria-label':'调整这个应用',placeholder:'描述想怎样调整这个应用',rows:2,maxLength:12000,value:draft,onChange:event=>{draftRef.current=event.target.value;setDraft(event.target.value);}}),
         h('button',{type:'submit',disabled:busy || !draft.trim()},busy?'生成中…':'生成')));
   };
 })();

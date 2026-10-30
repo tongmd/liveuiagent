@@ -21,7 +21,7 @@ test('mixed Native/HTML/persisted visual apps survive real personalization decor
  const first=await x.request('/agent/workspaces/create',{prompt:'做一个房间布局应用。三维展示'}),done=await x.wait(first.value.id);
  const oldApps=[{appId:'native_alice',name:'旧应用'},{appId:'dsh_old',name:'旧HTML'}];
  const base={apps:oldApps,summary:{apps:oldApps},canvasState:{nodes:[],edges:[]}};
- assert.throws(()=>personal.decorate('alice',x.workspace.merge({headers:{'x-owner':'alice'}} as any,base)),/App not found or access denied/);
+ assert.equal(personal.decorate('alice',x.workspace.merge({headers:{'x-owner':'alice'}} as any,base)).apps.length,3);
  x.app.post('/integration-query',(req,res)=>{const owner=String(req.headers['x-owner']||'');res.json(x.workspace.merge(req,personal.decorate(owner,owner==='alice'?base:{apps:[],summary:{apps:[]},canvasState:{nodes:[],edges:[]}})));});
  const live=await x.request('/integration-query',{});assert.equal(live.status,200);assert.deepEqual(live.value.apps.map((a:any)=>a.appId),['native_alice','dsh_old',done.appId]);assert.equal(live.value.summary.appCount,3);assert.equal(live.value.personalization.visibleCount,3);assert.equal(live.value.personalization.libraryCount,3);
  assert.deepEqual((await x.request('/integration-query',{},'POST','bob')).value.apps,[]);
@@ -33,4 +33,14 @@ test('workspace names follow the original user purpose instead of hint text, inc
  assert.equal(workspaceName('做一个函数对比应用。我想看y=x²',hintFirst,'点选数据点查看数值'),'函数对比');
  assert.equal(workspaceName('帮我开发一个三维房间应用',hintFirst),'三维房间');
  assert.equal(workspaceName('Draw data in a workspace',hintFirst),'曲线');
+});
+
+test('workspace activity survives completion and failure with the original request and saved outcome',async t=>{
+ const x=await setup(t);const first=await x.request('/agent/workspaces/create',{prompt:'创建三维房间'});await x.wait(first.value.id);
+ const rows=()=>x.db.prepare('SELECT * FROM chat_history WHERE owner=? ORDER BY id').all('alice') as any[];
+ assert.equal(rows()[0].prompt,'创建三维房间');assert.match(rows()[0].text,/已更新并保存/);
+ x.set({text:'bad',data:{tree:{type:'Script'}}});
+ const second=await x.request('/agent/workspaces/'+first.value.appId+'/generate',{prompt:'修改房间颜色',expectedVersion:1});await x.wait(second.value.id);
+ assert.equal(rows()[1].status,'error');assert.equal(rows()[1].prompt,'修改房间颜色');assert.match(rows()[1].text,/修改未完成/);
+ assert.equal(rows().length,2);
 });

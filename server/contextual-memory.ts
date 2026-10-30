@@ -61,7 +61,7 @@ export function createContextualMemory(db:Database.Database) {
     try {
       const request={model:llm.model,temperature:0,max_tokens:2500,...(/^DeepSeek/i.test(llm.model)?{thinking:{type:'disabled'}}:{}),response_format:{type:'json_object'},messages:[{role:'system',content:SYSTEM},{role:'user',content:JSON.stringify({now,current,recent,task:input.app,memories:existing.map(m=>({id:m.id,preference:m.content,dimension:m.dimension,condition:m.condition,scope:m.scope}))})}]};
       let raw:any;
-      if(llm.chatCompletion&&(!llm.apiBase||!llm.apiKey))raw=await llm.chatCompletion(request,{timeoutMs:25000,roleLabel:'Contextual memory'});
+      if(llm.chatCompletion)raw=await llm.chatCompletion(request,{timeoutMs:25000,roleLabel:'Contextual memory'});
       else {
         const response=await fetch(`${llm.apiBase!.replace(/\/+$/,'')}/chat/completions`,{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${llm.apiKey}`},signal:AbortSignal.timeout(25000),body:JSON.stringify(request)});
         if(!response.ok)throw new Error('memory provider unavailable');

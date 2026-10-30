@@ -61,7 +61,7 @@ export async function createNativeDshRelay(input:{provider:{apiBase:string;apiKe
    diagnostics.upstreamStatus=upstreamResponse.status;if(!upstreamResponse.ok)recordFailure('dsh_native_provider_http',`Native model provider returned HTTP ${upstreamResponse.status}`);
    let responseBytes=0;const decoder=new TextDecoder();let sseBuffer='';
    const isSse=Boolean(upstreamResponse.headers.get('content-type')?.includes('text/event-stream'));
-   const rejectLength=(value:any)=>{inspect(value);if(value?.choices?.some((choice:any)=>choice.finish_reason==='length')){recordFailure('dsh_native_output_truncated','Native model output reached its token limit');throw new Error('Native model output reached its token limit');}};
+   const rejectLength=(value:any)=>{inspect(value);if(value?.choices?.some((choice:any)=>choice.message?.tool_calls?.length||choice.delta?.tool_calls?.length||choice.message?.function_call||choice.delta?.function_call)){recordFailure('dsh_native_tool_output','Native model returned forbidden tool calls');throw new Error('Native tool output forbidden');}if(value?.choices?.some((choice:any)=>choice.finish_reason==='length')){recordFailure('dsh_native_output_truncated','Native model output reached its token limit');throw new Error('Native model output reached its token limit');}};
    const responseHeaders={'content-type':upstreamResponse.headers.get('content-type')||'application/json','cache-control':'no-store'};
    if(!isSse){
     const buffered:Buffer[]=[];
