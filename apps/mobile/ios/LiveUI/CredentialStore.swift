@@ -49,7 +49,7 @@ final class LoginVerifier: NSObject, URLSessionTaskDelegate, @unchecked Sendable
               response.mimeType?.lowercased() == "text/html", challenged else { throw LoginError.rejected }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
-                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+                    completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
             completionHandler(.performDefaultHandling, nil)
         } else if connection.accepts(challenge) {

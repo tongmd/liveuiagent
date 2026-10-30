@@ -24,8 +24,8 @@ public final class MainActivity extends Activity {
     private CredentialStore store;
     private static Session currentSession;
     private static final class Session {
-        final URI endpoint; final String username, password;
-        Session(URI endpoint, String username, String password) { this.endpoint = endpoint; this.username = username; this.password = password; }
+        final URI endpoint; final String username, password; final AuthBootstrap authBootstrap;
+        Session(URI endpoint, String username, String password) { this.endpoint = endpoint; this.username = username; this.password = password; this.authBootstrap = new AuthBootstrap(endpoint); }
     }
     private LinearLayout root;
     private WebView web;
@@ -90,8 +90,16 @@ public final class MainActivity extends Activity {
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); root.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(28), dp(48), dp(28), dp(24)); scroll.addView(box);
         ImageView icon = new ImageView(this); icon.setImageResource(com.stonezhang.liveui.R.drawable.liveui_icon); icon.setScaleType(ImageView.ScaleType.FIT_CENTER); box.addView(icon, new LinearLayout.LayoutParams(dp(64), dp(64)));
-        TextView title = new TextView(this); title.setText("liveUI"); title.setTextColor(Color.BLACK); title.setTextSize(30); title.setPadding(0, dp(12), 0, dp(28)); box.addView(title);
+        TextView title = new TextView(this); title.setText(R.string.app_name); title.setTextColor(Color.BLACK); title.setTextSize(30); title.setPadding(0, dp(12), 0, dp(28)); box.addView(title);
+        Button connectionSettings = new Button(this); connectionSettings.setText("连接设置"); connectionSettings.setContentDescription("展开服务地址");
+        box.addView(connectionSettings, new LinearLayout.LayoutParams(-1, dp(44)));
         addressInput = input(box, "服务地址", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI); addressInput.setText(endpoint == null ? ConnectionPolicy.DEFAULT_URL : endpoint.toString());
+        addressInput.setVisibility(View.GONE);
+        connectionSettings.setOnClickListener(v -> {
+            boolean expanded = addressInput.getVisibility() != View.VISIBLE;
+            addressInput.setVisibility(expanded ? View.VISIBLE : View.GONE);
+            connectionSettings.setContentDescription(expanded ? "收起服务地址" : "展开服务地址");
+        });
         userInput = input(box, "用户名", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL); userInput.setText(username);
         passwordInput = input(box, "密码", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         connect = new Button(this); connect.setText("连接"); connect.setOnClickListener(v -> connect()); box.addView(connect, new LinearLayout.LayoutParams(-1, dp(54)));
@@ -143,7 +151,7 @@ public final class MainActivity extends Activity {
     private void openWorkspace() {
         root = makeRoot();
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL); bar.setPadding(dp(12), 0, dp(4), 0);
-        TextView title = new TextView(this); title.setText("liveUI"); title.setTextSize(18); title.setTextColor(Color.BLACK); bar.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
+        TextView title = new TextView(this); title.setText(R.string.app_name); title.setTextSize(18); title.setTextColor(Color.BLACK); bar.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
         Button menu = new Button(this); menu.setText("⋮"); menu.setTextSize(22); menu.setContentDescription("菜单"); menu.setOnClickListener(this::showMenu); bar.addView(menu, new LinearLayout.LayoutParams(dp(52), -1));
         root.addView(bar, new LinearLayout.LayoutParams(-1, dp(44)));
         loading = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); loading.setMax(100); root.addView(loading, new LinearLayout.LayoutParams(-1, dp(2)));
@@ -153,7 +161,7 @@ public final class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW); settings.setSafeBrowsingEnabled(true); settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setSupportMultipleWindows(true); settings.setJavaScriptCanOpenWindowsAutomatically(false); settings.setBuiltInZoomControls(false);
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
-        authBootstrap = new AuthBootstrap(endpoint);
+        authBootstrap = currentSession.authBootstrap;
         web.setWebViewClient(new WebViewClient() {
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();

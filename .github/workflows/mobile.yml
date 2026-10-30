@@ -40,6 +40,7 @@ jobs:
             CODE_SIGNING_ALLOWED=NO test
       - name: Launch native app
         run: |
+          xcrun simctl bootstatus "$LIVEUI_SIMULATOR" -b
           xcrun simctl install "$LIVEUI_SIMULATOR" "$RUNNER_TEMP/liveui-simulator/Build/Products/Debug-iphonesimulator/LiveUI.app"
           xcrun simctl launch "$LIVEUI_SIMULATOR" com.stonezhang.liveui
           sleep 3
@@ -68,9 +69,13 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Build and inspect Android
         working-directory: apps/mobile/android
-        run: ./gradlew --no-daemon assembleDebug assembleRelease lintDebug
+        run: |
+          ./tests/run-policy-tests.sh
+          ./gradlew --no-daemon assembleDebug assembleRelease lintDebug
       - uses: actions/upload-artifact@v4
         with:
           name: liveUI-android-unsigned
