@@ -7,7 +7,7 @@ test('ordinary host editing language enters development including the actual num
   '1. liveui回复信息的ui要改，怎么有两个弹窗啊？而且UI非常的丑\n2. 要记录每个应用充分的信息，比如调哪些API、用哪个harness和模型生成。',
   'liveui回复信息的UI要改', '把liveui的回复界面改一下',
   '请把 liveUI 的聊天窗口重新设计一下', '修改liveUI的输入框',
-  'liveUI界面重新设计，保留已有功能', '请调整liveUI的应用列表布局',
+  'liveUI界面重新设计，保留已有功能', '请调整liveUI的应用列表布局', '把liveUI的回复界面改一下，不要丢数据',
  ])assert.equal(wantsLiveuiDevelopment({prompt}),true,prompt);
 });
 test('mentions, quoted tasks, generated Apps, questions and negative commands do not become source edits',()=>{
@@ -20,5 +20,8 @@ test('mentions, quoted tasks, generated Apps, questions and negative commands do
   'liveUI界面不要重新设计','liveUI回复界面不需要改',
   'liveUI界面如何修改？','liveUI回复界面要改吗？',
   'liveUI界面里生成的记账App要改','liveUI界面中的"修改"按钮是什么意思？',
+  '修改liveUI的输入框，先别动代码，只说方案',
+  'liveUI回复界面要改，但不要修改源码，先解释怎么做',
+  'liveUI界面改动说明',
  ])assert.equal(wantsLiveuiDevelopment({prompt}),false,prompt);
 });

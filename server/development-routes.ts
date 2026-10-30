@@ -24,7 +24,10 @@ export function wantsLiveuiDevelopment(body:unknown):boolean {
 /** Natural host UI requests can name the subject first. Require a concrete
  * host control and an edit verb; quoted examples and generated Apps stay Apps. */
 function wantsHostUiEdit(prompt:string):boolean {
+  if(/(?:只(?:讨论|解释|说明|说|给|看|读|分析)|先(?:解释|说方案|给方案))/.test(prompt)
+    || /(?:不要|不用|别|不必|无需)(?:再|直接)?(?:动|改|修改|编辑|写入|写|改动)(?:一下)?(?:任何|实际|生产|源)?(?:代码|源码|文件)/.test(prompt))return false;
   const first=prompt.split(/[，,\n。]/,1)[0].trim();
+  if(/(?:改动|修改|修复|调整)(?:说明|方案|记录|建议)/.test(first))return false;
   if(/[？?]|(?:如何|怎么|为什么|是否|吗|是什么意思)/.test(first))return false;
   if(/(?:不要|不必|不用|无需|别|不需要|不应该)/.test(first))return false;
   if(/(?:里|中)(?:生成的|的|面)?[^，。\n]*(?:App|应用|游戏)/i.test(first))return false;
