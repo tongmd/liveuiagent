@@ -1,7 +1,8 @@
 import type Database from 'better-sqlite3';
 import type express from 'express';
 
-export type HarnessId = 'native' | 'dsh' | 'codex' | 'qwen' | 'kimi' | 'zcode';
+import type { HarnessId } from './harness-catalog.js';
+export type { HarnessId } from './harness-catalog.js';
 export type HarnessChoice = { id: HarnessId; label: string; available: boolean; reason?: string; description?: string };
 
 export function runtimeError(message: string, code: string, status = 400) {

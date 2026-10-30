@@ -43,3 +43,19 @@ A missing runtime, invalid result, provider error or timeout produces an explici
 - https://github.com/QwenLM/qwen-code
 - https://github.com/MoonshotAI/kimi-code
 - https://github.com/zai-org/ZCode
+
+## Shared host integration
+
+All harnesses enter the host through `createHarnessIntegration` in
+`server/harness-integration.ts`. Its adapters provide availability, model settings
+and inference connections. `server/harness-catalog.ts` declares model families
+and delivery capabilities, and the rich-workspace route consumes the same
+capabilities. To add a harness, register its catalog entry and adapter, then test
+real dispatch through this interface, including unavailable models and owners.
+Do not add another provider switch to the request routes.
+
+Adapters keep their own authentication and transport. The native provider uses
+its configured API, Codex uses its authenticated relay, and DSH, Qwen Code, Kimi
+Code and ZCode run their configured CLI workers. The host retains application
+actions, memory and persistence. Existing apps keep their saved harness, and
+legacy HTML apps continue through DSH; Native-only adapters reject HTML delivery.

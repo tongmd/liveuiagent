@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import {domesticHarnessFromEnv} from './domestic-harness-inference.js';
-import {domesticHarnesses,harnessIds,harnessModels,selectHarnessModel,isDomesticHarness,harnessLabel} from './harness-catalog.js';
+import {domesticHarnesses,harnessIds,harnessDefinition,selectHarnessModel,harnessLabel} from './harness-catalog.js';
+import {createHarnessIntegration} from './harness-integration.js';
 import type {HarnessId} from './runtime-settings.js';
 import { createRichWorkspaces } from './rich-workspaces.js';
 import { createCodexNativeInference } from './codex-native-inference.js';
@@ -82,39 +83,24 @@ const completeApps=createCompleteApps(db,personal,requestUser,llmConfigFromReque
       ...(llm?.apiKey && llm.apiBase ? {provider:{apiKey:llm.apiKey,apiBase:llm.apiBase}} : {})};
   },
 });
+const harnessIntegration=createHarnessIntegration({codex:nativeCodex,dsh:nativeDsh,domestic:domesticRunners,htmlConfigured:()=>completeApps.configured});
+function harnessSelection(req:express.Request){
+  const view=llmSettingsView(db,requestUser(req));
+  return {owner:requestUser(req),models:view.effective.models,model:view.effective.model,keySource:view.effective.keySource,legacyCapabilities:()=>completeApps.capabilities(req)};
+}
 const runtimeSettings=createRuntimeSettings(db,{
   userOf:requestUser,
   defaultHarness:(process.env.LIVEUI_DEFAULT_HARNESS||'native') as HarnessId,
   onSelect(req,harness){
-    if(isDomesticHarness(harness)||harness==='dsh'){
+    if(harnessDefinition(harness)?.family){
       const view=llmSettingsView(db,requestUser(req));
       const model=selectHarnessModel(harness,view.effective.models,view.effective.model);
       if(model)saveUserLlmSettings(db,requestUser(req),{model});
     }
   },
   appHarnessOf:(req,appId)=>nativeHarnessBindings.get(requestUser(req),appId),
-  choicesOf:req=>[
-    {id:'native',label:'LiveUIAgent',available:true},
-    {id:'codex',label:'Codex',available:Boolean(nativeCodex?.allowsUser(requestUser(req))),
-      ...(!nativeCodex?{reason:'Codex relay is not configured'}:!requestUser(req)?{reason:'Sign in to use Codex'}:!nativeCodex.allowsUser(requestUser(req))?{reason:'Codex is not enabled for this account'}:{})},
-    {id:'dsh',label:'DeepSeek Harness',available:Boolean(nativeDsh||completeApps.configured)&&Boolean(requestUser(req)),
-      ...(!nativeDsh&&!completeApps.configured?{reason:'DSH service is not configured'}:!requestUser(req)?{reason:'Sign in to use DeepSeek Harness'}:{})},
-    ...domesticHarnesses.filter(({id})=>harnessModels(id,llmSettingsView(db,requestUser(req)).effective.models).length>0).map(({id,label})=>({
-      id,label,available:Boolean(domesticRunners[id]&&requestUser(req)),description:`${label} · ${harnessModels(id,llmSettingsView(db,requestUser(req)).effective.models).join(', ')}`,
-      ...(!domesticRunners[id]?{reason:`${label} runtime is not configured`}:!requestUser(req)?{reason:'Sign in to use this harness'}:{}),
-    })),
-  ],
-  async modelOf(req,harness) {
-    if(harness==='codex')return nativeCodex?.view() ?? {id:null,configurable:false,providerConfigurable:false,reason:'Codex relay is not configured'};
-    const view=llmSettingsView(db,requestUser(req));
-    if(isDomesticHarness(harness))return {id:selectHarnessModel(harness,view.effective.models,view.effective.model),models:harnessModels(harness,view.effective.models),source:view.effective.keySource,configurable:true,providerConfigurable:true,delivery:'native'};
-    if(harness==='native')return {id:view.effective.model,source:view.effective.keySource,configurable:true};
-    if(nativeDsh)return {id:selectHarnessModel('dsh',view.effective.models,view.effective.model)||view.effective.model,models:harnessModels('dsh',view.effective.models).length?harnessModels('dsh',view.effective.models):view.effective.models,source:view.effective.keySource,configurable:true,providerConfigurable:true,delivery:'native'};
-    try {
-      const capability=await completeApps.capabilities(req);
-      return {id:view.effective.model||capability.model,source:view.effective.keySource,configurable:Boolean(capability.modelSelection),providerConfigurable:Boolean(capability.providerOverride),runnerDefault:capability.model};
-    }catch{return {id:view.effective.model,configurable:false,reason:'DSH service is unavailable'};}
-  },
+  choicesOf:req=>harnessIntegration.choices(harnessSelection(req)),
+  async modelOf(req,harness){return harnessIntegration.model(harness,harnessSelection(req));},
 });
 runtimeSettings.install(app);
 const richWorkspaces=createRichWorkspaces(db,{userOf:requestUser,harnessFor:(req,id)=>runtimeSettings.forRequest(req,id),llmOf:(req,id)=>{
@@ -130,45 +116,21 @@ completeApps.install(app);
 function llmConfigFromRequest(req: express.Request): LlmRuntimeConfig | undefined {
   const body: Record<string, any> = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body : Object.create(null);
   const harness = runtimeSettings.forRequest(req,String(body.appId||body.selectedAppId||'')||undefined);
-  if(harness==='codex') {
-    if(body.delivery==='html')throw Object.assign(new Error('Codex uses Native app delivery'),{code:'codex_delivery_unsupported',status:422});
-    if(!nativeCodex)throw Object.assign(new Error('Codex relay is not configured'),{code:'codex_unavailable',status:503});
-    return nativeCodex.config(JSON.stringify(personal.context(requestUser(req),String(body.appId||body.selectedAppId||'global'))));
-  }
   const explicit: Record<string, any> = (body.llm && typeof body.llm === 'object' && !Array.isArray(body.llm)) ? body.llm : Object.create(null);
   const requested = {
     apiKey: String(explicit.apiKey ?? req.header('x-liveuiagent-llm-key') ?? ''),
     apiBase: String(explicit.apiBase ?? req.header('x-liveuiagent-llm-base') ?? ''),
     model: String(explicit.model ?? req.header('x-liveuiagent-llm-model') ?? ''),
   };
-  if(isDomesticHarness(harness)||harness==='dsh') {
-    const view=llmSettingsView(db,requestUser(req));
-    // Browser model state may belong to a different app. Affinity picks a model
-    // from this app's harness family using the existing provider route table.
-    const model=selectHarnessModel(harness,view.effective.models,requested.model||view.effective.model);
-    if(!model)throw Object.assign(new Error('No API model is configured for this app harness. Configure its model before running this app.'),{status:harness==='dsh'?422:503,code:'harness_model_unavailable'});
-    if(model)requested.model=model;
-  }
-  const resolved = resolveLlm(db, requestUser(req), requested);
-  for (const warning of resolved.warnings) console.warn(`[llm] ${requestUser(req) || 'shared'}: ${warning}`);
-  if (resolved.llm) resolved.llm.personalContext = JSON.stringify(personal.context(requestUser(req), String(body.appId || body.selectedAppId || 'global')));
-  if(resolved.llm && runtimeSettings.forRequest(req,String(body.appId||body.selectedAppId||'')||undefined)==='dsh'
-    && !String(body.appId||body.selectedAppId||'').startsWith('dsh_') && body.delivery!=='html') {
-    if(!nativeDsh)throw Object.assign(new Error('Native DSH inference transport is not configured'),{code:'dsh_native_unavailable',status:503});
-    const provider=resolved.llm.apiBase&&resolved.llm.apiKey?{apiBase:resolved.llm.apiBase,apiKey:resolved.llm.apiKey}:undefined;
-    resolved.llm.nativeInferenceConcurrency=nativeDsh.maxConcurrent;
-    resolved.llm.chatCompletion=(request,options)=>nativeDsh.chatCompletion(request,{timeoutMs:options?.timeoutMs??120000,roleLabel:options?.roleLabel,provider});
-  }
-  if(isDomesticHarness(harness)) {
-    if(body.delivery==='html')throw Object.assign(new Error('This harness uses Native app delivery'),{status:422,code:'harness_delivery_unsupported'});
-    const runner=domesticRunners[harness],llm=resolved.llm;
-    if(!runner||!llm?.apiBase||!llm.apiKey)throw Object.assign(new Error('Harness or API connection is unavailable'),{status:503,code:'harness_unavailable'});
-    if(!harnessModels(harness,[String(llm.model)]).length)throw Object.assign(new Error('Harness model route mismatch'),{status:409,code:'harness_model_mismatch'});
-    const provider={apiBase:llm.apiBase,apiKey:llm.apiKey};
-    llm.nativeInferenceConcurrency=runner.maxConcurrent;
-    llm.chatCompletion=(request,options)=>runner.chatCompletion(request,{provider,timeoutMs:options?.timeoutMs,onProgress:step=>llm.onProgress?.(step)});
-  }
-  return resolved.llm;
+  return harnessIntegration.connect(harness,{
+    ...harnessSelection(req),appId:String(body.appId||body.selectedAppId||'')||undefined,delivery:body.delivery,
+    personalContext:JSON.stringify(personal.context(requestUser(req),String(body.appId||body.selectedAppId||'global'))),requested,
+    resolve(selected){
+      const resolved=resolveLlm(db,requestUser(req),selected);
+      for(const warning of resolved.warnings)console.warn(`[llm] ${requestUser(req)||'shared'}: ${warning}`);
+      return resolved.llm;
+    },
+  });
 }
 
 // nginx basic auth 用户名(proxy_set_header X-LiveUIAgent-User $remote_user)。
