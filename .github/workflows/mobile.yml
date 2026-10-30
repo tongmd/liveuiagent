@@ -1,0 +1,81 @@
+name: Mobile apps
+on:
+  push:
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/mobile.yml'
+  pull_request:
+    paths:
+      - 'apps/mobile/**'
+      - '.github/workflows/mobile.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Select simulator
+        run: |
+          xcodebuild -version
+          xcrun simctl list devices available -j > "$RUNNER_TEMP/devices.json"
+          python3 - <<'PY'
+          import json, os
+          data=json.load(open(os.environ['RUNNER_TEMP']+'/devices.json'))
+          devices=[d for v in data['devices'].values() for d in v if d.get('isAvailable') and d['name'].startswith('iPhone')]
+          if not devices: raise SystemExit('No iPhone simulator installed')
+          with open(os.environ['GITHUB_ENV'],'a') as f: f.write('LIVEUI_SIMULATOR='+devices[0]['udid']+'\n')
+          PY
+      - name: Build and test iOS simulator
+        run: |
+          xcodebuild -project apps/mobile/ios/LiveUI.xcodeproj -scheme LiveUI \
+            -destination "platform=iOS Simulator,id=$LIVEUI_SIMULATOR" \
+            -derivedDataPath "$RUNNER_TEMP/liveui-simulator" \
+            -resultBundlePath "$RUNNER_TEMP/liveui-tests.xcresult" \
+            CODE_SIGNING_ALLOWED=NO test
+      - name: Launch native app
+        run: |
+          xcrun simctl install "$LIVEUI_SIMULATOR" "$RUNNER_TEMP/liveui-simulator/Build/Products/Debug-iphonesimulator/LiveUI.app"
+          xcrun simctl launch "$LIVEUI_SIMULATOR" com.stonezhang.liveui
+          sleep 3
+          mkdir -p mobile-artifacts
+          xcrun simctl io "$LIVEUI_SIMULATOR" screenshot mobile-artifacts/ios-login.png
+          ditto -c -k --keepParent "$RUNNER_TEMP/liveui-simulator/Build/Products/Debug-iphonesimulator/LiveUI.app" mobile-artifacts/liveUI-ios-simulator.zip
+      - name: Build unsigned iPhone app
+        run: |
+          xcodebuild -project apps/mobile/ios/LiveUI.xcodeproj -scheme LiveUI \
+            -destination 'generic/platform=iOS' -configuration Release \
+            -derivedDataPath "$RUNNER_TEMP/liveui-device" CODE_SIGNING_ALLOWED=NO build
+          ditto -c -k --keepParent "$RUNNER_TEMP/liveui-device/Build/Products/Release-iphoneos/LiveUI.app" mobile-artifacts/liveUI-ios-device-unsigned.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: liveUI-ios
+          path: mobile-artifacts/
+          if-no-files-found: error
+          retention-days: 7
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Build and inspect Android
+        working-directory: apps/mobile/android
+        run: ./gradlew --no-daemon assembleDebug assembleRelease lintDebug
+      - uses: actions/upload-artifact@v4
+        with:
+          name: liveUI-android-unsigned
+          path: |
+            apps/mobile/android/app/build/outputs/apk/debug/*.apk
+            apps/mobile/android/app/build/outputs/apk/release/*unsigned.apk
+          if-no-files-found: error
+          retention-days: 7

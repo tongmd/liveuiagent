@@ -1,0 +1,16 @@
+# Native build output and machine-local state
+**/.gradle/
+**/build/
+**/local.properties
+**/.cxx/
+**/DerivedData/
+**/xcuserdata/
+*.apk
+*.aab
+*.ipa
+*.xcarchive
+*.jks
+*.keystore
+*.mobileprovision
+*.p12
+*.xcuserstate

@@ -76,7 +76,7 @@ All six harnesses use the same visual workspace runtime: interactive 3D scenes, 
 
 New applications use A2UI component specifications. Agent roles pass validated contracts to a host executor, which owns permitted service calls and commits reviewed state. Existing HTML applications remain supported; API callers can explicitly request `delivery: "html"` for the [HTML plugin](packages/dsh-plugin/README.md) path.
 
-The web interface is included. The `apps/shell` directory contains the React Native shell; its platform tooling is installed separately when needed.
+The web interface is included. [Android and iOS projects](apps/mobile/README.md) package the full hosted workspace with native connection and secure credential storage. The earlier `apps/shell` React Native prototype renders a limited component subset and is not the mobile release target.
 
 ## Configuration
 
