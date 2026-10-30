@@ -29,6 +29,11 @@ public final class ConnectionPolicyTest {
         check(!failed.take(base.toString(), "liveui.stonezhang.com", "LiveUIAgent"));
         AuthBootstrap committed = new AuthBootstrap(base); committed.close();
         check(!committed.take(base.toString(), "liveui.stonezhang.com", "LiveUIAgent"));
+        check(ConnectionPolicy.isContentUpload("content://com.android.providers.downloads.documents/document/3"));
+        check(!ConnectionPolicy.isContentUpload("file:///data/data/com.stonezhang.liveui/private"));
+        check(!ConnectionPolicy.isContentUpload("https://example.com/file.txt"));
+        check(!ConnectionPolicy.isContentUpload("javascript:alert(1)"));
+        check(!ConnectionPolicy.isContentUpload("content:/missing-authority"));
         System.out.println(checks + " connection policy checks passed");
     }
 }

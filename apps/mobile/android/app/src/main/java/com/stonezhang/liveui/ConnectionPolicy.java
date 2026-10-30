@@ -26,6 +26,10 @@ public final class ConnectionPolicy {
         } catch (Exception ignored) { return false; }
     }
     private static int port(URI u) { return u.getPort() == -1 ? 443 : u.getPort(); }
+    public static boolean isContentUpload(String value) {
+        try { URI u = URI.create(value); return "content".equals(u.getScheme()) && u.getRawAuthority() != null && !u.getRawAuthority().isEmpty(); }
+        catch (Exception ignored) { return false; }
+    }
     public static String safeFilename(String value) {
         String s = value == null ? "download" : value.replaceAll("[\\\\/\\p{Cntrl}]", "_");
         return s.trim().isEmpty() ? "download" : s.substring(0, Math.min(120, s.length()));

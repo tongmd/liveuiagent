@@ -344,8 +344,21 @@ public final class MainActivity extends Activity {
         if (request == PICK_FILE && upload != null) {
             Uri[] values = null;
             if (result == RESULT_OK && data != null) {
-                if (data.getClipData() != null) { int n = Math.min(32, data.getClipData().getItemCount()); values = new Uri[n]; for (int i = 0; i < n; i++) values[i] = data.getClipData().getItemAt(i).getUri(); }
-                else if (data.getData() != null) values = new Uri[]{data.getData()};
+                boolean valid = true;
+                if (data.getClipData() != null) {
+                    int n = data.getClipData().getItemCount();
+                    if (n > 0 && n <= 32) {
+                        values = new Uri[n];
+                        for (int i = 0; i < n; i++) {
+                            values[i] = data.getClipData().getItemAt(i).getUri();
+                            if (values[i] == null || !ConnectionPolicy.isContentUpload(values[i].toString())) valid = false;
+                        }
+                    } else valid = false;
+                } else if (data.getData() != null) {
+                    if (ConnectionPolicy.isContentUpload(data.getData().toString())) values = new Uri[]{data.getData()};
+                    else valid = false;
+                }
+                if (!valid) { values = null; notice("请选择文件应用提供的文件，一次最多 32 个"); }
             }
             upload.onReceiveValue(values); upload = null;
         }
