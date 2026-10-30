@@ -97,6 +97,8 @@ The application settings can override provider settings for the current user. `l
 
 ## Development and Contributing
 
+Administrators can ask the selected harness to modify liveUI itself. The harness reads the project and related app history, edits source, and runs configured tests in a persistent development workspace. Explicit continuation requests retain the same conversation and edits. Responses include the actual diff and test results; source edits stay in the workspace until deployed.
+
 ```bash
 npm run dev
 npm test

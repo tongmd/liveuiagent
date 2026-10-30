@@ -97,7 +97,8 @@ test('Native workflow turns require the selected app exact owner join',async()=>
 });
 
 test('raw credentials in source assignments and URL userinfo are redacted',()=>{
- const result=JSON.stringify(cleanDevelopmentContext({runtime:'const apiKey="raw-sensitive-value"; fetch("https://u:URLPASSWORD@example.test"); cookie=COOKIESECRET'}));
+ const credentialUrl=new URL('https://example.test');credentialUrl.username='u';credentialUrl.password='URLPASSWORD';
+ const result=JSON.stringify(cleanDevelopmentContext({runtime:'const apiKey="raw-sensitive-value"; fetch("'+credentialUrl+'"); cookie=COOKIESECRET'}));
  for(const value of ['raw-sensitive-value','URLPASSWORD','COOKIESECRET'])assert(!result.includes(value),value);
 });
 
