@@ -4,6 +4,12 @@
 
 LiveUIAgent is an open-source runtime for personalized applications. Describe what you need, let an agent create the interface and behavior, and revise the application while keeping its saved state. A shared runtime connects the interface, memory, and service actions.
 
+## Philosophy
+
+The user is the developer. Context is the software.
+
+Our goal is to make software development part of everyday use. Users shape their applications by expressing intent and building context through conversations, data, preferences, and interactions. That context guides how an application works and how it evolves.
+
 ![LiveUIAgent application workflow](assets/overview.png)
 
 
