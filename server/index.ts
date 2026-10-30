@@ -146,7 +146,7 @@ function llmConfigFromRequest(req: express.Request): LlmRuntimeConfig | undefine
     // Browser model state may belong to a different app. Affinity picks a model
     // from this app's harness family using the existing provider route table.
     const model=selectHarnessModel(harness,view.effective.models,requested.model||view.effective.model);
-    if(isDomesticHarness(harness)&&!model)throw Object.assign(new Error('No API model is available for this harness'),{status:503,code:'harness_model_unavailable'});
+    if(!model)throw Object.assign(new Error('No API model is configured for this app harness. Configure its model before running this app.'),{status:harness==='dsh'?422:503,code:'harness_model_unavailable'});
     if(model)requested.model=model;
   }
   const resolved = resolveLlm(db, requestUser(req), requested);
