@@ -17,7 +17,7 @@ export function wantsLiveuiDevelopment(body:unknown):boolean {
   const prompt=value.prompt.trim().replace(/^\d+[.、)）]\s*/,'');
   if(/^["'“‘「『`>]/.test(prompt))return false;
   if(wantsDevelopmentContinuation(prompt)||wantsHostUiEdit(prompt))return true;
-  return /^(?:(?:请|请你|帮我|请帮我|直接|现在)\s*)?(?:(?:用|使用)\s*(?:codex|native|dsh|qwen|kimi|zcode)\s*)?(?:修改|修复|改进|调整|更新|改|调试)(?:一下|好)?\s*liveui\s*(?:本身|宿主|源码|源代码|的源码|的源代码|的宿主)/i.test(prompt)
+  return /^(?:(?:请|请你|帮我|请帮我|直接|现在)\s*)?(?:(?:用|使用)\s*(?:codex|native|dsh|qwen|kimi|zcode)\s*)?(?:修一下|(?:修改|修复|改进|调整|更新|改|调试)(?:一下|好)?)\s*liveui\s*(?:本身|宿主|源码|源代码|的源码|的源代码|的宿主)/i.test(prompt)
     || /^(?:please\s+)?(?:fix|modify|edit|debug|update)\s+(?:the\s+)?liveui\s+(?:itself|host|source(?:\s+code)?)(?:\b)/i.test(prompt);
 }
 

@@ -18,7 +18,7 @@ import sys
 import tempfile
 import uuid
 
-def run(root, workspace, kind):
+def run(root, workspace, kind, dependencies=None):
     root=Path(root).resolve(strict=True)
     workspace=Path(workspace)
     if workspace.is_symlink() or workspace.resolve(strict=True)!=workspace or not workspace.is_relative_to(root):
@@ -61,10 +61,16 @@ def run(root, workspace, kind):
                 os.close(root_fd);root_fd=next_fd
             copy_folder(root_fd,tree)
         finally:os.close(root_fd)
+        dependency_mount=[]
+        if dependencies:
+            deps=Path(dependencies).resolve(strict=True)
+            if not deps.is_dir() or deps.is_relative_to(root):raise ValueError('Invalid trusted dependency root')
+            (tree/'node_modules').mkdir(mode=0o755)
+            dependency_mount=['--ro-bind',str(deps),'/workspace/node_modules']
         if kind=='test':
             test=tree/'tests/development.test.mjs'
             if not test.is_file():raise ValueError('Write tests/development.test.mjs before running test')
-            command=['/usr/bin/node','--max-old-space-size=256','--test','tests/development.test.mjs']
+            command=['/usr/bin/node','--max-old-space-size=256',*(['--import','tsx'] if dependencies else []),'--test','tests/development.test.mjs']
         else:
             # Parse changed JavaScript without importing/executing candidate code.
             script="""const fs=require('fs'),cp=require('child_process'),path=require('path');
@@ -76,7 +82,7 @@ let count=0;function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true
         # Only node itself from /usr/bin. No shells, interpreters or sudo in child.
         args=['/usr/bin/bwrap','--unshare-all','--die-with-parent','--new-session','--clearenv','--uid','65534','--gid','65534','--cap-drop','ALL',
               '--dir','/usr/bin','--ro-bind',str(Path('/usr/bin/node').resolve()),'/usr/bin/node',*mounts,
-              '--ro-bind',str(tree),'/workspace','--size','67108864','--tmpfs','/tmp','--proc','/proc','--dev','/dev',
+              '--ro-bind',str(tree),'/workspace',*dependency_mount,'--size','67108864','--tmpfs','/tmp','--proc','/proc','--dev','/dev',
               '--chdir','/workspace','--setenv','HOME','/tmp','--setenv','TMPDIR','/tmp','--setenv','PATH','/usr/bin',
               '--setenv','LANG','C.UTF-8',*command]
         def limits():
@@ -104,7 +110,7 @@ let count=0;function walk(d){for(const e of fs.readdirSync(d,{withFileTypes:true
 
 if __name__=='__main__':
     try:
-        if len(sys.argv)!=4:raise ValueError('Expected configured root, workspace and validation identifier')
-        sys.exit(run(sys.argv[1],sys.argv[2],sys.argv[3]))
+        if len(sys.argv) not in (4,5):raise ValueError('Expected configured root, workspace, validation identifier and optional trusted dependencies')
+        sys.exit(run(sys.argv[1],sys.argv[2],sys.argv[3],sys.argv[4] if len(sys.argv)==5 else None))
     except Exception as error:
         print('Development test refused: '+str(error),file=sys.stderr);sys.exit(2)
