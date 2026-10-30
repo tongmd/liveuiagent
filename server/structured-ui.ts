@@ -135,7 +135,7 @@ export function validateStructuredUiTree(tree: unknown, context: unknown): Struc
     if (raw.style !== undefined || Object.keys(mergedStyle).length) {
       if (raw.style!==undefined && !object(raw.style)) invalid('style must be an object');
       try { node.style = validateStructuredUiStyle(mergedStyle,styleVersion); }
-      catch (error) { invalid((error as Error).message.replace(/unsupported property .*/, 'unsupported property')); }
+      catch (error) { invalid((error as Error).message.replace(/unsupported property[\s\S]*/, 'unsupported property')); }
       if(!['Image','Scene3D','Plot','Diagram'].includes(raw.type)&&[node.style!,node.style!.mobile||{}].some(s=>s.height!==undefined||s.aspectRatio!==undefined))invalid('visual dimensions require a visual leaf');
     }
     if (CONTAINERS.has(raw.type)) {
@@ -282,8 +282,8 @@ export async function generateStructuredUi(prompt: string, context: unknown, llm
   // Validator messages are fixed rules, except unknown property names. Strip
   // those names before a summary can become a durable job diagnostic.
   const summary=(error:any)=>({code:'invalid_structured_ui',message:String(error.message)
-    .replace(/unsupported node property .*/, 'unsupported node property')
-    .replace(/unsupported property .*/, 'unsupported property').slice(0,300)});
+    .replace(/unsupported node property[\s\S]*/, 'unsupported node property')
+    .replace(/unsupported property[\s\S]*/, 'unsupported property').slice(0,300)});
   try {
     checkDeadline();
     const stop=new Promise<never>((_,reject)=>{
