@@ -86,6 +86,7 @@ export type DevelopmentRouteOptions={
   runTest?:WorkspaceConfig['runTest'];
   allowedTests?:WorkspaceConfig['allowedTests'];
   owners?:string[];
+  autoDeployOwners?:string[];
   sourceRoot?:string;
   workspaceRoot?:string;
   sourceCommit?:string;
@@ -97,11 +98,12 @@ export type DevelopmentRouteOptions={
  * cannot accidentally generate another application. No implicit enablement. */
 export function installDevelopmentRoutes(app:express.Express,_db:Database.Database,options:DevelopmentRouteOptions){
   const owners=new Set(options.owners??(process.env.LIVEUI_DEVELOPMENT_OWNERS||'').split(',').map(x=>x.trim()).filter(Boolean));
+  const autoDeployOwners=(options.autoDeployOwners??(process.env.LIVEUI_DEVELOPMENT_AUTO_DEPLOY_OWNERS||'').split(',').map(x=>x.trim()).filter(Boolean)).filter(owner=>owners.has(owner));
   const sourceRoot=options.sourceRoot??process.env.LIVEUI_DEVELOPMENT_SOURCE;
   const root=options.workspaceRoot??process.env.LIVEUI_DEVELOPMENT_ROOT;
   const configured=Boolean(owners.size&&sourceRoot&&root);
   let providerPending=0;
-  const workspace=configured?createDevelopmentWorkspace({root:root!,sourceRoot:sourceRoot!,sourceCommit:options.sourceCommit,
+  const workspace=configured?createDevelopmentWorkspace({root:root!,sourceRoot:sourceRoot!,sourceCommit:options.sourceCommit,autoDeployOwners,
     runtimeContext:options.context,runTest:options.runTest,allowedTests:options.allowedTests,maxSteps:options.maxSteps,timeoutMs:options.timeoutMs,
     infer:async()=>{throw fail('本请求缺少已绑定的模型连接','development_inference_missing',503);},
   }):undefined;
@@ -147,9 +149,10 @@ export function installDevelopmentRoutes(app:express.Express,_db:Database.Databa
     const result=job.result;
     const testLabel=result?.validation==='passed'?'当前代码测试通过':result?.validation==='failed'?'当前代码测试失败':result?.validation==='stale'?'测试之后代码有变化，尚未重新验证':'尚未运行测试';
     const changed=Array.isArray(result?.changedFiles)?result.changedFiles:[];
-    const answer=['liveUI 开发会话：'+job.conversationId,changed.length?'已在隔离源码工作区修改 '+changed.length+' 个文件：'+changed.join('、'):'没有源码文件变更',testLabel+'；未部署到运行中的 liveUI。',result?.diff?'实际修改：\n```diff\n'+result.diff+'\n```':''].filter(Boolean).join('\n\n');
+    const deploymentLabel=developmentDeploymentLabel(result);
+    const answer=['liveUI 开发会话：'+job.conversationId,changed.length?'已在隔离源码工作区修改 '+changed.length+' 个文件：'+changed.join('、'):'没有源码文件变更',testLabel+'；'+deploymentLabel,result?.diff?'实际修改：\n```diff\n'+result.diff+'\n```':''].filter(Boolean).join('\n\n');
     return {type:'answered',question:job.prompt,answer,jobId:job.id,developmentConversationId:job.conversationId,
-      execution:{harness:job.harness,model:job.model,delivery:'development'},development:{...result,deployed:false,status:job.status},
+      execution:{harness:job.harness,model:job.model,delivery:'development'},development:{...result,deployed:result?.deployed===true,status:job.status},
       trace:[{agent:job.harness,step:'Edit liveUI source in isolated workspace',status:job.status==='done'?'done':'error',jobId:job.id}]};
   };
   const route=(handler:(req:express.Request,res:express.Response)=>unknown)=>async(req:express.Request,res:express.Response,next:express.NextFunction)=>{
@@ -159,8 +162,8 @@ export function installDevelopmentRoutes(app:express.Express,_db:Database.Databa
   app.get('/agent/development/status',route((req,res)=>{const owner=ownerOf(req);res.json({configured:true,...workspace!.status(owner),inferenceCount:globalStatus().inferenceCount});}));
   app.get('/agent/development/conversations',route(async(req,res)=>{const owner=ownerOf(req);res.json({conversations:await workspace!.list(owner)});}));
   app.get('/agent/development/conversations/:id',route(async(req,res)=>{const owner=ownerOf(req);res.json(await workspace!.getConversation(owner,String(req.params.id)));}));
-  app.get('/agent/development/jobs/:id',route(async(req,res)=>{const owner=ownerOf(req);res.json(await workspace!.getJob(owner,String(req.params.id)));}));
-  app.get('/agent/development/requests/:id',route(async(req,res)=>{const owner=ownerOf(req);res.json(await workspace!.getRequest(owner,String(req.params.id)));}));
+  app.get('/agent/development/jobs/:id',route(async(req,res)=>{const owner=ownerOf(req);const job=await workspace!.getJob(owner,String(req.params.id));res.json({...job,...(job.result?{presentation:output(job)}:{})});}));
+  app.get('/agent/development/requests/:id',route(async(req,res)=>{const owner=ownerOf(req);const job=await workspace!.getRequest(owner,String(req.params.id));res.json({...job,...(job.result?{presentation:output(job)}:{})});}));
   app.get('/agent/development/jobs/:id/patch',route(async(req,res)=>{const owner=ownerOf(req),job=await workspace!.getJob(owner,String(req.params.id));if(!job.result)throw fail('该任务尚未生成修改结果','development_pending',409);res.type('text/plain').send(job.result.diff);}));
   app.post('/agent/development/submit',route(async(req,res)=>res.status(202).json(await start(req))));
   app.post('/agent/run',async(req,res,next)=>{
@@ -174,8 +177,9 @@ export function installDevelopmentRoutes(app:express.Express,_db:Database.Databa
       let current=job,lastStage='',lastHeartbeat=Date.now();
       while(current.status==='running'){
         if(res.destroyed)return;
-        const stage=current.steps+':'+current.stage;
-        if(streamed&&stage!==lastStage){send('progress',{step:current.stage,jobId:current.id,developmentConversationId:current.conversationId,elapsedMs:Date.now()-Date.parse(current.createdAt)});lastStage=stage;}
+        const currentStage=developmentDeploymentPending(current.result)?developmentDeploymentLabel(current.result):current.stage;
+        const stage=current.steps+':'+currentStage;
+        if(streamed&&stage!==lastStage){send('progress',{step:currentStage,development:current.result,jobId:current.id,developmentConversationId:current.conversationId,elapsedMs:Date.now()-Date.parse(current.createdAt)});lastStage=stage;}
         if(streamed&&Date.now()-lastHeartbeat>15000){res.write(': ping\n\n');lastHeartbeat=Date.now();}
         await new Promise(resolve=>setTimeout(resolve,500));current=await workspace!.getJob(owner,job.id);
       }
@@ -191,3 +195,13 @@ export function installDevelopmentRoutes(app:express.Express,_db:Database.Databa
   return {configured,activeCount:()=>globalStatus().inferenceCount,status:globalStatus,dispose:()=>workspace?.dispose()??Promise.resolve()};
 }
 
+
+/** A source job can finish before its trusted deployment transaction. */
+export function developmentDeploymentPending(result:any){return ['queued','validating','reviewing','waiting'].includes(result?.deployment?.status);}
+export function developmentDeploymentLabel(result:any){
+ const deployment=result?.deployment;
+ if(!deployment)return '尚未部署到运行中的 liveUI。';
+ const labels:Record<string,string>={queued:'已进入自动部署队列',validating:'正在验证候选版本',reviewing:'正在进行独立审查',waiting:'检查已通过，正在等待服务空闲部署',deployed:'已部署到运行中的 liveUI，并通过上线检查',blocked:'自动部署受阻，线上版本未变',rolled_back:'部署检查失败，已回滚原版本',unknown:'部署状态尚未确认，正在保留原事务等待核查'};
+ const status=deployment.status==='deployed'&&result?.deployed!==true?'unknown':deployment.status;
+ return (labels[status]||labels.unknown)+(deployment.reason?'：'+deployment.reason:'')+'。';
+}

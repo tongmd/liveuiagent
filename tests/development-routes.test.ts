@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import express from 'express';
 import Database from 'better-sqlite3';
 import {installDevelopmentRoutes,wantsLiveuiDevelopment,developmentCompletion} from '../server/development-routes.js';
@@ -23,7 +24,7 @@ async function fixture(mode='success'){
   if(!tool)return envelope({tool:'read',path:last.runtimeContext.files.find((f:any)=>f.key==='memory').chunks[0].path});
   if(tool.tool==='read'&&tool.path.startsWith('context/'))return envelope({tool:'read',path:'server/example.ts'});
   if(tool.tool==='read')return envelope({tool:'edit',path:'server/example.ts',expectedSha256:last.toolResult.result.sha256,oldText:'answer = 1',newText:'answer = 2'});
-  if(tool.tool==='edit')return envelope({tool:'test',commandId:'behavior'});
+  if(tool.tool==='edit')return envelope({tool:'test',commandId:mode==='auto'?'test':'behavior'});
   return envelope({tool:'finish',summary:'Changed the fixture answer.'});
  }
  const provider=express();provider.use(express.json({limit:'10mb'}));provider.post('/v1/chat/completions',(req,res)=>{assert.equal(req.header('authorization'),'Bearer test-provider-key');try{res.json(infer(req.body));}catch{res.status(503).json({error:'fixture failure'});}});
@@ -32,13 +33,13 @@ async function fixture(mode='success'){
  const codex={allowsUser:()=>true,view:()=>({id:'gpt-6-astra'}),config:()=>({model:'gpt-6-astra',chatCompletion:async(request:any)=>infer(request)})};
  const integration=createHarnessIntegration({codex:codex as any,dsh:runner as any,domestic:{qwen:runner,kimi:runner,zcode:runner} as any,htmlConfigured:()=>true});
  const db=new Database(':memory:'),app=express();app.use(express.json());
- const dev=installDevelopmentRoutes(app,db,{owners:['alice','bob'],workspaceRoot:path.join(dir,'jobs'),sourceRoot:source,userOf:req=>String(req.header('x-owner')||''),harnessFor:req=>req.body.harness||'native',llmOf:req=>{
+ const dev=installDevelopmentRoutes(app,db,{owners:['alice','bob'],autoDeployOwners:mode==='auto'?['alice']:[],workspaceRoot:path.join(dir,'jobs'),sourceRoot:source,userOf:req=>String(req.header('x-owner')||''),harnessFor:req=>req.body.harness||'native',llmOf:req=>{
   selection.push(structuredClone(req.body));return integration.connect(req.body.harness||'native',{owner:String(req.header('x-owner')),models,model:models[0],requested:{},personalContext:'owner memory',legacyCapabilities:async()=>({}),resolve:requested=>({apiBase:providerUrl,apiKey:'test-provider-key',model:requested.model||models[0]})});
- },context:async(owner,appId)=>{contexts.push({owner,appId});return {memory:'actual owner memory',selectedApp:{id:appId,owner},deployment:{sha:'actual-runtime-sha'},originalRequest:'actual prior prompt'};},allowedTests:{behavior:['fixture']},runTest:async({cwd})=>({exitCode:mode!=='test-failure'&&(await fs.readFile(path.join(cwd,'server/example.ts'),'utf8')).includes('answer = 2')?0:1,stdout:mode==='test-failure'?'test failed':'1 behavior test passed',stderr:''})});
+ },context:async(owner,appId)=>{contexts.push({owner,appId});return {memory:'actual owner memory',selectedApp:{id:appId,owner},deployment:{sha:'actual-runtime-sha'},originalRequest:'actual prior prompt'};},allowedTests:{behavior:['fixture'],test:['fixture']},runTest:async({cwd})=>({exitCode:mode!=='test-failure'&&(await fs.readFile(path.join(cwd,'server/example.ts'),'utf8')).includes('answer = 2')?0:1,stdout:mode==='test-failure'?'test failed':'1 behavior test passed',stderr:''})});
  app.post('/agent/run',(_req,res)=>res.json({type:'ordinary_app'}));app.use((error:any,_req:any,res:any,_next:any)=>res.status(error.status||500).json({error:error.message,code:error.code}));
  const server=app.listen(0,'127.0.0.1');await new Promise<void>(r=>server.once('listening',r));const url='http://127.0.0.1:'+(server.address() as any).port;
  const request=(endpoint:string,body?:any,owner='alice',headers:any={})=>fetch(url+endpoint,{method:body?'POST':'GET',headers:{'content-type':'application/json','x-owner':owner,...headers},...(body?{body:JSON.stringify(body)}:{})});
- return {request,dev,calls,contexts,selection,get invocations(){return invocations},async close(){await dev.dispose();server.closeAllConnections();pserver.closeAllConnections();await Promise.all([new Promise<void>(r=>server.close(()=>r())),new Promise<void>(r=>pserver.close(()=>r()))]);db.close();await fs.rm(dir,{recursive:true,force:true});}};
+ return {dir,request,dev,calls,contexts,selection,get invocations(){return invocations},async close(){await dev.dispose();server.closeAllConnections();pserver.closeAllConnections();await Promise.all([new Promise<void>(r=>server.close(()=>r())),new Promise<void>(r=>pserver.close(()=>r()))]);db.close();await fs.rm(dir,{recursive:true,force:true});}};
 }
 test('host editing uses explicit intent, not app requests or quoted source',()=>{
  for(const prompt of ['修改 liveUI 本身，把按钮改一下','修复liveUI宿主，处理错误','请帮我修改liveUI源码','帮我改liveUI本身的搜索框','Edit liveUI source code','继续修改liveUI，把入口改好'])assert.equal(wantsLiveuiDevelopment({prompt}),true,prompt);
@@ -91,4 +92,18 @@ test('timed out adapter remains counted until its actual operation settles',asyn
 });
 test('a finished model turn with failed tests reports failed validation, never deployed',async()=>{
  const f=await fixture('test-failure');try{const result:any=await (await f.request('/agent/run',{target:'liveui',prompt:'修复liveUI宿主',clientRequestId:'bad-test'})).json();assert.equal(result.development.validation,'failed');assert.match(result.answer,/当前代码测试失败/);assert.equal(result.development.deployed,false);}finally{await f.close();}
+});
+
+test('HTTP source result queues deployment and GET presentation follows only trusted owner receipt',async()=>{
+ const f=await fixture('auto');try{
+  const req={target:'liveui',prompt:'修改liveUI源码',clientRequestId:'automatic',autoDeployOwners:['bob']};
+  const result:any=await(await f.request('/agent/run',req)).json();assert.equal(result.development.deployment.status,'queued');assert.equal(result.development.deployed,false);assert.match(result.answer,/自动部署队列/);
+  const ownerDir=path.join(f.dir,'jobs',createHash('sha256').update('alice').digest('hex'));
+  const requestText=await fs.readFile(path.join(ownerDir,'deployment-requests',result.jobId+'.json'),'utf8'),request=JSON.parse(requestText);
+  const receipt={version:1,owner:'alice',jobId:result.jobId,conversationId:result.developmentConversationId,workspaceHash:request.workspaceHash,requestSha256:createHash('sha256').update(requestText).digest('hex'),status:'deployed',receipt:{transactionId:'actual-test-fixture',health:'ok'}};
+  await fs.mkdir(path.join(ownerDir,'deployments'));await fs.writeFile(path.join(ownerDir,'deployments',result.jobId+'.json'),JSON.stringify(receipt));
+  const recovered:any=await(await f.request('/agent/development/requests/automatic')).json();assert.equal(recovered.result.deployed,true);assert.equal(recovered.presentation.development.deployed,true);assert.match(recovered.presentation.answer,/已部署到运行中的 liveUI/);assert.doesNotMatch(recovered.presentation.answer,/未部署/);
+  assert.equal((await f.request('/agent/development/jobs/'+result.jobId,undefined,'bob')).status,404);
+  const other:any=await(await f.request('/agent/run',{...req,clientRequestId:'bob-auto'},'bob')).json();assert.equal(other.development.deployment,undefined);assert.equal(other.development.deployed,false);
+ }finally{await f.close();}
 });
