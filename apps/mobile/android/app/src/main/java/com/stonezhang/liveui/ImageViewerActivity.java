@@ -22,6 +22,9 @@ public final class ImageViewerActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         capture = new ImageCapture(this);
+        getWindow().setStatusBarColor(Color.BLACK); getWindow().setNavigationBarColor(Color.BLACK);
+        getWindow().getDecorView().setSystemUiVisibility(0);
+        if (android.os.Build.VERSION.SDK_INT >= 29) { getWindow().setStatusBarContrastEnforced(false); getWindow().setNavigationBarContrastEnforced(false); }
         LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.BLACK);
         if (android.os.Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
         root.setOnApplyWindowInsetsListener((v, insets) -> {
@@ -38,7 +41,11 @@ public final class ImageViewerActivity extends Activity {
         if (state == null) { if (getIntent().getData() != null) open(getIntent().getData()); else pick(); }
     }
     private void addButton(LinearLayout row, String title, Runnable action) {
-        Button button = new Button(this); button.setAllCaps(false); button.setText(title); button.setTextSize(14); button.setOnClickListener(v -> action.run()); row.addView(button, new LinearLayout.LayoutParams(0, -2, 1));
+        Button button = new Button(this); button.setAllCaps(false); button.setText(title); button.setTextSize(14); button.setTextColor(Color.WHITE);
+        button.setElevation(0); button.setStateListAnimator(null); button.setPadding(0,0,0,0);
+        button.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x44ffffff), new android.graphics.drawable.ColorDrawable(Color.BLACK), null));
+        int height = Math.round(52 * getResources().getDisplayMetrics().density); button.setMinHeight(height); button.setMinimumHeight(height);
+        button.setOnClickListener(v -> action.run()); row.addView(button, new LinearLayout.LayoutParams(0, height, 1));
     }
     private void pick() {
         try { startActivityForResult(new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("image/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), PICK); }

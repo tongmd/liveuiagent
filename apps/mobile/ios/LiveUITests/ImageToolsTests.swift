@@ -111,6 +111,12 @@ final class ImageConsumptionTests: XCTestCase {
         var completed: (() -> Void)?
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { completed?() }
     }
+    final class ConsumedImage: NSObject, WKScriptMessageHandler {
+        var completed: (([String: Any]) -> Void)?
+        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+            if let value = message.body as? [String: Any] { completed?(value) }
+        }
+    }
     func testWebAppReceivesSelectedImageBytesAndDecodesPreview() async throws {
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         let fixture = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 24), format: format).image { ctx in
@@ -119,9 +125,18 @@ final class ImageConsumptionTests: XCTestCase {
         let data = try XCTUnwrap(fixture.pngData())
         let loaded = expectation(description: "Local image-consuming page loaded")
         let delegate = LoadedPage(); delegate.completed = { loaded.fulfill() }
-        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        let consumed = expectation(description: "Web page consumed image bytes")
+        let consumer = ConsumedImage()
+        var received: [String: Any]?
+        consumer.completed = { value in received = value; consumed.fulfill() }
+        let config = WKWebViewConfiguration()
+        config.userContentController.add(consumer, name: "imageFixture")
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 600), configuration: config)
         web.navigationDelegate = delegate
-        defer { web.stopLoading(); web.navigationDelegate = nil }
+        defer {
+            web.stopLoading(); web.navigationDelegate = nil
+            config.userContentController.removeScriptMessageHandler(forName: "imageFixture")
+        }
         web.loadHTMLString("""
         <!doctype html><html><body><label>Choose image<input id="photo" type="file" accept="image/*"></label><img id="preview" alt="Selected image"><script>
         window.consumed = new Promise((resolve,reject) => {
@@ -138,15 +153,28 @@ final class ImageConsumptionTests: XCTestCase {
         </script></body></html>
         """, baseURL: URL(string: "https://image-fixture.invalid/"))
         await fulfillment(of: [loaded], timeout: 20)
-        let result = try await web.callAsyncJavaScript("""
+        // Use the stable Objective-C WebKit completion/message APIs. The async
+        // Swift overlay adds a libswiftWebKit dependency unavailable on some
+        // supported simulator runtimes; the actual page assertions are unchanged.
+        let payload = try XCTUnwrap(String(data: JSONSerialization.data(withJSONObject: [data.base64EncodedString()]), encoding: .utf8))
+        web.evaluateJavaScript("""
+        (() => {
+        const payload = \(payload)[0];
+        window.consumed.then(value => window.webkit.messageHandlers.imageFixture.postMessage(value),
+          error => window.webkit.messageHandlers.imageFixture.postMessage({error:String(error)}));
         const bytes = Uint8Array.from(atob(payload), char => char.charCodeAt(0));
         const file = new File([bytes], 'fixture.png', {type:'image/png'});
         const transfer = new DataTransfer(); transfer.items.add(file);
         const input = document.getElementById('photo'); input.files = transfer.files;
         input.dispatchEvent(new Event('change', {bubbles:true}));
-        return await window.consumed;
-        """, arguments: ["payload": data.base64EncodedString()], in: nil, contentWorld: .page)
-        let value = try XCTUnwrap(result as? [String: Any])
+        return true;
+        })()
+        """) { _, error in
+            if let error { consumer.completed?(["error": error.localizedDescription]) }
+        }
+        await fulfillment(of: [consumed], timeout: 20)
+        let value = try XCTUnwrap(received)
+        XCTAssertNil(value["error"])
         XCTAssertEqual(value["name"] as? String, "fixture.png")
         XCTAssertEqual(value["size"] as? Int, data.count)
         XCTAssertEqual(value["type"] as? String, "image/png")

@@ -21,12 +21,14 @@ final class MediaChecks {
             public int read() { return left-- > 0 ? 1 : -1; }
             public int read(byte[] b, int off, int size) { if (left <= 0) return -1; int n = Math.min(size, left); left -= n; return n; }
         }); } catch (IOException expected) { rejected = true; } require(rejected);
-        test.runOnMainSync(() -> {
+        onMain(test, () -> {
             ImageViewerActivity.ZoomImage view = new ImageViewerActivity.ZoomImage(test.getTargetContext()); view.layout(0, 0, 400, 600); view.image(decoded);
             Bitmap frame = Bitmap.createBitmap(400,600,Bitmap.Config.ARGB_8888); view.draw(new Canvas(frame)); require(frame.getPixel(200,300) == Color.BLUE); frame.recycle();
             long t = SystemClock.uptimeMillis(); touch(view,t,t,MotionEvent.ACTION_DOWN,200,300); touch(view,t,t+40,MotionEvent.ACTION_UP,200,300); touch(view,t+120,t+120,MotionEvent.ACTION_DOWN,200,300); touch(view,t+120,t+160,MotionEvent.ACTION_UP,200,300); require(view.zoom() > 1);
             view.reset(); require(view.zoom() == 1);
-            pinch(view); require(view.zoom() > 1); view.reset(); require(view.zoom() == 1); view.image(null);
+            view.image(null);
+            ImageViewerActivity.ZoomImage pinchView = new ImageViewerActivity.ZoomImage(test.getTargetContext()); pinchView.layout(0,0,1080,1600);
+            pinch(pinchView); require(pinchView.zoom() > 1); pinchView.reset(); require(pinchView.zoom() == 1);
         });
     }
     static void originsAndCancellation(Instrumentation test) throws Exception {
@@ -34,7 +36,7 @@ final class MediaChecks {
         require(WebCapabilityPermissions.androidPermissions(new String[]{PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID}) == null);
         require(WebCapabilityPermissions.androidPermissions(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE}).length == 1);
         Activity activity = test.startActivitySync(new Intent(test.getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); SystemClock.sleep(600);
-        try { test.runOnMainSync(() -> {
+        try { onMain(test, () -> {
             WebCapabilityPermissions gate = new WebCapabilityPermissions(activity, value -> value.equals("https://liveui.stonezhang.com"));
             FakeRequest foreign = new FakeRequest("https://foreign.example", PermissionRequest.RESOURCE_VIDEO_CAPTURE); gate.media(foreign); require(foreign.denied && foreign.granted == null);
             gate.capture("https://liveui.stonezhang.com", () -> {}, () -> {});
@@ -45,7 +47,7 @@ final class MediaChecks {
             gate.capture("https://liveui.stonezhang.com", () -> launched[0]++, () -> canceled[0]++);
             gate.location("https://liveui.stonezhang.com", (origin,allow,retain) -> { if(!allow)canceled[0]++; });
             gate.cancel(); gate.resume(); require(launched[0]==1 && canceled[0]==3 && !gate.busy());
-        }); } finally { test.runOnMainSync(activity::finish); }
+        }); } finally { onMain(test, activity::finish); }
     }
     static void realPermissionGrantAndApproximateLocation(Instrumentation test) throws Exception {
         String pkg = test.getTargetContext().getPackageName();
@@ -53,7 +55,7 @@ final class MediaChecks {
         test.getUiAutomation().grantRuntimePermission(pkg, android.Manifest.permission.RECORD_AUDIO);
         test.getUiAutomation().grantRuntimePermission(pkg, android.Manifest.permission.ACCESS_COARSE_LOCATION);
         Activity activity = test.startActivitySync(new Intent(test.getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); SystemClock.sleep(600);
-        try { test.runOnMainSync(() -> {
+        try { onMain(test, () -> {
             try {
                 WebCapabilityPermissions gate = new WebCapabilityPermissions(activity, value -> true);
                 gate.capture("https://liveui.stonezhang.com", () -> {}, () -> {});
@@ -64,7 +66,7 @@ final class MediaChecks {
                 require(request.granted != null && request.granted.length == 2 && !request.denied && allowed[0]);
                 require(!gate.busy());
             } catch (Exception e) { throw new AssertionError(e); }
-        }); } finally { test.runOnMainSync(activity::finish); }
+        }); } finally { onMain(test, activity::finish); }
         // Revoking a permission kills its app process. This instrumentation therefore keeps these test-app grants.
     }
     static void captureProviderAndViewer(Instrumentation test) throws Exception {
@@ -81,11 +83,11 @@ final class MediaChecks {
         try (InputStream stream = context.getContentResolver().openInputStream(uri)) { require(stream != null && stream.read() == 255); }
         Activity activity = test.startActivitySync(new Intent(context, ImageViewerActivity.class).setData(uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
         SystemClock.sleep(700); test.waitForIdleSync();
-        test.runOnMainSync(() -> {
+        onMain(test, () -> {
             try {
                 java.lang.reflect.Field field = ImageViewerActivity.class.getDeclaredField("status"); field.setAccessible(true); require(((android.widget.TextView)field.get(activity)).getText().toString().contains("Pinch"));
                 Bitmap screenshot = Bitmap.createBitmap(activity.getWindow().getDecorView().getWidth(),activity.getWindow().getDecorView().getHeight(),Bitmap.Config.ARGB_8888); activity.getWindow().getDecorView().draw(new Canvas(screenshot));
-                try(FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(),"media-image-viewer.png"))) { screenshot.compress(Bitmap.CompressFormat.PNG,100,out); } screenshot.recycle();
+                try(FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(),"android-image-viewer.png"))) { screenshot.compress(Bitmap.CompressFormat.PNG,100,out); } screenshot.recycle();
                 activity.finish();
             } catch (Exception e) { throw new AssertionError(e); }
         });
@@ -109,7 +111,7 @@ final class MediaChecks {
                 String css = "<meta name=viewport content=\"width=device-width,initial-scale=1\"><style>html,body{margin:0;padding:0}input{position:absolute;left:16px;top:16px;width:250px;height:64px;font-size:20px}iframe{width:100%;height:160px;border:0}</style>";
                 String inner = css + "<input id='photo' type='file' accept='image/*'><script>" + script + "</script>";
                 String html = "<html>" + css + "<body><script>window.addEventListener('message',e=>window.uploadResult=e.data)</script>" + (sandbox ? "<iframe sandbox='allow-scripts' srcdoc=\"" + inner.replace("&","&amp;").replace("\"","&quot;") + "\"></iframe>" : inner) + "</body></html>";
-                test.runOnMainSync(() -> {
+                onMain(test, () -> {
                     if(browser[0]!=null)browser[0].destroy();
                     android.webkit.WebView web=new android.webkit.WebView(activity);browser[0]=web;activity.setContentView(web);
                     web.getSettings().setJavaScriptEnabled(true);web.getSettings().setAllowContentAccess(false);web.getSettings().setAllowFileAccess(false);
@@ -119,7 +121,7 @@ final class MediaChecks {
                 });
                 require(loaded.await(15,java.util.concurrent.TimeUnit.SECONDS));
                 // Both documents use a real user tap; the opaque frame is never scripted by its parent.
-                int[] xy = new int[2];test.runOnMainSync(() -> browser[0].getLocationOnScreen(xy));
+                int[] xy = new int[2];onMain(test, () -> browser[0].getLocationOnScreen(xy));
                 float density=context.getResources().getDisplayMetrics().density;
                 float x=xy[0]+50*density,y=xy[1]+50*density;long when=SystemClock.uptimeMillis();
                 test.sendPointerSync(MotionEvent.obtain(when,when,MotionEvent.ACTION_DOWN,x,y,0));
@@ -128,21 +130,26 @@ final class MediaChecks {
                 String value = null;
                 for(int i=0;i<50;i++){
                     java.util.concurrent.atomic.AtomicReference<String> result=new java.util.concurrent.atomic.AtomicReference<>();java.util.concurrent.CountDownLatch read=new java.util.concurrent.CountDownLatch(1);
-                    test.runOnMainSync(() -> browser[0].evaluateJavascript("JSON.stringify(window.uploadResult||null)",v->{result.set(v);read.countDown();}));require(read.await(3,java.util.concurrent.TimeUnit.SECONDS));
+                    onMain(test, () -> browser[0].evaluateJavascript("JSON.stringify(window.uploadResult||null)",v->{result.set(v);read.countDown();}));require(read.await(3,java.util.concurrent.TimeUnit.SECONDS));
                     value=result.get();if(value!=null&&value.contains("pixels"))break;SystemClock.sleep(100);
                 }
                 require(value != null && value.contains("pixels") && value.contains("255,0,0,255") && value.contains("width"));
                 try(FileOutputStream out=new FileOutputStream(new File(context.getFilesDir(),sandbox?"media-upload-sandbox.json":"media-upload-top.json"))){out.write(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));}
             }
-        } finally { test.runOnMainSync(() -> {if(browser[0]!=null)browser[0].destroy();activity.finish();});file.delete(); }
+        } finally { onMain(test, () -> {if(browser[0]!=null)browser[0].destroy();activity.finish();});file.delete(); }
+    }
+    private static void onMain(Instrumentation test, Runnable action) {
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+        test.runOnMainSync(() -> { try { action.run(); } catch (Throwable error) { failure.set(error); } });
+        if (failure.get() != null) throw new AssertionError("Main-thread media assertion", failure.get());
     }
     private static void touch(View view,long down,long time,int action,float x,float y) { MotionEvent e=MotionEvent.obtain(down,time,action,x,y,0); view.onTouchEvent(e);e.recycle(); }
     private static void pinch(View view) {
-        long t=SystemClock.uptimeMillis(); touch(view,t,t,MotionEvent.ACTION_DOWN,100,250);
+        long t=SystemClock.uptimeMillis(); touch(view,t,t,MotionEvent.ACTION_DOWN,200,600);
         MotionEvent.PointerProperties[] props={new MotionEvent.PointerProperties(),new MotionEvent.PointerProperties()};props[0].id=0;props[1].id=1;props[0].toolType=props[1].toolType=MotionEvent.TOOL_TYPE_FINGER;
-        MotionEvent.PointerCoords[] coords={new MotionEvent.PointerCoords(),new MotionEvent.PointerCoords()};coords[0].x=100;coords[1].x=200;coords[0].y=coords[1].y=250;coords[0].pressure=coords[1].pressure=1;coords[0].size=coords[1].size=1;
-        for(int i=0;i<5;i++){coords[0].x=100-i*18;coords[1].x=200+i*18;MotionEvent e=MotionEvent.obtain(t,t+20+i*25,i==0?MotionEvent.ACTION_POINTER_DOWN|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT):MotionEvent.ACTION_MOVE,2,props,coords,0,0,1,1,0,0,android.view.InputDevice.SOURCE_TOUCHSCREEN,0);view.onTouchEvent(e);e.recycle();}
-        touch(view,t,t+160,MotionEvent.ACTION_UP,100,250);
+        MotionEvent.PointerCoords[] coords={new MotionEvent.PointerCoords(),new MotionEvent.PointerCoords()};coords[0].x=200;coords[1].x=600;coords[0].y=coords[1].y=600;coords[0].pressure=coords[1].pressure=1;coords[0].size=coords[1].size=1;
+        for(int i=0;i<5;i++){coords[0].x=200-i*45;coords[1].x=600+i*90;MotionEvent e=MotionEvent.obtain(t,t+20+i*25,i==0?MotionEvent.ACTION_POINTER_DOWN|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT):MotionEvent.ACTION_MOVE,2,props,coords,0,0,1,1,0,0,android.view.InputDevice.SOURCE_TOUCHSCREEN,0);view.onTouchEvent(e);e.recycle();}
+        touch(view,t,t+160,MotionEvent.ACTION_UP,200,600);
     }
     private static final class FakeRequest extends PermissionRequest {
         final Uri origin; final String[] resources; boolean denied; String[] granted;
