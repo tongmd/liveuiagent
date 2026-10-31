@@ -114,3 +114,23 @@ for(const scenario of ['local_unknown','external_unknown','local_get_failure','e
  }
  db.close();
 });
+
+for(const rejectReview of [false,true]) test(`review receives current committed count instead of stale snapshot; reject=${rejectReview}`,async t=>{
+ const f=await runtimeFixture(t);const row:any=f.db.prepare('SELECT * FROM agent_apps WHERE app_id=?').get('parcels');const pkg=JSON.parse(row.package_json),state=JSON.parse(row.runtime_state_json);
+ const fields=[...state.interaction.businessFields,{name:'count',type:'number',label:'Count'}];
+ pkg.actions.actions['refresh.run'].permissions=['storage.app','llm.call','app_state.write'];state.interaction.businessFields=fields;state.entities=[{id:'counter',name:'Counter',detail:'Count 1',appRecordId:'counter'}];
+ const adapter=createAppStateAdapter(f.db,'fixture-owner','parcels',fields as any,['storage.app','app_state.write'])!;adapter.call('app_state.upsert_record',{recordId:'counter',values:{subject:'Counter',count:1}});hydrateAppState({runtimeState:state},adapter);
+ assert.equal(state.appRecords[0].values.count,1);f.db.prepare('UPDATE agent_apps SET package_json=?,runtime_state_json=? WHERE app_id=?').run(JSON.stringify(pkg),JSON.stringify(state),'parcels');
+ const before:any=f.db.prepare('SELECT data_json,runtime_state_json FROM agent_apps WHERE app_id=?').get('parcels');let step=0,reviews=0;
+ const chatCompletion=async(request:any)=>{const sys=request.messages[0].content,input=JSON.parse(request.messages[1].content.split('\n')[0]);
+  if(sys.includes('You analyze a GUI'))return reply({objective:'Increment local counter once'});
+  if(sys.includes('You are the Write Verifier'))return reply({approved:true});
+  if(sys.includes('You are an INDEPENDENT evaluator'))return reply({pass:true,deficiencies:[]});
+  if(sys.includes('You are the backend workflow'))return reply(++step===1?{calls:[{api:'app_state.read_record',args:{recordId:'counter'}}]}:step===2?{calls:[{api:'app_state.upsert_record',args:{recordId:'counter',values:{count:2}}}]}:step===3?{calls:[{api:'app_state.read_record',args:{recordId:'counter'}}]}:{done:true,summary:'Counter is 2',entities:[{id:'counter',name:'Counter',detail:'Count 2',appRecordId:'counter'}],stats:[{label:'Count',value:'2'}]});
+  if(sys.includes('independently verify')){reviews++;assert.equal(input.outcome.proposedRuntimeState.appRecords[0].values.count,2);assert.equal(input.outcome.proposedRuntimeState.appRecords[0].revision,2);assert.equal(input.outcome.proposedRuntimeState.entities[0].appState.count,2);return reply({pass:!rejectReview,reason:rejectReview?'Deliberate independent rejection':'Exact actual readback'});}
+  return reply({proceed:true,instructions:'Increment once from real local read and read back',constraints:[],expectedOutcome:'Counter 2'});
+ };
+ const execute=()=>f.runtime.action({appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{subject:'Counter'},llm:{model:'fixture-only',chatCompletion}}as any);
+ if(rejectReview){await assert.rejects(execute,/本地记录已保存/);assert.deepEqual(f.db.prepare('SELECT data_json,runtime_state_json FROM agent_apps WHERE app_id=?').get('parcels'),before);}else await execute();
+ const actual:any=adapter.call('app_state.read_record',{recordId:'counter'});assert.equal(actual.record.values.count,2);assert.equal(actual.record.revision,2);assert.equal(reviews,1);assert.equal(step,4);
+});

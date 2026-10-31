@@ -7229,6 +7229,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       const releaseAppLock = await acquireAppLock(String(input.appId || ''));
       let nativeWorkflow: NativeWorkflow | undefined;
       let nativeExecutionStarted = false;
+      let nativeLocalWriteCommitted = false;
       try {
       remainingActionMs();
       const stored = getOwnedApp(db, input.appId, String(input.user || '').trim().slice(0, 60));
@@ -7380,6 +7381,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
             grounded = true;
             grounding.calls.forEach((call, index) => { toolResults[`${call.tool.id}#${index + 1}`] = call; });
             grounding.appStateCalls.forEach((call,index)=>{toolResults[`app-state#${index+1}`]=call;});
+            nativeLocalWriteCommitted = grounding.appStateCalls.some(call => call.ok === true && call.api === 'app_state.upsert_record');
             grounding.attempts.filter(call => call.requestSource === 'web-tool-dispatched-arguments' && call.ok === true)
               .forEach((call,index)=>{toolResults[`public-tool#${index+1}`]=call;});
             (rawPayload as Record<string, unknown>).result = grounding.summary;
@@ -7452,6 +7454,8 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       nativeWorkflow.record('commit', 'agents.data', 'running');
       const agentResult = trace(traceLog, 'State Agent', 'Commit orchestration turn and mutate visible state', { actionId, payload, appWorldDbChanges: appWorldTraceSummary(toolResults) }, updateStoredAgentApp(stored, actionId, payload, authoritativeEntities, serviceDocument));
       applyServiceDocumentProjection(stored.runtimeState, serviceDocument, documentPriorEntities);
+      // The independent review must see the actual latest owner/app records,
+      // including writes already committed by this turn, not a prior UI snapshot.
       hydrateAppState(stored,appState);
       await nativeWorkflow.review({ originalRequest: currentActionRequest, result: rawPayload.result,
         entities: rawPayload.entities, stats: rawPayload.entityStats, toolResults,
@@ -7534,6 +7538,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
           if (deadline && typeof deadline === 'object') Object.assign(deadline, { cause: error });
           error = deadline;
         }
+        if (nativeLocalWriteCommitted && error instanceof Error) error.message += ' 本地记录已保存，但后续校验或界面更新失败。请先查看当前记录，不要重复提交同一操作。';
         // External API writes cannot be rolled back with SQLite. Preserve a failed
         // causal record and never automatically rerun the business operation.
         nativeWorkflow?.fail(error, { externalEffectsMayHaveOccurred: nativeExecutionStarted });
