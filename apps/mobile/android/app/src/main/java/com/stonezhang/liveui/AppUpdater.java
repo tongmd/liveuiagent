@@ -155,6 +155,16 @@ final class AppUpdater {
             catch (Exception e) { onUi(() -> message("The update could not be installed. Check available storage and try again.")); }
         });
     }
+    static boolean isProcessVisible() {
+        // Includes native viewers, permission screens and future activities that do not
+        // own an AppUpdater. A foreground service also keeps automatic installation out.
+        ActivityManager.RunningAppProcessInfo state = new ActivityManager.RunningAppProcessInfo();
+        try { ActivityManager.getMyMemoryState(state); return state.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE; }
+        catch (RuntimeException unavailable) { return true; }
+    }
+    private static boolean automaticInstallBlocked() {
+        return isProcessVisible() || active() != null || LocalAssistantActivity.isUpdateBlocked();
+    }
     private static void tryAutomatic(Context c, UpdateRelease r) {
         int savedSession = prefs(c).getInt("session_id", -1);
         PackageInstaller.SessionInfo existing = c.getPackageManager().getPackageInstaller().getSessionInfo(savedSession);
@@ -162,10 +172,10 @@ final class AppUpdater {
         // A crash before commit can leave a saved "committed" label but an unsealed
         // session. installVerified reconciles the actual OS state, not that label.
         if (Build.VERSION.SDK_INT >= 31 && c.getPackageManager().canRequestPackageInstalls() && !LocalAssistantActivity.isUpdateBlocked()) {
-            if (active() != null || LocalAssistantActivity.isUpdateBlocked()) { notifyReady(c); return; }
+            if (automaticInstallBlocked()) { notifyReady(c); return; }
             try { verifyApk(c, apk(c, r), r); }
             catch (Exception invalid) { invalidateCached(c, r); return; }
-            try { installVerified(c, apk(c, r), r); } catch (Exception e) { notifyReady(c); }
+            try { installVerified(c, apk(c, r), r, true); } catch (Exception e) { notifyReady(c); }
         } else notifyReady(c);
     }
     static boolean invalidateCached(Context c, UpdateRelease r) {
@@ -240,8 +250,10 @@ final class AppUpdater {
         byte[][] aa = new byte[a.length][], bb = new byte[b.length][]; for (int i = 0; i < a.length; i++) aa[i] = a[i].toByteArray(); for (int i = 0; i < b.length; i++) bb[i] = b[i].toByteArray();
         if (!UpdatePolicy.sameSigners(aa, bb)) throw new SecurityException("Update signing certificate mismatch");
     }
-    static synchronized void installVerified(Context c, File file, UpdateRelease r) throws Exception {
+    static void installVerified(Context c, File file, UpdateRelease r) throws Exception { installVerified(c, file, r, false); }
+    private static synchronized void installVerified(Context c, File file, UpdateRelease r, boolean automatic) throws Exception {
         verifyApk(c, file, r);
+        if (automatic && automaticInstallBlocked()) { notifyReady(c); return; }
         if (!c.getPackageManager().canRequestPackageInstalls()) throw new SecurityException("Installation permission required");
         PackageInstaller installer = c.getPackageManager().getPackageInstaller();
         // A committed OS transaction is never replayed. Uncommitted staging from a killed
@@ -255,10 +267,13 @@ final class AppUpdater {
         PackageInstaller.SessionParams params = new PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL);
         params.setAppPackageName(c.getPackageName()); params.setSize(r.size);
         if (Build.VERSION.SDK_INT >= 31) params.setRequireUserAction(PackageInstaller.SessionParams.USER_ACTION_NOT_REQUIRED);
-        int id = installer.createSession(params); String token = UUID.randomUUID().toString(); boolean committed = false;
+        int id = installer.createSession(params); String token = UUID.randomUUID().toString(); boolean committed = false, deferred = false;
         prefs(c).edit().putInt("session_id", id).putString("session_token", token).putLong("expected_version", r.versionCode).putString("install_status", "preparing").commit();
         try (PackageInstaller.Session session = installer.openSession(id)) {
             try (InputStream in = new FileInputStream(file); OutputStream out = session.openWrite("base.apk", 0, r.size)) { byte[] b = new byte[65536]; int n; while ((n = in.read(b)) != -1) out.write(b, 0, n); session.fsync(out); }
+            // Recheck after copying: a native screen may have become visible while the
+            // APK was being verified or staged. Uncommitted staging is safe to abandon.
+            if (automatic && automaticInstallBlocked()) { deferred = true; notifyReady(c); return; }
             prefs(c).edit().putInt("session_id", id).putString("session_token", token).putLong("expected_version", r.versionCode).putString("install_status", "committed").commit();
             Intent result = new Intent(c, UpdateInstallReceiver.class).setAction(ACTION).putExtra("ulemi_session_token", token);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT; if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
@@ -272,7 +287,7 @@ final class AppUpdater {
                     prefs(c).edit().putString("install_status", "committed").apply();
                 } else {
                     try { installer.abandonSession(id); } catch (Exception ignored) { }
-                    prefs(c).edit().putString("install_status", "failed").apply();
+                    prefs(c).edit().putString("install_status", deferred ? "deferred" : "failed").apply();
                 }
             }
         }

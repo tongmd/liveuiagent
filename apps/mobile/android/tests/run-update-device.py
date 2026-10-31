@@ -41,7 +41,14 @@ def main():
         result = adb('exec-out', 'run-as', PACKAGE, 'cat', 'shared_prefs/ulemi_updates.xml', check=False)
         if result.returncode != 0:
             return {}
-        return {node.attrib['name']: node.text if node.tag == 'string' else node.attrib.get('value') for node in ET.fromstring(result.stdout)}
+        try:
+            root = ET.fromstring(result.stdout)
+        except ET.ParseError:
+            # API30 exec-out can return 0 for cat's "not found" while the app is
+            # still creating its first preference file. The bounded poll must
+            # wait for an actual complete pending callback, not treat this as one.
+            return {}
+        return {node.attrib['name']: node.text if node.tag == 'string' else node.attrib.get('value') for node in root}
 
     def tap_button(labels, packages, label):
         deadline = time.monotonic() + 35
@@ -92,6 +99,9 @@ def main():
                         break
                     time.sleep(1)
                 if pending.get('install_status') != 'confirmation_required':
+                    safe = {key: value for key, value in pending.items() if key in {'install_status', 'session_id', 'expected_version'}}
+                    (args.output / 'pending-timeout.json').write_text(json.dumps(safe, indent=2))
+                    (args.output / 'pending-logcat.txt').write_bytes(adb('logcat', '-d', '-b', 'crash', check=False).stdout)
                     raise RuntimeError('Android 11 did not deliver the real pending-user-action callback')
                 original_session = pending['session_id']
                 # Complete the test instrumentation, then open the ordinary app prompt.
