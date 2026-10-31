@@ -220,7 +220,9 @@ struct BrowserView: UIViewRepresentable {
                 // a replacement document or resurrect a disconnected session.
                 guard isCurrent(), ticket == navigationTicket else { decisionHandler(.deny); return }
                 if granted {
-                    decisionHandler(.prompt)
+                    // iOS authorization is already explicit. This fixed, current
+                    // signed-in origin can now capture without a second site popup.
+                    decisionHandler(.grant)
                 } else {
                     model.mediaPermissionIssue = .init(message: "Camera or microphone access is off. Allow the requested access in Settings, then try the action again.")
                     decisionHandler(.deny)

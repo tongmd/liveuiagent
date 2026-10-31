@@ -82,7 +82,8 @@ it does not request access to the entire library. Previews accept files up to
 
 Camera use requests iOS permission at the time of capture. Workspace camera and
 microphone requests require the current authenticated connection, matching HTTPS
-origin and matching frame origin, then request system and WebKit consent. A
+origin and matching frame origin, then request iOS permission if it has not already been granted. The same trusted
+origin does not show an additional site confirmation after system authorization. A
 permission refusal offers Settings and a clear retry path. External and opaque
 frames do not inherit workspace permission. Existing web file-upload controls
 continue to use the system picker; images selected there follow that application's
