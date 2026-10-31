@@ -29,7 +29,16 @@ public final class MainActivity extends Activity {
     }
     private LinearLayout root;
     private WebView web;
-    private EditText addressInput, userInput, passwordInput;
+    private EditText userInput, passwordInput;
+    private View loginHeader, loginWaitlist;
+    private FrameLayout workspace;
+    private LinearLayout handoff;
+    private TextView handoffText;
+    private Button retryLoad;
+    private Dialog guide;
+    private boolean loadFailed, restoring, launchHandled;
+    private int workspaceAttempt;
+    private final Handler ui = new Handler(Looper.getMainLooper());
     private TextView status;
     private ProgressBar loading;
     private Button connect;
@@ -53,20 +62,64 @@ public final class MainActivity extends Activity {
         WebView.setWebContentsDebuggingEnabled((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
-        // An Activity recreation does not clear Chromium's in-memory auth cache.
-        // Keep the same connection until explicit logout terminates this process.
+        showLaunch();
+    }
+    private boolean animate() { return android.animation.ValueAnimator.areAnimatorsEnabled(); }
+    private void reveal(View view) {
+        if (!animate()) return;
+        view.setAlpha(0); view.setTranslationY(dp(10));
+        view.animate().alpha(1).translationY(0).setDuration(260).start();
+    }
+    private void showLaunch() {
+        root = makeRoot();
+        LinearLayout center = new LinearLayout(this); center.setOrientation(LinearLayout.VERTICAL); center.setGravity(Gravity.CENTER);
+        root.addView(center, new LinearLayout.LayoutParams(-1, -1));
+        ImageView mark = icon(88); center.addView(mark, new LinearLayout.LayoutParams(dp(88), dp(88)));
+        TextView word = text("liveUI", 27, Color.BLACK); word.setPadding(0, dp(18), 0, 0); center.addView(word);
+        reveal(center); center.setOnClickListener(v -> restoreAccount());
+        ui.postDelayed(this::restoreAccount, animate() ? 420 : 0);
+    }
+    private void restoreAccount() {
+        if (isFinishing() || isDestroyed() || launchHandled) return;
+        launchHandled = true;
+        // Chromium retains process-local auth through Activity recreation. Never switch accounts here.
+        if (currentSession != null && !ConnectionPolicy.DEFAULT_URL.equals(currentSession.endpoint.toString())) { logout(); return; }
         if (currentSession != null) {
             endpoint = currentSession.endpoint; username = currentSession.username; password = currentSession.password;
-            authenticated = true; openWorkspace(); return;
+            authenticated = true; enterAccount(); return;
         }
-        showLogin(null);
         try {
             JSONObject saved = store.load();
-            if (saved != null) {
-                addressInput.setText(saved.getString("url")); userInput.setText(saved.getString("user")); passwordInput.setText(saved.getString("password"));
-                connect();
+            if (saved != null && ConnectionPolicy.DEFAULT_URL.equals(saved.optString("url"))) {
+                username = saved.getString("user"); password = saved.getString("password");
+                showLogin(null); userInput.setText(username); passwordInput.setText(password);
+                restoring = true; showRestoring(); connect(); return;
             }
-        } catch (Exception ignored) { store.clear(); status.setText("连接信息已失效，请重新登录"); }
+            // A legacy custom endpoint cannot silently receive credentials in this fixed-origin app.
+            if (saved != null) store.clear();
+            showLogin(null);
+        } catch (Exception ignored) { store.clear(); showLogin("请重新登录，继续使用你的应用"); }
+    }
+    private void showRestoring() {
+        root = makeRoot();
+        LinearLayout center = new LinearLayout(this); center.setOrientation(LinearLayout.VERTICAL); center.setGravity(Gravity.CENTER);
+        root.addView(center, new LinearLayout.LayoutParams(-1, -1)); center.addView(icon(64), new LinearLayout.LayoutParams(dp(64), dp(64)));
+        TextView t = text("正在打开你的空间…", 17, 0xff555555); t.setPadding(0, dp(24), 0, 0); center.addView(t);
+        ProgressBar progress = new ProgressBar(this); LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(dp(24), dp(24)); pp.topMargin = dp(20); center.addView(progress, pp);
+    }
+    private ImageView icon(int size) {
+        ImageView icon = new ImageView(this); icon.setImageResource(R.drawable.liveui_icon); icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        icon.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO); return icon;
+    }
+    private TextView text(String value, int size, int color) {
+        TextView t = new TextView(this); t.setText(value); t.setTextSize(size); t.setTextColor(color); t.setIncludeFontPadding(false); return t;
+    }
+    private android.graphics.drawable.GradientDrawable rounded(int color, int radius) {
+        android.graphics.drawable.GradientDrawable d = new android.graphics.drawable.GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d;
+    }
+    private Button button(String value, boolean primary) {
+        Button b = new Button(this); b.setText(value); b.setAllCaps(false); b.setTextSize(16); b.setTextColor(primary ? Color.WHITE : Color.BLACK);
+        b.setBackground(rounded(primary ? 0xff181818 : 0xfff3f3f3, 16)); b.setMinHeight(dp(48)); return b;
     }
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
     private LinearLayout makeRoot() {
@@ -77,69 +130,113 @@ public final class MainActivity extends Activity {
                 android.graphics.Insets keyboard = insets.getInsets(WindowInsets.Type.ime());
                 view.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, keyboard.bottom));
             } else view.setPadding(insets.getSystemWindowInsetLeft(), insets.getSystemWindowInsetTop(), insets.getSystemWindowInsetRight(), insets.getSystemWindowInsetBottom());
+            boolean keyboardOpen = Build.VERSION.SDK_INT >= 30 ? insets.isVisible(WindowInsets.Type.ime()) : insets.getSystemWindowInsetBottom() > dp(120);
+            if (view == root && web == null) {
+                if (loginHeader != null) loginHeader.setVisibility(keyboardOpen ? View.GONE : View.VISIBLE);
+                if (loginWaitlist != null) loginWaitlist.setVisibility(keyboardOpen ? View.GONE : View.VISIBLE);
+            }
             return insets;
         });
         setContentView(r); r.requestApplyInsets(); return r;
     }
     private EditText input(LinearLayout box, String hint, int type) {
-        EditText e = new EditText(this); e.setSingleLine(true); e.setTextSize(16); e.setHint(hint); e.setContentDescription(hint); e.setInputType(type);
-        e.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO); box.addView(e, new LinearLayout.LayoutParams(-1, dp(56))); return e;
+        EditText e = new EditText(this); e.setSingleLine(true); e.setTextSize(17); e.setHint(hint); e.setContentDescription(hint); e.setInputType(type);
+        e.setTextColor(Color.BLACK); e.setHintTextColor(0xff777777); e.setPadding(dp(16), 0, dp(16), 0); e.setBackground(rounded(0xfff3f3f3, 14));
+        e.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(58)); lp.bottomMargin = dp(12); box.addView(e, lp); return e;
     }
     private void showLogin(String message) {
-        root = makeRoot();
+        restoring = false; root = makeRoot();
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); root.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
-        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL); box.setPadding(dp(28), dp(48), dp(28), dp(24)); scroll.addView(box);
-        ImageView icon = new ImageView(this); icon.setImageResource(com.stonezhang.liveui.R.drawable.liveui_icon); icon.setScaleType(ImageView.ScaleType.FIT_CENTER); box.addView(icon, new LinearLayout.LayoutParams(dp(64), dp(64)));
-        TextView title = new TextView(this); title.setText(R.string.app_name); title.setTextColor(Color.BLACK); title.setTextSize(30); title.setPadding(0, dp(12), 0, dp(28)); box.addView(title);
-        Button connectionSettings = new Button(this); connectionSettings.setText("连接设置"); connectionSettings.setContentDescription("展开服务地址");
-        box.addView(connectionSettings, new LinearLayout.LayoutParams(-1, dp(44)));
-        addressInput = input(box, "服务地址", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI); addressInput.setText(endpoint == null ? ConnectionPolicy.DEFAULT_URL : endpoint.toString());
-        addressInput.setVisibility(View.GONE);
-        connectionSettings.setOnClickListener(v -> {
-            boolean expanded = addressInput.getVisibility() != View.VISIBLE;
-            addressInput.setVisibility(expanded ? View.VISIBLE : View.GONE);
-            connectionSettings.setContentDescription(expanded ? "收起服务地址" : "展开服务地址");
-        });
-        userInput = input(box, "用户名", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL); userInput.setText(username);
+        LinearLayout outer = new LinearLayout(this); outer.setGravity(Gravity.CENTER); outer.setOrientation(LinearLayout.VERTICAL); outer.setPadding(dp(24), dp(28), dp(24), dp(24)); scroll.addView(outer);
+        LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL);
+        outer.addView(box, new LinearLayout.LayoutParams(Math.min(getResources().getDisplayMetrics().widthPixels - dp(48), dp(420)), -2));
+        LinearLayout header = new LinearLayout(this); header.setOrientation(LinearLayout.VERTICAL); loginHeader = header; box.addView(header);
+        header.addView(icon(64), new LinearLayout.LayoutParams(dp(64), dp(64)));
+        TextView brand = text("liveUI", 32, Color.BLACK); brand.setPadding(0, dp(14), 0, dp(10)); header.addView(brand);
+        TextView welcome = text("登录，开始创造你的应用", 21, 0xff222222); welcome.setPadding(0, 0, 0, dp(30)); header.addView(welcome);
+        userInput = input(box, "账号", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL); userInput.setText(username);
+        userInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_NEXT);
         passwordInput = input(box, "密码", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
-        connect = new Button(this); connect.setText("连接"); connect.setOnClickListener(v -> connect()); box.addView(connect, new LinearLayout.LayoutParams(-1, dp(54)));
-        Button forget = new Button(this); forget.setText("清除已保存连接"); forget.setOnClickListener(v -> {
-            invalidateConnection(true); endpoint = null; username = ""; password = "";
-            addressInput.setText(ConnectionPolicy.DEFAULT_URL); userInput.setText(""); passwordInput.setText(""); connect.setEnabled(true); status.setText("");
-        }); box.addView(forget, new LinearLayout.LayoutParams(-1, dp(48)));
-        status = new TextView(this); status.setTextColor(0xff555555); status.setPadding(0, dp(12), 0, 0); status.setText(message == null ? "" : message); box.addView(status);
+        passwordInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
+        passwordInput.setOnEditorActionListener((v, action, event) -> { if (action == android.view.inputmethod.EditorInfo.IME_ACTION_DONE && connect.isEnabled()) { connect(); return true; } return false; });
+        CheckBox visible = new CheckBox(this); visible.setText("显示密码"); visible.setTextColor(0xff555555); visible.setTextSize(14);
+        visible.setOnCheckedChangeListener((v, checked) -> { passwordInput.setTransformationMethod(checked ? null : android.text.method.PasswordTransformationMethod.getInstance()); passwordInput.setSelection(passwordInput.length()); });
+        box.addView(visible, new LinearLayout.LayoutParams(-1, dp(48)));
+        connect = button("登录", true); connect.setOnClickListener(v -> connect()); LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(54)); bp.topMargin = dp(10); box.addView(connect, bp);
+        status = text(message == null ? "" : message, 14, 0xffad3333); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); status.setPadding(0, dp(14), 0, 0); box.addView(status);
+        Button waitlist = button("还没有账号？加入候补名单", false); loginWaitlist = waitlist; waitlist.setTextSize(14); waitlist.setOnClickListener(v -> external("https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")); LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, dp(50)); wp.topMargin = dp(20); box.addView(waitlist, wp);
+        reveal(box);
+    }
+    private void enterAccount() {
+        if (getSharedPreferences("experience", MODE_PRIVATE).getBoolean("guide_seen_v1", false)) openWorkspace();
+        else showGuide();
+    }
+    private void showGuide() {
+        if (guide != null && guide.isShowing()) return;
+        guide = new Dialog(this, android.R.style.Theme_Material_Light_NoActionBar);
+        guide.setCancelable(true); guide.setOnCancelListener(d -> finishGuide());
+        renderGuide(0); guide.show();
+        if (guide.getWindow() != null) { guide.getWindow().setStatusBarColor(Color.WHITE); guide.getWindow().setNavigationBarColor(Color.WHITE); guide.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR); }
+    }
+    private void renderGuide(int step) {
+        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setBackgroundColor(Color.WHITE);
+        LinearLayout page = new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL); page.setPadding(dp(26), dp(18), dp(26), dp(24)); scroll.addView(page);
+        LinearLayout top = new LinearLayout(this); top.setGravity(Gravity.CENTER_VERTICAL); top.addView(icon(36), new LinearLayout.LayoutParams(dp(36), dp(36)));
+        Space space = new Space(this); top.addView(space, new LinearLayout.LayoutParams(0, 1, 1));
+        Button skip = button("跳过", false); skip.setContentDescription("跳过引导"); skip.setOnClickListener(v -> finishGuide()); top.addView(skip, new LinearLayout.LayoutParams(dp(80), dp(48))); page.addView(top);
+        Space upper = new Space(this); page.addView(upper, new LinearLayout.LayoutParams(1, dp(24), 1));
+        String[] titles = {"说出你需要什么", "边使用，边完善", "回来，接着使用"};
+        String[] copy = {"在底部输入需求，liveUI 会为你创建应用。", "继续告诉它想改什么。功能和界面可以随你的需求调整。", "创建好的应用都在你的空间里。点开它，就能继续使用。"};
+        TextView title = text(titles[step], 28, Color.BLACK); title.setTypeface(null, android.graphics.Typeface.BOLD); page.addView(title);
+        TextView body = text(copy[step], 17, 0xff555555); body.setLineSpacing(dp(5), 1); body.setPadding(0, dp(16), 0, dp(28)); page.addView(body);
+        LinearLayout illustration = new LinearLayout(this); illustration.setOrientation(LinearLayout.VERTICAL); illustration.setPadding(dp(20), dp(22), dp(20), dp(22)); illustration.setBackground(rounded(0xfff5f5f5, 22));
+        String[][] examples = {{"我想做一个阅读清单", "说清用途，就可以开始"}, {"把读完的书放在一起", "在原应用里继续修改"}, {"我的应用", "点开应用，接着上次的内容"}};
+        for (int i = 0; i < 2; i++) { TextView line = text(examples[step][i], i == 0 ? 19 : 15, i == 0 ? Color.BLACK : 0xff777777); line.setPadding(0, i == 0 ? 0 : dp(14), 0, 0); illustration.addView(line); }
+        illustration.setContentDescription("使用方法示意"); page.addView(illustration, new LinearLayout.LayoutParams(-1, -2));
+        Space lower = new Space(this); page.addView(lower, new LinearLayout.LayoutParams(1, dp(30), 1));
+        LinearLayout dots = new LinearLayout(this); dots.setGravity(Gravity.CENTER); dots.setContentDescription("第 " + (step + 1) + " 步，共 3 步");
+        for (int i = 0; i < 3; i++) { View dot = new View(this); dot.setBackground(rounded(i == step ? Color.BLACK : 0xffdddddd, 4)); LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(dp(i == step ? 22 : 7), dp(7)); dl.setMargins(dp(4), 0, dp(4), dp(22)); dots.addView(dot, dl); } page.addView(dots);
+        Button next = button(step == 2 ? "开始使用" : "继续", true); next.setOnClickListener(v -> { if (step == 2) finishGuide(); else renderGuide(step + 1); }); page.addView(next, new LinearLayout.LayoutParams(-1, dp(54)));
+        guide.setContentView(scroll); reveal(page);
+    }
+    private void finishGuide() {
+        getSharedPreferences("experience", MODE_PRIVATE).edit().putBoolean("guide_seen_v1", true).apply();
+        if (guide != null) { guide.dismiss(); guide = null; }
+        if (web == null && authenticated) openWorkspace();
     }
     private void connect() {
         final URI candidate;
         final String u = userInput.getText().toString().trim(), p = passwordInput.getText().toString();
         try {
-            candidate = ConnectionPolicy.parse(addressInput.getText().toString());
+            candidate = ConnectionPolicy.parse(ConnectionPolicy.DEFAULT_URL);
             if (u.isEmpty() || p.isEmpty() || u.contains(":") || u.contains("\n") || u.contains("\r")) throw new IllegalArgumentException("请输入有效的用户名和密码");
         } catch (Exception e) { status.setText(e.getMessage()); return; }
         final int generation; synchronized (credentialLock) { generation = ++connectionGeneration; }
-        connect.setEnabled(false); status.setText("正在连接…");
+        connect.setEnabled(false); connect.setText("正在登录…"); status.setText("");
+        android.view.inputmethod.InputMethodManager keyboard = (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE); keyboard.hideSoftInputFromWindow(passwordInput.getWindowToken(), 0);
         network.execute(() -> {
             String error = null;
             try {
                 HttpsURLConnection probe = connection(candidate.toString());
                 int code = probe.getResponseCode(); String challenge = probe.getHeaderField("WWW-Authenticate"); probe.disconnect();
-                if (code != 401 || !ConnectionPolicy.validBasicChallenge(challenge)) throw new IOException("服务未提供预期的 liveUI 登录入口");
+                if (code != 401 || !ConnectionPolicy.validBasicChallenge(challenge)) throw new IOException("暂时无法登录，请稍后重试");
                 HttpsURLConnection check = connection(candidate.toString()); check.setRequestProperty("Authorization", authorization(u, p));
                 code = check.getResponseCode(); check.disconnect();
-                if (code == 401 || code == 403) throw new IOException("用户名或密码不正确");
-                if (code != 200) throw new IOException("连接失败，HTTP " + code);
+                if (code == 401 || code == 403) throw new IOException("账号或密码不正确，请重新输入");
+                if (code != 200) throw new IOException("暂时无法登录，请稍后重试");
                 synchronized (credentialLock) {
                     if (generation != connectionGeneration) return;
                     store.save(candidate.toString(), u, p);
                 }
-            } catch (javax.net.ssl.SSLException e) { error = "无法验证服务器证书，未发送登录信息"; }
-            catch (Exception e) { error = e instanceof IOException && e.getMessage() != null && !e.getMessage().contains("://") ? e.getMessage() : "无法连接，请检查地址和网络后重试"; }
+            } catch (javax.net.ssl.SSLException e) { error = "暂时无法安全登录，请稍后重试"; }
+            catch (Exception e) { error = e instanceof IOException && ("账号或密码不正确，请重新输入".equals(e.getMessage()) || "暂时无法登录，请稍后重试".equals(e.getMessage())) ? e.getMessage() : "网络暂时不可用，请检查网络后重试"; }
             String finalError = error;
             runOnUiThread(() -> {
                 if (isFinishing() || generation != connectionGeneration) return;
-                connect.setEnabled(true);
-                if (finalError != null) { status.setText(finalError); return; }
-                endpoint = candidate; username = u; password = p; currentSession = new Session(candidate, u, p); authenticated = true; openWorkspace();
+                connect.setEnabled(true); connect.setText("登录");
+                if (finalError != null) { if (restoring) showLogin(finalError); else status.setText(finalError); return; }
+                endpoint = candidate; username = u; password = p; currentSession = new Session(candidate, u, p); authenticated = true; restoring = false; enterAccount();
             });
         });
     }
@@ -153,9 +250,15 @@ public final class MainActivity extends Activity {
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL); bar.setPadding(dp(12), 0, dp(4), 0);
         TextView title = new TextView(this); title.setText(R.string.app_name); title.setTextSize(18); title.setTextColor(Color.BLACK); bar.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
         Button menu = new Button(this); menu.setText("⋮"); menu.setTextSize(22); menu.setContentDescription("菜单"); menu.setOnClickListener(this::showMenu); bar.addView(menu, new LinearLayout.LayoutParams(dp(52), -1));
-        root.addView(bar, new LinearLayout.LayoutParams(-1, dp(44)));
+        root.addView(bar, new LinearLayout.LayoutParams(-1, dp(40)));
         loading = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); loading.setMax(100); root.addView(loading, new LinearLayout.LayoutParams(-1, dp(2)));
-        web = new WebView(this); web.setBackgroundColor(Color.WHITE); root.addView(web, new LinearLayout.LayoutParams(-1, 0, 1));
+        workspace = new FrameLayout(this); root.addView(workspace, new LinearLayout.LayoutParams(-1, 0, 1));
+        web = new WebView(this); web.setBackgroundColor(Color.WHITE); workspace.addView(web, new FrameLayout.LayoutParams(-1, -1));
+        handoff = new LinearLayout(this); handoff.setOrientation(LinearLayout.VERTICAL); handoff.setGravity(Gravity.CENTER); handoff.setPadding(dp(28), dp(28), dp(28), dp(28)); handoff.setBackgroundColor(Color.WHITE);
+        handoff.addView(icon(56), new LinearLayout.LayoutParams(dp(56), dp(56)));
+        handoffText = text("正在打开你的空间…", 17, 0xff555555); handoffText.setGravity(Gravity.CENTER); handoffText.setPadding(0, dp(22), 0, dp(24)); handoff.addView(handoffText);
+        retryLoad = button("重试", true); retryLoad.setVisibility(View.GONE); retryLoad.setOnClickListener(v -> reloadWorkspace()); handoff.addView(retryLoad, new LinearLayout.LayoutParams(dp(180), dp(52)));
+        workspace.addView(handoff, new FrameLayout.LayoutParams(-1, -1)); loadFailed = false;
         WebSettings settings = web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true); settings.setDatabaseEnabled(true);
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false); settings.setAllowFileAccessFromFileURLs(false); settings.setAllowUniversalAccessFromFileURLs(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW); settings.setSafeBrowsingEnabled(true); settings.setMediaPlaybackRequiresUserGesture(true);
@@ -176,12 +279,12 @@ public final class MainActivity extends Activity {
                     handler.proceed(username, password);
                 } else { handler.cancel(); }
             }
-            @Override public void onPageCommitVisible(WebView view, String url) { if (authBootstrap != null) authBootstrap.close(); }
+            @Override public void onPageCommitVisible(WebView view, String url) { if (authBootstrap != null) authBootstrap.close(); if (!loadFailed) awaitWorkspace(workspaceAttempt, 0); }
             @Override public void onPageFinished(WebView view, String url) { loading.setVisibility(View.GONE); }
-            @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) { handler.cancel(); notice("证书验证失败，连接已停止"); }
-            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) { if (request.isForMainFrame()) notice("页面加载失败。请用菜单重新加载；已提交任务不会自动重发。"); }
+            @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) { handler.cancel(); workspaceError("暂时无法安全打开，请稍后重试", false); }
+            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) { if (request.isForMainFrame()) workspaceError("暂时无法打开，请检查网络后重试", false); }
             @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
-                if (request.isForMainFrame() && (response.getStatusCode() == 401 || response.getStatusCode() == 403)) notice("登录已失效，请在菜单中退出连接后重新登录");
+                if (request.isForMainFrame()) { boolean expired = response.getStatusCode() == 401 || response.getStatusCode() == 403; workspaceError(expired ? "登录已过期，请重新登录" : "暂时无法打开，请稍后重试", expired); }
             }
         });
         web.setWebChromeClient(new WebChromeClient() {
@@ -227,15 +330,39 @@ public final class MainActivity extends Activity {
         web.setDownloadListener((url, agent, disposition, mime, length) -> download(url, disposition, mime));
         web.loadUrl(endpoint.toString());
     }
+    private void awaitWorkspace(int attempt, int count) {
+        if (web == null || loadFailed || attempt != workspaceAttempt || isFinishing()) return;
+        web.evaluateJavascript("Boolean([...document.querySelectorAll('textarea')].some(e=>e.getClientRects().length))", ready -> {
+            if (web == null || loadFailed || attempt != workspaceAttempt || isFinishing()) return;
+            if ("true".equals(ready)) revealWorkspace();
+            else if (count >= 60) workspaceError("打开时间有点长，请重试", false);
+            else ui.postDelayed(() -> awaitWorkspace(attempt, count + 1), 250);
+        });
+    }
+    private void revealWorkspace() {
+        if (handoff.getVisibility() != View.VISIBLE) return;
+        if (!animate()) { handoff.setVisibility(View.GONE); return; }
+        handoff.animate().alpha(0).setDuration(220).withEndAction(() -> handoff.setVisibility(View.GONE)).start();
+    }
+    private void workspaceError(String message, boolean expired) {
+        loadFailed = true; loading.setVisibility(View.GONE); handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE);
+        handoffText.setText(message); retryLoad.setVisibility(View.VISIBLE); retryLoad.setText(expired ? "重新登录" : "重试");
+        retryLoad.setOnClickListener(v -> { if (expired) logout(); else reloadWorkspace(); });
+    }
+    private void reloadWorkspace() {
+        loadFailed = false; workspaceAttempt++; handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE); handoffText.setText("正在打开你的空间…"); retryLoad.setVisibility(View.GONE);
+        web.reload();
+    }
     private void showMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add(0, 1, 0, "重新加载"); menu.getMenu().add(0, 2, 1, "在浏览器打开"); menu.getMenu().add(0, 3, 2, "分享入口"); menu.getMenu().add(0, 4, 3, "退出账号并关闭");
+        menu.getMenu().add(0, 1, 0, "刷新"); menu.getMenu().add(0, 5, 1, "使用引导"); menu.getMenu().add(0, 2, 2, "在浏览器打开"); menu.getMenu().add(0, 3, 3, "分享 liveUI"); menu.getMenu().add(0, 4, 4, "退出登录");
         menu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
-                case 1: web.reload(); break;
+                case 1: reloadWorkspace(); break;
+                case 5: showGuide(); break;
                 case 2: external(endpoint.toString()); break;
                 case 3: startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, endpoint.toString()), "分享 liveUI")); break;
-                case 4: new AlertDialog.Builder(this).setMessage("退出账号后将关闭 App。重新打开可连接其他账号或服务，服务器上的应用和数据会保留。").setNegativeButton("取消", null).setPositiveButton("退出", (d, w) -> logout()).show(); break;
+                case 4: new AlertDialog.Builder(this).setMessage("退出后会关闭 liveUI。你的应用和内容会保留，重新打开即可登录。").setNegativeButton("取消", null).setPositiveButton("退出", (d, w) -> logout()).show(); break;
             } return true;
         }); menu.show();
     }
@@ -254,7 +381,7 @@ public final class MainActivity extends Activity {
     private void logout() {
         invalidateConnection(true); currentSession = null; authenticated = false; if (authBootstrap != null) authBootstrap.close(); password = "";
         if (upload != null) { upload.onReceiveValue(null); upload = null; }
-        if (web != null) { web.stopLoading(); web.loadUrl("about:blank"); web.clearHistory(); web.clearCache(true); web.clearFormData(); root.removeView(web); web.destroy(); web = null; }
+        if (web != null) { web.stopLoading(); web.loadUrl("about:blank"); web.clearHistory(); web.clearCache(true); web.clearFormData(); if (web.getParent() instanceof ViewGroup) ((ViewGroup) web.getParent()).removeView(web); web.destroy(); web = null; }
         WebViewDatabase.getInstance(this).clearHttpAuthUsernamePassword(); WebStorage.getInstance().deleteAllData();
         CookieManager.getInstance().removeAllCookies(value -> {
             CookieManager.getInstance().flush();
@@ -376,9 +503,10 @@ public final class MainActivity extends Activity {
         }
     }
     @Override protected void onDestroy() {
-        invalidateConnection(false);
+        invalidateConnection(false); ui.removeCallbacksAndMessages(null);
+        if (guide != null) { guide.setOnCancelListener(null); guide.dismiss(); guide = null; }
         if (upload != null) { upload.onReceiveValue(null); upload = null; }
-        if (web != null) { web.stopLoading(); web.destroy(); web = null; }
+        if (web != null) { web.stopLoading(); if (web.getParent() instanceof ViewGroup) ((ViewGroup) web.getParent()).removeView(web); web.destroy(); web = null; }
         if (pendingDownload != null) pendingDownload.delete(); network.shutdownNow(); super.onDestroy();
     }
 }

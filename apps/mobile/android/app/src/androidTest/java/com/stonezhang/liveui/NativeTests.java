@@ -42,14 +42,55 @@ public final class NativeTests extends Instrumentation {
             require(gate.take(endpoint.toString(), endpoint.getHost(), ConnectionPolicy.AUTH_REALM));
             require(!gate.take(endpoint.toString(), endpoint.getHost(), ConnectionPolicy.AUTH_REALM));
         });
-        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (3 tests)\n" : "\nFAILURES!!! Tests run: 3, Failures: " + failed + "\n");
-        result.putInt("numtests", 3); finish(Activity.RESULT_OK, result);
+        check("loginPresentationDoesNotExposeInfrastructure", () -> {
+            Activity a = startActivitySync(new android.content.Intent(getTargetContext(), MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            android.os.SystemClock.sleep(650);
+            runOnMainSync(() -> {
+                try {
+                    java.lang.reflect.Method login = MainActivity.class.getDeclaredMethod("showLogin", String.class); login.setAccessible(true); login.invoke(a, new Object[]{null});
+                    android.view.View decor = a.getWindow().getDecorView(); String labels = labels(decor);
+                    require(labels.contains("登录，开始创造你的应用")); require(labels.contains("加入候补名单"));
+                    require(!labels.contains("服务地址") && !labels.contains("连接设置") && !labels.contains("https://"));
+                    require(countInputs(decor) == 2);
+                } catch (Exception e) { throw new AssertionError(e); }
+            });
+            runOnMainSync(a::finish);
+        });
+        check("guideCanSkipAndReplayWithoutCreatingData", () -> {
+            Activity a = startActivitySync(new android.content.Intent(getTargetContext(), MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            android.os.SystemClock.sleep(650);
+            try {
+                runOnMainSync(() -> {
+                    try {
+                        a.getSharedPreferences("experience", 0).edit().clear().commit();
+                        java.lang.reflect.Method show = MainActivity.class.getDeclaredMethod("showGuide"); show.setAccessible(true); show.invoke(a);
+                        java.lang.reflect.Field field = MainActivity.class.getDeclaredField("guide"); field.setAccessible(true);
+                        android.app.Dialog dialog = (android.app.Dialog) field.get(a); require(dialog.isShowing()); require(labels(dialog.getWindow().getDecorView()).contains("说出你需要什么"));
+                        java.lang.reflect.Method finish = MainActivity.class.getDeclaredMethod("finishGuide"); finish.setAccessible(true); finish.invoke(a);
+                        require(a.getSharedPreferences("experience", 0).getBoolean("guide_seen_v1", false)); require(!dialog.isShowing());
+                        show.invoke(a); dialog = (android.app.Dialog) field.get(a); require(dialog.isShowing()); finish.invoke(a);
+                        java.lang.reflect.Field web = MainActivity.class.getDeclaredField("web"); web.setAccessible(true); require(web.get(a) == null);
+                    } catch (Exception e) { throw new AssertionError(e); }
+                });
+            } finally { a.getSharedPreferences("experience", 0).edit().clear().commit(); runOnMainSync(a::finish); }
+        });
+        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (5 tests)\n" : "\nFAILURES!!! Tests run: 5, Failures: " + failed + "\n");
+        result.putInt("numtests", 5); finish(Activity.RESULT_OK, result);
     }
     private void check(String name, Check task) {
-        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 3); b.putInt("current", ++current);
+        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 5); b.putInt("current", ++current);
         sendStatus(1, b);
         try { task.run(); sendStatus(0, b); }
         catch (Throwable e) { failed++; b.putString("stack", android.util.Log.getStackTraceString(e)); sendStatus(-2, b); }
+    }
+    private static String labels(android.view.View v) {
+        String value = v instanceof android.widget.TextView ? ((android.widget.TextView) v).getText().toString() : "";
+        if (v instanceof android.view.ViewGroup) for (int i=0; i<((android.view.ViewGroup)v).getChildCount(); i++) value += " " + labels(((android.view.ViewGroup)v).getChildAt(i));
+        return value;
+    }
+    private static int countInputs(android.view.View v) {
+        int n = v instanceof android.widget.EditText ? 1 : 0;
+        if (v instanceof android.view.ViewGroup) for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++) n += countInputs(((android.view.ViewGroup)v).getChildAt(i)); return n;
     }
     private static void require(boolean condition) { if (!condition) throw new AssertionError("Native boundary check failed"); }
 }
