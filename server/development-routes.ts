@@ -11,14 +11,14 @@ const fail=(message:string,code:string,status=400)=>Object.assign(new Error(mess
 export function wantsLiveuiDevelopment(body:unknown):boolean {
   if(!body||typeof body!=='object'||Array.isArray(body))return false;
   const value=body as Record<string,unknown>;
-  if(value.target==='liveui')return true;
+  if(value.target==='liveui'||value.target==='ulemi')return true;
   if(typeof value.developmentConversationId==='string'&&value.developmentConversationId.trim())return true;
   if(typeof value.prompt!=='string')return false;
   const prompt=value.prompt.trim().replace(/^\d+[.、)）]\s*/,'');
   if(/^["'“‘「『`>]/.test(prompt))return false;
   if(wantsDevelopmentContinuation(prompt)||wantsHostUiEdit(prompt))return true;
-  return /^(?:(?:请|请你|帮我|请帮我|直接|现在)\s*)?(?:(?:用|使用)\s*(?:codex|native|dsh|qwen|kimi|zcode)\s*)?(?:修一下|(?:修改|修复|改进|调整|更新|改|调试)(?:一下|好)?)\s*liveui\s*(?:本身|宿主|源码|源代码|的源码|的源代码|的宿主)/i.test(prompt)
-    || /^(?:please\s+)?(?:fix|modify|edit|debug|update)\s+(?:the\s+)?liveui\s+(?:itself|host|source(?:\s+code)?)(?:\b)/i.test(prompt);
+  return /^(?:(?:请|请你|帮我|请帮我|直接|现在)\s*)?(?:(?:用|使用)\s*(?:codex|native|dsh|qwen|kimi|zcode)\s*)?(?:修一下|(?:修改|修复|改进|调整|更新|改|调试)(?:一下|好)?)\s*(?:liveui|ulemi)\s*(?:本身|宿主|源码|源代码|的源码|的源代码|的宿主)/i.test(prompt)
+    || /^(?:please\s+)?(?:fix|modify|edit|debug|update)\s+(?:the\s+)?(?:liveui|ulemi)\s+(?:itself|host|source(?:\s+code)?)(?:\b)/i.test(prompt);
 }
 
 /** Natural host UI requests can name the subject first. Require a concrete
@@ -32,7 +32,7 @@ function wantsHostUiEdit(prompt:string):boolean {
   if(/(?:不要|不必|不用|无需|别|不需要|不应该)/.test(first))return false;
   if(/(?:里|中)(?:生成的|的|面)?[^，。\n]*(?:App|应用|游戏)/i.test(first))return false;
   const prefix='(?:(?:请你|请帮我|帮我|请|直接|现在)\\s*)?';
-  const host='live\\s*ui\\s*(?:本身|宿主)?(?:的)?\\s*';
+  const host='(?:live\\s*ui|ulemi)\\s*(?:本身|宿主)?(?:的)?\\s*';
   const control='(?:回复(?:信息|消息)?(?:的)?(?:UI|界面)?|消息(?:回复|界面)?|聊天(?:界面|窗口)?|界面|UI|布局|弹窗|输入框|输入区|导航|应用列表|开发入口)';
   const edit='(?:重新设计|修改|修复|改进|调整|更新|重做|改|修)';
   const actionFirst=new RegExp('^'+prefix+edit+'(?:一下|好)?\\s*'+host+control,'i');
@@ -41,7 +41,7 @@ function wantsHostUiEdit(prompt:string):boolean {
   return actionFirst.test(first)||subjectFirst.test(first);
 }
 
-function wantsDevelopmentContinuation(prompt:string){return /^(?:请\s*)?继续(?:修改|修复|改进|调整|调试)\s*liveui(?:\s*(?:本身|宿主|源码|源代码))?(?:[\s，。,:：]|$)/i.test(prompt.trim());}
+function wantsDevelopmentContinuation(prompt:string){return /^(?:请\s*)?继续(?:修改|修复|改进|调整|调试)\s*(?:liveui|ulemi)(?:\s*(?:本身|宿主|源码|源代码))?(?:[\s，。,:：]|$)/i.test(prompt.trim());}
 
 /** Reuse the selected host adapter. Credentials and untrusted body callbacks
  * never become model context, and native HTTP has an absolute response bound. */
