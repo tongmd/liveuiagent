@@ -116,6 +116,7 @@ final class LocalChat: ObservableObject {
     func send(_ input: String) {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard ready, !busy, let engine, !text.isEmpty else { return }
+        guard storageReadable else { error = "旧对话无法读取。请先点新对话保存旧文件备份，再开始。"; return }
         guard text.utf8.count <= 1200 else { error = "请把这条消息缩短到 约 400 个汉字以内。"; return }
         busy = true; error = nil
         var history: [Message] = []; var count = 0
