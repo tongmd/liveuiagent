@@ -2242,7 +2242,7 @@ function makeAgentResult(input: {
   const sections = groundedEntities.length
     ? groundedEntities.map((item) => ({
       label: compactText(String(item.name), 20),
-      value: compactText([typeof item.detail === 'string' ? item.detail : '', item.id ? `id ${item.id}` : ''].filter(Boolean).join(' · ') || "Created", 42),
+      value: compactText([typeof item.detail === 'string' ? item.detail : '', item.id ? `id ${item.id}` : ''].filter(Boolean).join(' · ') || "No detail", 42),
     }))
     : count === 0
       // 首次打开:诚实的空状态,不用字段标签互相拼占位文案。
@@ -2252,26 +2252,26 @@ function makeAgentResult(input: {
       ]
       : [
         { label: interaction?.resultSectionLabels?.[0] || "Focus", value: compactText(primary, 42) },
-        { label: interaction?.resultSectionLabels?.[1] || "Input", value: "Your input is saved" },
+        { label: interaction?.resultSectionLabels?.[1] || "Input", value: "Current input" },
         { label: interaction?.resultSectionLabels?.[2] || "Status", value: `Refreshed ${count} times` },
         { label: interaction?.resultSectionLabels?.[3] || "Next step", value: compactText(tertiary === primary ? secondary : tertiary, 42) },
       ].map((section) => (section.value.trim() === section.label.trim()
         // Never echo the label as its own value — an honest empty state beats placeholder noise.
-        ? { ...section, value: "Updated" }
+        ? { ...section, value: "Shown" }
         : section));
   return {
-    title: count ? `${subject} updated` : `${subject}`,
+    title: subject,
     value,
     subtitle: visibleResultSubtitle({ interaction, subject, count, payloadText, groundedResult: typeof input.payload?.result === 'string' ? input.payload.result as string : undefined }),
     sections,
     bullets: groundedEntities.length
       ? uniqueStrings([
-        `Created or retrieved ${groundedEntities.length} items and saved them.`,
+        `Showing ${groundedEntities.length} items.`,
         input.contextText ? `Using recent context: ${compactText(input.contextText, 36)}` : '',
-        `These items remain saved when you close and reopen the app.`,
+
       ]).slice(0, 3)
       : uniqueStrings([
-        count ? `${compactText(primary, 24)} is saved and shown at the top of the page.` : `Submit to run the action and display its result here.`,
+        count ? `${compactText(primary, 24)} is shown at the top of the page.` : `Submit to run the action and display its result here.`,
         input.contextText ? `Using recent context: ${compactText(input.contextText, 36)}` : '',
         `${interaction?.focus || subject} remains in context.`,
       ]).slice(0, 3),
@@ -5570,7 +5570,7 @@ function updateStoredAgentApp(stored: StoredApp, actionId: string, payload: Reco
     ...businessValues,
     ...(Object.keys(toolResults).length ? { toolResults } : {}),
     focus: interaction.focus,
-    outcome: `${subject} updated`,
+    outcome: `${subject} displayed`,
     summary: requiredText(visibleText, 'payload produced empty visible summary', 1200),
     actionId,
     createdAt: now,
@@ -6790,6 +6790,7 @@ export function nativeStateContract(state: Record<string, any>, historyRecords: 
       'appRecords[].recordId': 'Owner/app-scoped SQLite business record id; verify business values against actual app-state write/read receipts.',
       'entities[].appRecordId': 'Explicit link to an app-local business record. It does not change the host history selection.',
       proposedRecords: 'Staged host GUI/action history rows. These are separate from appRecords business rows.',
+      intentActionCount: 'Number of host UI turns, including read-only turns. This is not a business counter or evidence of a business write.',
     },
     historySelection: { selectedRecordId: selected, existsInHistory: selected !== null && historyRecords.some(row => row.id === selected) },
     businessRecordSnapshot: records.map(row => ({ recordId: row.recordId, revision: row.revision })),

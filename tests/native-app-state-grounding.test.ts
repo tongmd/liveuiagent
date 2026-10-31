@@ -135,3 +135,18 @@ for(const rejectReview of [false,true]) test(`review receives current committed 
  if(rejectReview){await assert.rejects(execute,/本地记录已保存/);assert.deepEqual(f.db.prepare('SELECT data_json,runtime_state_json FROM agent_apps WHERE app_id=?').get('parcels'),before);}else await execute();
  const actual:any=adapter.call('app_state.read_record',{recordId:'counter'});assert.equal(actual.record.values.count,2);assert.equal(actual.record.revision,2);assert.equal(reviews,1);assert.equal(step,4);
 });
+
+test('read-only local refresh never fabricates saved or created business results in host display/history',async t=>{
+ const f=await runtimeFixture(t);const row:any=f.db.prepare('SELECT * FROM agent_apps WHERE app_id=?').get('parcels');const pkg=JSON.parse(row.package_json),state=JSON.parse(row.runtime_state_json);pkg.actions.actions['refresh.run'].permissions=['storage.app','llm.call'];f.db.prepare('UPDATE agent_apps SET package_json=? WHERE app_id=?').run(JSON.stringify(pkg),'parcels');
+ const adapter=createAppStateAdapter(f.db,'fixture-owner','parcels',state.interaction.businessFields,['storage.app','app_state.write'])!;adapter.call('app_state.upsert_record',{recordId:'parcel42',values:{subject:'Parcel42',filter:'249'}});const before=f.db.prepare('SELECT * FROM native_app_records').all();let step=0,reviewed=0;
+ const chatCompletion=async(request:any)=>{const sys=request.messages[0].content,input=JSON.parse(request.messages[1].content.split('\n')[0]);
+  if(sys.includes('You analyze a GUI'))return reply({objective:'Read current local Parcel42 preference only'});
+  if(sys.includes('You are the Write Verifier'))throw Error('No writes permitted');
+  if(sys.includes('You are an INDEPENDENT evaluator')){assert.equal(input.appStateCalls.length,1);assert.equal(input.appStateCalls[0].api,'app_state.read_record');return reply({pass:true,deficiencies:[]});}
+  if(sys.includes('You are the backend workflow'))return reply(++step===1?{calls:[{api:'app_state.read_record',args:{recordId:'parcel42'}}]}:{done:true,summary:'Parcel42 current target is 249',entities:[{id:'parcel42',name:'Parcel42',detail:'Current target 249',appRecordId:'parcel42'}],stats:[{label:'Target',value:'249'}]});
+  if(sys.includes('independently verify')){reviewed++;const outcome=input.outcome;assert.doesNotMatch(JSON.stringify(outcome.proposedRuntimeState.intentResult),/saved|created|updated/i);assert.doesNotMatch(outcome.proposedRecords[0].outcome,/saved|created|updated/i);assert.equal(Object.values(outcome.toolResults).filter((r:any)=>r.source==='app-state'&&r.api==='app_state.upsert_record').length,0);return reply({pass:true,reason:'Actual read without business write or fabricated success wording'});}
+  return reply({proceed:true,instructions:'Read only and display actual value',constraints:['No business writes'],expectedOutcome:'Show existing local target'});
+ };
+ const result:any=await f.runtime.action({appId:'parcels',actionId:'refresh.run',user:'fixture-owner',eventPayload:{subject:'Parcel42'},llm:{model:'fixture-only',chatCompletion}}as any);
+ assert.equal(reviewed,1);assert.equal(step,2);assert.deepEqual(f.db.prepare('SELECT * FROM native_app_records').all(),before);assert.equal(result.runtimeState.entities[0].appState.filter,'249');assert.doesNotMatch(JSON.stringify(result.runtimeState.intentResult),/saved|created|updated/i);
+});
