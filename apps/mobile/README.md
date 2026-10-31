@@ -12,7 +12,7 @@ The interface respects reduced-motion settings and keeps login errors next to th
 
 ## On-device assistant
 
-Open **本机 AI** from sign-in or the account menu. No account or API key is needed for local conversation. Android offers Gemma 4 E4B; iOS offers E4B and the smaller E2B with a device-memory recommendation. Choose a model, download it, and the app verifies and configures the local runtime. Downloads can be paused and continued. Models and local conversations stay in private app storage.
+Open the on-device assistant from sign-in or the account menu. No account or API key is needed for local conversation. Android offers Gemma 4 E4B; iOS offers E4B and the smaller E2B with a device-memory recommendation. Choose a model, download it, and the app verifies and configures the local runtime. Downloads can be paused and continued. Models and local conversations stay in private app storage.
 
 The files come from the LiteRT Community repositories linked by [Google’s official Gemma 4 guide](https://developers.google.com/edge/litert-lm/models/gemma-4). Downloads use immutable revisions, expected byte counts and SHA-256 verification before activation. E4B is 3,659,530,240 bytes; E2B is 2,588,147,712 bytes. Leave additional space for runtime caches. An incomplete or corrupt download is never passed to the inference engine.
 
@@ -22,7 +22,7 @@ Local conversation and the hosted application workspace are separate. This versi
 
 ## Android
 
-Open `android/` in Android Studio, or use its Gradle wrapper with JDK 17 and Android SDK 35:
+Open `android/` in Android Studio, or use its Gradle wrapper with JDK 21 and Android SDK 35:
 
 ```sh
 cd apps/mobile/android
