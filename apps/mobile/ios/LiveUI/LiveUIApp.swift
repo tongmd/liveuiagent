@@ -43,7 +43,7 @@ final class BrowserModel: ObservableObject {
     func reload() {
         workspaceError = nil
         loading = true
-        webView?.reload()
+        if let url = connection?.url { webView?.load(URLRequest(url: url)) }
     }
     func cancelDownloads() {
         activeDownloads.values.forEach { $0.cancel { _ in } }
