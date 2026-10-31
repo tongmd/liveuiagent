@@ -2,6 +2,29 @@ import XCTest
 @testable import LiveUI
 
 final class DeviceAccessTests: XCTestCase {
+    func testPermissionPromptDoesNotConsumeOperationWindowAndGrantStartsOnlyOnce() {
+        var window = DevicePermissionWindow()
+        let request = window.begin()
+        XCTAssertNil(window.startedAt)
+        let afterLongConsent = Date(timeIntervalSince1970: 10_000)
+        XCTAssertTrue(window.accepts(request))
+        XCTAssertEqual(window.startAuthorizedOperation(at: afterLongConsent), request)
+        XCTAssertEqual(window.startedAt, afterLongConsent)
+        XCTAssertNil(window.startAuthorizedOperation(at: afterLongConsent.addingTimeInterval(1)))
+        XCTAssertEqual(window.startedAt, afterLongConsent)
+    }
+    func testDenialOrBackgroundCancellationRejectsLateGrantAndAllowsFreshRequest() {
+        var window = DevicePermissionWindow()
+        let pending = window.begin()
+        window.stop() // Same terminal operation used by denial and stopAll.
+        XCTAssertFalse(window.accepts(pending))
+        XCTAssertNil(window.startAuthorizedOperation())
+        let next = window.begin()
+        XCTAssertEqual(window.startAuthorizedOperation(), next)
+        window.stop()
+        XCTAssertFalse(window.accepts(next))
+        XCTAssertNil(window.startedAt)
+    }
     func testStoppedSessionRejectsLateReadings() {
         var session = DeviceAccessSession()
         let request = session.begin()

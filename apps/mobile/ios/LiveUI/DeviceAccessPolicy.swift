@@ -8,6 +8,21 @@ struct DeviceAccessSession {
     func accepts(_ value: UUID) -> Bool { id == value }
 }
 
+// A scan/fix window begins after system authorization, not while its prompt is
+// waiting for a decision. Duplicate authorization callbacks cannot start twice.
+struct DevicePermissionWindow {
+    private(set) var id: UUID?
+    private(set) var startedAt: Date?
+    mutating func begin() -> UUID { let value = UUID(); id = value; startedAt = nil; return value }
+    mutating func startAuthorizedOperation(at now: Date = Date()) -> UUID? {
+        guard let id, startedAt == nil else { return nil }
+        startedAt = now
+        return id
+    }
+    mutating func stop() { id = nil; startedAt = nil }
+    func accepts(_ value: UUID) -> Bool { id == value }
+}
+
 enum DeviceAccessPolicy {
     static let discoverySeconds: Double = 15
     static let locationSeconds: Double = 20
