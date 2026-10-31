@@ -103,14 +103,61 @@ public final class NativeTests extends Instrumentation {
                 });
             } finally { runOnMainSync(a::finish); }
         });
-        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (7 tests)\n" : "\nFAILURES!!! Tests run: 7, Failures: " + failed + "\n");
-        result.putInt("numtests", 7); finish(Activity.RESULT_OK, result);
+        check("workspaceHasOneHeaderAndNoBrowserProgress", () -> {
+            Activity a = startActivitySync(new android.content.Intent(getTargetContext(), MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            android.os.SystemClock.sleep(650);
+            final android.webkit.WebView[] page = new android.webkit.WebView[1];
+            try {
+                runOnMainSync(() -> {
+                    try {
+                        java.net.URI endpoint = ConnectionPolicy.parse(ConnectionPolicy.DEFAULT_URL);
+                        Class<?> type = Class.forName("com.stonezhang.liveui.MainActivity$Session");
+                        java.lang.reflect.Constructor<?> c = type.getDeclaredConstructors()[0]; c.setAccessible(true);
+                        Object session = c.newInstance(endpoint, "fixture", "fixture");
+                        set(a, "currentSession", session); set(a, "endpoint", endpoint); set(a, "authenticated", true);
+                        invoke(a, "openWorkspace");
+                        page[0] = (android.webkit.WebView) get(a, "web"); page[0].stopLoading();
+                        page[0].setWebViewClient(new android.webkit.WebViewClient());
+                        require(!hasHorizontalProgress(a.getWindow().getDecorView()));
+                        require(page[0].getSettings().getUserAgentString().contains("UlemiMobile/1"));
+                        page[0].loadDataWithBaseURL(ConnectionPolicy.DEFAULT_URL, "<meta name='viewport' content='width=device-width,initial-scale=1'><style>body{margin:0}textarea{position:fixed;bottom:0;width:90%}</style><button data-ulemi-native-menu='true'>Account</button><h1>Workspace fixture</h1><textarea>Keep draft</textarea>", "text/html", "utf-8", null);
+                    } catch (Exception e) { throw new AssertionError(e); }
+                });
+                android.os.SystemClock.sleep(1200);
+                runOnMainSync(() -> { try {
+                    java.lang.reflect.Method await = MainActivity.class.getDeclaredMethod("awaitWorkspace", int.class, int.class); await.setAccessible(true); await.invoke(a, (int)get(a,"workspaceAttempt"), 0);
+                } catch (Exception e) { throw new AssertionError(e); } });
+                android.os.SystemClock.sleep(900);
+                runOnMainSync(() -> { try {
+                    require(((android.view.View)get(a,"nativeBar")).getVisibility() == android.view.View.GONE);
+                    require(((android.view.View)get(a,"handoff")).getVisibility() == android.view.View.GONE);
+                    require(page[0].getHeight() > a.getResources().getDisplayMetrics().heightPixels / 2);
+                    java.lang.reflect.Method fail = MainActivity.class.getDeclaredMethod("workspaceError", String.class, boolean.class); fail.setAccessible(true); fail.invoke(a,"Network fixture",false);
+                    require(((android.view.View)get(a,"nativeBar")).getVisibility() == android.view.View.VISIBLE);
+                    require(((android.view.View)get(a,"handoffSpinner")).getVisibility() == android.view.View.GONE);
+                    require(((android.view.View)get(a,"retryLoad")).getVisibility() == android.view.View.VISIBLE);
+                    require(!hasHorizontalProgress(a.getWindow().getDecorView()));
+                } catch (Exception e) { throw new AssertionError(e); } });
+            } finally {
+                runOnMainSync(() -> { try { set(a,"currentSession",null); } catch(Exception ignored) {} a.finish(); });
+            }
+        });
+        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (8 tests)\n" : "\nFAILURES!!! Tests run: 8, Failures: " + failed + "\n");
+        result.putInt("numtests", 8); finish(Activity.RESULT_OK, result);
     }
     private void check(String name, Check task) {
-        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 7); b.putInt("current", ++current);
+        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 8); b.putInt("current", ++current);
         sendStatus(1, b);
         try { task.run(); sendStatus(0, b); }
         catch (Throwable e) { failed++; b.putString("stack", android.util.Log.getStackTraceString(e)); sendStatus(-2, b); }
+    }
+    private static Object get(Activity a, String name) throws Exception { java.lang.reflect.Field f=MainActivity.class.getDeclaredField(name); f.setAccessible(true); return f.get(a); }
+    private static void set(Activity a, String name, Object value) throws Exception { java.lang.reflect.Field f=MainActivity.class.getDeclaredField(name); f.setAccessible(true); f.set(a,value); }
+    private static void invoke(Activity a, String name) throws Exception { java.lang.reflect.Method m=MainActivity.class.getDeclaredMethod(name); m.setAccessible(true); m.invoke(a); }
+    private static boolean hasHorizontalProgress(android.view.View v) {
+        if(v instanceof android.widget.ProgressBar && !((android.widget.ProgressBar)v).isIndeterminate()) return true;
+        if(v instanceof android.view.ViewGroup) for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++) if(hasHorizontalProgress(((android.view.ViewGroup)v).getChildAt(i))) return true;
+        return false;
     }
     private static String labels(android.view.View v) {
         String value = v instanceof android.widget.TextView ? ((android.widget.TextView) v).getText().toString() : "";

@@ -14,6 +14,8 @@ final class BrowserModel: ObservableObject {
     @Published var message: String?
     @Published var loading = true
     @Published var workspaceReady = false
+    @Published var hasNativeMenu = false
+    @Published var showNativeMenu = false
     @Published var authenticated = false
     @Published var workspaceError: String?
     @Published var canGoBack = false
@@ -58,6 +60,8 @@ final class BrowserModel: ObservableObject {
         authenticated = false
         webView = nil
         workspaceReady = false
+        hasNativeMenu = false
+        showNativeMenu = false
         workspaceError = nil
         loading = true
         self.message = message
@@ -74,6 +78,8 @@ final class BrowserModel: ObservableObject {
         guard candidate.isAppConnection else { throw LoginVerifier.LoginError.invalidAddress }
         try CredentialStore.save(candidate)
         workspaceReady = false
+        hasNativeMenu = false
+        showNativeMenu = false
         workspaceError = nil
         loading = true
         connection = candidate
@@ -132,7 +138,7 @@ struct RootView: View {
                 .background(AppStyle.background)
                 .navigationTitle(browser.connection == nil ? "" : "Ulemi")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar(browser.connection == nil ? .hidden : .visible, for: .navigationBar)
+                .toolbar(browser.connection == nil || (browser.hasNativeMenu && browser.workspaceError == nil) ? .hidden : .visible, for: .navigationBar)
                 .toolbar {
                     if browser.connection != nil {
                         ToolbarItem(placement: .navigationBarLeading) {
@@ -192,6 +198,15 @@ struct RootView: View {
                 completedGuide = true
                 showGuide = false
             }
+        }
+        .confirmationDialog("Ulemi", isPresented: $browser.showNativeMenu, titleVisibility: .visible) {
+            Button("返回") { browser.goBack() }
+            Button("本机对话") { localChat = true }
+            Button("使用指引") { showGuide = true }
+            Button("重新载入") { browser.reload() }
+            if !browser.activeDownloads.isEmpty { Button("取消下载", role: .destructive) { browser.cancelDownloads() } }
+            Button("退出登录", role: .destructive) { confirmLogout = true }
+            Button("取消", role: .cancel) { }
         }
         .confirmationDialog("退出当前账号？", isPresented: $confirmLogout, titleVisibility: .visible) {
             Button("退出登录", role: .destructive) { browser.disconnect() }

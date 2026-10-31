@@ -40,7 +40,8 @@ public final class MainActivity extends Activity {
     private int workspaceAttempt;
     private final Handler ui = new Handler(Looper.getMainLooper());
     private TextView status;
-    private ProgressBar loading;
+    private View nativeBar;
+    private ProgressBar handoffSpinner;
     private Button connect;
     private URI endpoint;
     private String username = "", password = "";
@@ -135,7 +136,8 @@ public final class MainActivity extends Activity {
                 if (loginHeader != null) loginHeader.setVisibility(keyboardOpen ? View.GONE : View.VISIBLE);
                 if (loginWaitlist != null) loginWaitlist.setVisibility(keyboardOpen ? View.GONE : View.VISIBLE);
             }
-            return insets;
+            // The native root owns system and IME insets; descendants must not apply them again.
+            return Build.VERSION.SDK_INT >= 30 ? WindowInsets.CONSUMED : insets.consumeSystemWindowInsets();
         });
         setContentView(r); r.requestApplyInsets(); return r;
     }
@@ -252,16 +254,19 @@ public final class MainActivity extends Activity {
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL); bar.setPadding(dp(12), 0, dp(4), 0);
         TextView title = new TextView(this); title.setText(R.string.app_name); title.setTextSize(18); title.setTextColor(Color.BLACK); bar.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
         Button menu = new Button(this); menu.setText("⋮"); menu.setTextSize(22); menu.setContentDescription("菜单"); menu.setOnClickListener(this::showMenu); bar.addView(menu, new LinearLayout.LayoutParams(dp(52), -1));
-        root.addView(bar, new LinearLayout.LayoutParams(-1, dp(40)));
-        loading = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); loading.setMax(100); root.addView(loading, new LinearLayout.LayoutParams(-1, dp(2)));
+        nativeBar = bar;
+        root.addView(bar, new LinearLayout.LayoutParams(-1, dp(48)));
         workspace = new FrameLayout(this); root.addView(workspace, new LinearLayout.LayoutParams(-1, 0, 1));
         web = new WebView(this); web.setBackgroundColor(Color.WHITE); workspace.addView(web, new FrameLayout.LayoutParams(-1, -1));
         handoff = new LinearLayout(this); handoff.setOrientation(LinearLayout.VERTICAL); handoff.setGravity(Gravity.CENTER); handoff.setPadding(dp(28), dp(28), dp(28), dp(28)); handoff.setBackgroundColor(Color.WHITE);
         handoff.addView(icon(56), new LinearLayout.LayoutParams(dp(56), dp(56)));
         handoffText = text("正在打开你的空间…", 17, 0xff555555); handoffText.setGravity(Gravity.CENTER); handoffText.setPadding(0, dp(22), 0, dp(24)); handoff.addView(handoffText);
         retryLoad = button("重试", true); retryLoad.setVisibility(View.GONE); retryLoad.setOnClickListener(v -> reloadWorkspace()); handoff.addView(retryLoad, new LinearLayout.LayoutParams(dp(180), dp(52)));
+        handoffSpinner = new ProgressBar(this); handoffSpinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(0xff222222));
+        handoff.addView(handoffSpinner, 2, new LinearLayout.LayoutParams(dp(24), dp(24)));
+        handoff.setClickable(true); handoff.setFocusable(true);
         workspace.addView(handoff, new FrameLayout.LayoutParams(-1, -1)); loadFailed = false;
-        WebSettings settings = web.getSettings(); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true); settings.setDatabaseEnabled(true);
+        WebSettings settings = web.getSettings(); settings.setUserAgentString(settings.getUserAgentString() + " UlemiMobile/1"); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true); settings.setDatabaseEnabled(true);
         settings.setAllowFileAccess(false); settings.setAllowContentAccess(false); settings.setAllowFileAccessFromFileURLs(false); settings.setAllowUniversalAccessFromFileURLs(false);
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW); settings.setSafeBrowsingEnabled(true); settings.setMediaPlaybackRequiresUserGesture(true);
         settings.setSupportMultipleWindows(true); settings.setJavaScriptCanOpenWindowsAutomatically(false); settings.setBuiltInZoomControls(false);
@@ -282,7 +287,7 @@ public final class MainActivity extends Activity {
                 } else { handler.cancel(); }
             }
             @Override public void onPageCommitVisible(WebView view, String url) { if (authBootstrap != null) authBootstrap.close(); if (!loadFailed) awaitWorkspace(workspaceAttempt, 0); }
-            @Override public void onPageFinished(WebView view, String url) { loading.setVisibility(View.GONE); }
+
             @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) { handler.cancel(); workspaceError("暂时无法安全打开，请稍后重试", false); }
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) { if (request.isForMainFrame()) workspaceError("暂时无法打开，请检查网络后重试", false); }
             @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
@@ -290,7 +295,6 @@ public final class MainActivity extends Activity {
             }
         });
         web.setWebChromeClient(new WebChromeClient() {
-            @Override public void onProgressChanged(WebView view, int progress) { loading.setProgress(progress); loading.setVisibility(progress == 100 ? View.GONE : View.VISIBLE); }
             @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
                 if (upload != null) upload.onReceiveValue(null); upload = callback;
                 Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
@@ -300,6 +304,11 @@ public final class MainActivity extends Activity {
                 return true;
             }
             @Override public boolean onJsPrompt(WebView view, String url, String message, String value, JsPromptResult result) {
+                if ("__ulemi_menu_v1__".equals(message)) {
+                    result.cancel();
+                    if (authenticated && ConnectionPolicy.sameOrigin(endpoint, url) && ConnectionPolicy.sameOrigin(endpoint, view.getUrl())) showAccountMenu();
+                    return true;
+                }
                 if (!"liveui.export.v1".equals(message)) return false;
                 result.cancel();
                 if (blobNonce == null || !ConnectionPolicy.sameOrigin(endpoint, url)) return true;
@@ -334,9 +343,11 @@ public final class MainActivity extends Activity {
     }
     private void awaitWorkspace(int attempt, int count) {
         if (web == null || loadFailed || attempt != workspaceAttempt || isFinishing()) return;
-        web.evaluateJavascript("Boolean([...document.querySelectorAll('textarea')].some(e=>e.getClientRects().length))", ready -> {
+        web.evaluateJavascript("(() => { document.documentElement.dataset.ulemiShell='true'; return {ready: [...document.querySelectorAll('textarea')].some(e=>e.getClientRects().length), menu: [...document.querySelectorAll('[data-ulemi-native-menu=\"true\"]')].some(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).pointerEvents!=='none')}; })()", ready -> {
             if (web == null || loadFailed || attempt != workspaceAttempt || isFinishing()) return;
-            if ("true".equals(ready)) revealWorkspace();
+            boolean shown = false;
+            try { JSONObject state = new JSONObject(ready); shown = state.optBoolean("ready"); if (shown) nativeBar.setVisibility(state.optBoolean("menu") ? View.GONE : View.VISIBLE); } catch (Exception ignored) { }
+            if (shown) revealWorkspace();
             else if (count >= 60) workspaceError("打开时间有点长，请重试", false);
             else ui.postDelayed(() -> awaitWorkspace(attempt, count + 1), 250);
         });
@@ -347,28 +358,28 @@ public final class MainActivity extends Activity {
         handoff.animate().alpha(0).setDuration(220).withEndAction(() -> handoff.setVisibility(View.GONE)).start();
     }
     private void workspaceError(String message, boolean expired) {
-        loadFailed = true; loading.setVisibility(View.GONE); handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE);
+        loadFailed = true; nativeBar.setVisibility(View.VISIBLE); handoffSpinner.setVisibility(View.GONE); handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE);
         handoffText.setText(message); retryLoad.setVisibility(View.VISIBLE); retryLoad.setText(expired ? "重新登录" : "重试");
         retryLoad.setOnClickListener(v -> { if (expired) logout(); else reloadWorkspace(); });
     }
     private void reloadWorkspace() {
-        loadFailed = false; workspaceAttempt++; handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE); handoffText.setText("正在打开你的空间…"); retryLoad.setVisibility(View.GONE);
+        loadFailed = false; workspaceAttempt++; handoffSpinner.setVisibility(View.VISIBLE); handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE); handoffText.setText("正在打开你的空间…"); retryLoad.setVisibility(View.GONE);
         web.reload();
     }
-    private void showMenu(View anchor) {
-        PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add(0, 1, 0, "刷新"); menu.getMenu().add(0, 5, 1, "使用引导"); menu.getMenu().add(0, 2, 2, "在浏览器打开"); menu.getMenu().add(0, 3, 3, "分享 Ulemi"); menu.getMenu().add(0, 4, 4, "退出登录");
-        menu.getMenu().add(0, 6, 5, "离线助手 · Gemma 4");
-        menu.setOnMenuItemClickListener(item -> {
-            switch (item.getItemId()) {
-                case 6: startActivity(new Intent(this, LocalAssistantActivity.class)); break;
-                case 1: reloadWorkspace(); break;
-                case 5: showGuide(); break;
-                case 2: external(endpoint.toString()); break;
-                case 3: startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, endpoint.toString()), "分享 Ulemi")); break;
-                case 4: new AlertDialog.Builder(this).setMessage("退出后会关闭 Ulemi。你的应用和内容会保留，重新打开即可登录。").setNegativeButton("取消", null).setPositiveButton("退出", (d, w) -> logout()).show(); break;
-            } return true;
-        }); menu.show();
+    private void showMenu(View anchor) { showAccountMenu(); }
+    private void showAccountMenu() {
+        if (isFinishing() || isDestroyed()) return;
+        String[] items = {"离线助手 · Gemma 4", "使用引导", "重新载入", "在浏览器打开", "分享 Ulemi", "退出登录"};
+        new AlertDialog.Builder(this).setTitle("Ulemi").setItems(items, (dialog, item) -> {
+            switch (item) {
+                case 0: startActivity(new Intent(this, LocalAssistantActivity.class)); break;
+                case 1: showGuide(); break;
+                case 2: reloadWorkspace(); break;
+                case 3: external(endpoint.toString()); break;
+                case 4: startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, endpoint.toString()), "分享 Ulemi")); break;
+                case 5: new AlertDialog.Builder(this).setMessage("退出后会关闭 Ulemi。你的应用和内容会保留，重新打开即可登录。").setNegativeButton("取消", null).setPositiveButton("退出", (d, w) -> logout()).show(); break;
+            }
+        }).setNegativeButton("取消", null).show();
     }
     private void external(String value) {
         try {
