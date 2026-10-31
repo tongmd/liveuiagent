@@ -35,7 +35,7 @@ jobs:
         working-directory: apps/mobile/android
         run: |
           mkdir -p "$RUNNER_TEMP/update-fixtures"
-          ./gradlew --no-daemon -PupdateVersionCode=1001 -PupdateVersionName=update-test-old assembleDebug assembleDebugAndroidTest
+          ./gradlew --no-daemon -PupdateVersionCode=1001 -PupdateVersionName=update-test-old -PupdateTestRunner=com.stonezhang.liveui.UpdateFlowTests assembleDebug assembleDebugAndroidTest
           cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/update-fixtures/old.apk"
           cp app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk "$RUNNER_TEMP/update-fixtures/tests.apk"
           ./gradlew --no-daemon -PupdateVersionCode=1002 -PupdateVersionName=update-test-new assembleDebug

@@ -21,13 +21,20 @@ def main():
     args.output.mkdir(parents=True, exist_ok=True)
 
     def adb(*cmd, data=None, timeout=60, check=True):
-        return subprocess.run(['adb', *cmd], input=data, capture_output=True, timeout=timeout, check=check)
+        result = subprocess.run(['adb', *cmd], input=data, capture_output=True, timeout=timeout, check=False)
+        if check and result.returncode:
+            (args.output / 'adb-failure.json').write_text(json.dumps({'command': list(cmd), 'returncode': result.returncode,
+                'stdout': result.stdout.decode(errors='replace'), 'stderr': result.stderr.decode(errors='replace')}, indent=2))
+            raise RuntimeError('adb command failed; see adb-failure.json')
+        return result
 
     def phase(name):
-        run = adb('shell', 'am', 'instrument', '-w', '-e', 'phase', name, RUNNER, timeout=120)
+        run = adb('shell', 'am', 'instrument', '-w', '-e', 'phase', name, RUNNER, timeout=120, check=False)
         output = run.stdout.decode(errors='replace') + run.stderr.decode(errors='replace')
         (args.output / (name + '.log')).write_text(output)
-        if 'UPDATE_TEST_OK ' + name not in output:
+        if run.returncode or 'UPDATE_TEST_OK ' + name not in output:
+            (args.output / 'instrumentations.txt').write_bytes(adb('shell', 'pm', 'list', 'instrumentation', check=False).stdout)
+            (args.output / 'crash-logcat.txt').write_bytes(adb('logcat', '-d', '-b', 'crash', check=False).stdout)
             raise RuntimeError('Instrumentation did not pass: ' + name)
 
     def update_preferences():

@@ -49,10 +49,12 @@ final class AppUpdater {
     }
     void resume() {
         resumed = true; foreground = new WeakReference<>(this); schedule(activity);
-        if (waitingPermission) {
-            waitingPermission = false;
-            if (activity.getPackageManager().canRequestPackageInstalls()) { ready(true, true); return; }
-            message("Installation permission is off. Your update stays ready.");
+        long permissionAt = prefs(activity).getLong("permission_requested_at", 0);
+        if (waitingPermission || permissionAt > 0) {
+            waitingPermission = false; prefs(activity).edit().remove("permission_requested_at").apply();
+            long age = System.currentTimeMillis() - permissionAt;
+            if (age >= 0 && age < 10L * 60 * 1000 && activity.getPackageManager().canRequestPackageInstalls()) { ready(true, true); return; }
+            if (!activity.getPackageManager().canRequestPackageInstalls()) message("Installation permission is off. Your update stays ready.");
         }
         boolean fromNotice = activity.getIntent().getBooleanExtra("ulemi_update_open", false);
         activity.getIntent().removeExtra("ulemi_update_open");
@@ -136,9 +138,9 @@ final class AppUpdater {
             }
         }
         if (!activity.getPackageManager().canRequestPackageInstalls()) {
-            waitingPermission = true;
+            waitingPermission = true; prefs(activity).edit().putLong("permission_requested_at", System.currentTimeMillis()).commit();
             try { activity.startActivity(new Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:" + activity.getPackageName()))); }
-            catch (Exception e) { waitingPermission = false; message("Open Android Settings and allow Ulemi to install app updates."); }
+            catch (Exception e) { waitingPermission = false; prefs(activity).edit().remove("permission_requested_at").apply(); message("Open Android Settings and allow Ulemi to install app updates."); }
             return;
         }
         message("Preparing update…");
