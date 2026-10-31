@@ -48,6 +48,10 @@ jobs:
           sleep 3
           mkdir -p mobile-artifacts
           xcrun simctl io "$LIVEUI_SIMULATOR" screenshot mobile-artifacts/ios-login.png
+          xcrun simctl terminate "$LIVEUI_SIMULATOR" com.stonezhang.liveui
+          xcrun simctl launch "$LIVEUI_SIMULATOR" com.stonezhang.liveui --preview-local-assistant
+          sleep 3
+          xcrun simctl io "$LIVEUI_SIMULATOR" screenshot mobile-artifacts/ios-local-assistant.png
           ditto -c -k --keepParent "$RUNNER_TEMP/liveui-simulator/Build/Products/Debug-iphonesimulator/LiveUI.app" mobile-artifacts/liveUI-ios-simulator.zip
       - name: Build unsigned iPhone app
         run: |
@@ -78,12 +82,13 @@ jobs:
         run: |
           ./tests/run-policy-tests.sh
           ./tests/run-model-tests.sh
-          ./gradlew --no-daemon assembleDebug assembleRelease lintDebug
+          ./gradlew --no-daemon -Parm64Only=true assembleDebug assembleDebugAndroidTest assembleRelease lintDebug
       - uses: actions/upload-artifact@v4
         with:
           name: liveUI-android-unsigned
           path: |
             apps/mobile/android/app/build/outputs/apk/debug/*.apk
             apps/mobile/android/app/build/outputs/apk/release/*unsigned.apk
+            apps/mobile/android/app/build/outputs/apk/androidTest/debug/*.apk
           if-no-files-found: error
           retention-days: 7

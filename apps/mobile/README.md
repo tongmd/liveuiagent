@@ -29,7 +29,7 @@ cd apps/mobile/android
 ./gradlew assembleDebug
 ```
 
-The APK is written to `app/build/outputs/apk/debug/`. A debug APK can be installed directly; a release APK must be signed with your own persistent Android signing key before distribution. Keep that key outside this repository. Future updates must use the same application ID and signing key.
+The APK is written to `app/build/outputs/apk/debug/`. Use `-Parm64Only=true` for the smaller ARM64 phone package distributed by CI. The default build retains both supported ABIs; E4B local inference requires ARM64 and an 8 GB-class device. A debug APK can be installed directly; a release APK must be signed with your own persistent Android signing key before distribution. Keep that key outside this repository. Future updates must use the same application ID and signing key.
 
 ## iPhone and iPad
 
