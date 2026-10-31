@@ -13,6 +13,7 @@ import { createNativeHarnessBindings } from './native-harness.js';
 import { createPersonalization } from './personalization.js';
 import { createCompleteApps } from './complete-apps.js';
 import { createRuntimeSettings } from './runtime-settings.js';
+import { createAppHarness } from './app-harness.js';
 import express from 'express';
 import cors from 'cors';
 import path from 'node:path';
@@ -107,7 +108,7 @@ app.get('/agent/identity', (req, res) => {
 app.get('/health',(_req,res)=>res.json({status:'ok',service:'liveuiagent',...(process.env.LIVEUIBENCH_RUN_ID?{benchmarkRunId:process.env.LIVEUIBENCH_RUN_ID}:{})}));
 const evaluatorArtifacts=createEvaluatorArtifacts(process.env.LIVEUI_EVALUATION_DIR || path.join(path.dirname(dbPath),'evaluations'),requestUser);
 evaluatorArtifacts.install(app);
-const personal = createPersonalization(db, requestUser, llmConfigFromRequest);
+const personal = createPersonalization(db, requestUser, llmConfigFromRequest, (req,id,work)=>appHarness.during(req,id,work));
 personal.install(app);
 if (process.env.LIVEUI_DEFAULT_HARNESS && !harnessIds.includes(process.env.LIVEUI_DEFAULT_HARNESS as HarnessId)) throw new Error('LIVEUI_DEFAULT_HARNESS must name a supported harness');
 const completeApps=createCompleteApps(db,personal,requestUser,llmConfigFromRequest,{
@@ -139,6 +140,21 @@ const runtimeSettings=createRuntimeSettings(db,{
   async modelOf(req,harness){return harnessIntegration.model(harness,harnessSelection(req));},
 });
 runtimeSettings.install(app);
+const appHarness=createAppHarness(db,{
+  userOf:requestUser,binding:nativeHarnessBindings,
+  choicesOf:req=>harnessIntegration.choices(harnessSelection(req)),
+  async modelOf(req,id){
+    const info=await harnessIntegration.model(id,harnessSelection(req));
+    return {...info,...(id==='native'?{models:llmSettingsView(db,requestUser(req)).effective.models}:{} )};
+  },
+  connect(req,harness,model,appId){
+    return harnessIntegration.connect(harness,{
+      ...harnessSelection(req),appId,personalContext:JSON.stringify(personal.context(requestUser(req),appId)),
+      requested:{model},resolve:requested=>resolveLlm(db,requestUser(req),requested).llm,
+    });
+  },
+});
+appHarness.install(app);
 const development=installDevelopmentRoutes(app,db,{
   userOf:requestUser,llmOf:llmConfigFromRequest,harnessFor:req=>runtimeSettings.forRequest(req),
   context:createDevelopmentContext(db,{runtimeRoot:root,memoryOf:(owner,appId)=>personal.recall(owner,appId),dshRoot:process.env.LIVEUI_DEVELOPMENT_DSH_ROOT}),
@@ -162,7 +178,7 @@ function llmConfigFromRequest(req: express.Request): LlmRuntimeConfig | undefine
   const requested = {
     apiKey: String(explicit.apiKey ?? req.header('x-liveuiagent-llm-key') ?? ''),
     apiBase: String(explicit.apiBase ?? req.header('x-liveuiagent-llm-base') ?? ''),
-    model: String(explicit.model ?? req.header('x-liveuiagent-llm-model') ?? ''),
+    model: String(appHarness.requestModel(req)),
   };
   return harnessIntegration.connect(harness,{
     ...harnessSelection(req),appId:String(body.appId||body.selectedAppId||'')||undefined,delivery:body.delivery,
@@ -229,7 +245,7 @@ async function respondWithProgress(
   const startedAt = Date.now();
   const llm = llmConfigFromRequest(req);
   const owner = requestUser(req);
-  const execute=async()=>{await personal.prepare(req,llm);const result=await exec(llm);return result&&typeof result==='object'?{...result,execution:{harness:runtimeSettings.forRequest(req,req.body?.appId||req.body?.selectedAppId),delivery:'native',model:llm?.model||llmSettingsView(db,owner).effective.model},contextualMemory:personal.requestStatus(req)}:result;};
+  const execute=()=>appHarness.during(req,req.body?.appId||req.body?.selectedAppId,async()=>{await personal.prepare(req,llm);const result=await exec(llm);return result&&typeof result==='object'?{...result,execution:{harness:runtimeSettings.forRequest(req,req.body?.appId||req.body?.selectedAppId),delivery:'native',model:llm?.model||llmSettingsView(db,owner).effective.model},contextualMemory:personal.requestStatus(req)}:result;});
   const taskHarness = runtimeSettings.forRequest(req,req.body?.appId||req.body?.selectedAppId);
   const taskPrompt = typeof req.body?.prompt==='string' ? req.body.prompt : req.body?.actionId ? JSON.stringify({appId:req.body.appId,actionId:req.body.actionId,input:req.body.eventPayload}) : '';
   const taskRowId = taskLabel ? recordTaskStart(owner, taskLabel, taskPrompt) : 0;
@@ -359,6 +375,8 @@ app.post('/agent/patch-canvas', async (req, res, next) => {
 app.post('/agent/patch-app', async (req, res, next) => {
   try {
     const body = requireBody(req);
+    const appId=requireText(body.appId, 'appId required');
+    const outcome=await appHarness.during(req,appId,async()=>{
     const llm=await personal.prepare(req,llmConfigFromRequest(req));
     const result=await agentGateway.patchApp({
       appId: requireText(body.appId, 'appId required'),
@@ -368,7 +386,8 @@ app.post('/agent/patch-app', async (req, res, next) => {
       user: requestUser(req),
       llm,
     });
-    res.json({...result,execution:{harness:runtimeSettings.forRequest(req,body.appId),delivery:'native',model:llm?.model||llmSettingsView(db,requestUser(req)).effective.model}});
+    return {...result,execution:{harness:runtimeSettings.forRequest(req,body.appId),delivery:'native',model:llm?.model||llmSettingsView(db,requestUser(req)).effective.model}};
+    });res.json(outcome);
   } catch (e) { next(e); }
 });
 
@@ -606,7 +625,10 @@ function evaluatorGateway(req:express.Request) {
   const user=requestUser(req);
   return {
     queryState:(input:any={})=>agentGateway.queryState({...input,user}),
-    action:(input:any)=>agentGateway.action({...input,user,llm:llmConfigFromRequest(req)}),
+    action:(input:any)=>{
+      const selected=Object.assign(Object.create(req),{body:{...req.body,appId:input.appId}});
+      return appHarness.during(selected,input.appId,()=>agentGateway.action({...input,user,llm:llmConfigFromRequest(selected)}));
+    },
   };
 }
 

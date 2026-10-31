@@ -38,7 +38,7 @@ export function createRuntimeSettings(db: Database.Database, options: {
     if (explicit !== undefined) {
       const harness = validate(req, explicit);
       if (appHarness && harness !== appHarness) {
-        throw runtimeError('This app belongs to a different harness. Existing apps keep their original runtime; create a new app to use another harness.', 'app_harness_mismatch', 409);
+        throw runtimeError('This app belongs to a different harness. Use the app Agent selector to switch its runtime before submitting.', 'app_harness_mismatch', 409);
       }
       return harness;
     }
@@ -57,6 +57,7 @@ export function createRuntimeSettings(db: Database.Database, options: {
       model: await options.modelOf(req, harness),
       updatedAt: preference?.updated_at ?? null,
       existingAppsKeepHarness: true,
+      appHarnessSwitching: true,
     };
   }
   function install(app: express.Express) {

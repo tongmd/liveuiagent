@@ -6,7 +6,7 @@ import type { LlmRuntimeConfig } from './liveuiagent.js';
 
 const text = (s: unknown, max = 1200) => typeof s === 'string' ? s.trim().slice(0,max) : '';
 const fail = (message: string, status = 400) => Object.assign(new Error(message), { status });
-export function createPersonalization(db: Database.Database, userOf: (r: express.Request)=>string, llmOf: (r: express.Request)=>LlmRuntimeConfig|undefined) {
+export function createPersonalization(db: Database.Database, userOf: (r: express.Request)=>string, llmOf: (r: express.Request)=>LlmRuntimeConfig|undefined, duringApp?:<T>(req:express.Request,appId:string,work:()=>Promise<T>)=>Promise<T>) {
   db.exec(`CREATE TABLE IF NOT EXISTS personal_state (owner TEXT PRIMARY KEY, value_json TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS personal_memory (owner TEXT NOT NULL, id TEXT NOT NULL, scope TEXT NOT NULL, content TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT, PRIMARY KEY(owner,id));`);
   db.exec('CREATE TABLE IF NOT EXISTS complete_apps(owner TEXT NOT NULL,app_id TEXT NOT NULL,info_json TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(owner,app_id))');
@@ -156,7 +156,8 @@ export function createPersonalization(db: Database.Database, userOf: (r: express
     app.delete('/agent/personal/memory/:id',(req,res)=>{contextual.remove(userOf(req),String(req.params.id));db.prepare('DELETE FROM personal_memory WHERE owner=? AND id=?').run(userOf(req),String(req.params.id));res.json({ok:true});});
     app.post('/agent/personal/appearance',async(req,res,next)=>{try{
       const owner=userOf(req),appId=text(req.body?.appId,120),brief=text(req.body?.brief,1600);
-      res.json(await generateAppearance(owner,appId,brief,llmOf(req),req.body?.rememberForFuture===true));
+      const work=()=>generateAppearance(owner,appId,brief,llmOf(req),req.body?.rememberForFuture===true);
+      res.json(await (duringApp?duringApp(req,appId,work):work()));
     }catch(e){next(e)}});
     app.delete('/agent/personal/appearance/:id',(req,res)=>{const owner=userOf(req),s=state(owner);delete s.appearances[String(req.params.id)];save(owner,s);res.json({ok:true});});
   }
