@@ -66,3 +66,19 @@ Android opens the system document picker for file and photo selection. Same-orig
 iOS uses WebKit's file picker and download handling, followed by the system share sheet. A download with a known size above 32 MiB is rejected; downloads with an unknown size can be canceled from the menu. These paths still require device testing for the particular generated application. Neither platform changes the server's own upload or request limits.
 
 Run `android/tests/run-policy-tests.sh` for Android URL and authentication-boundary checks. Android's instrumentation APK tests encrypted storage, tamper rejection, and logout in a separate test namespace. The shared iOS scheme includes authentication-boundary XCTest tests. The `Mobile apps` workflow builds both platforms, runs iOS tests, and launches the iOS app in a simulator; its unsigned iPhone build is not a device-installable IPA.
+
+## Android updates
+
+Ulemi checks for a newer Android release on return to the app and through a periodic Android job. It automatically downloads on unmetered connections and verifies the exact size, SHA-256, package, version, and installed signing identity before installation. The Updates menu also supports a manual check. Android controls installation approval; supported systems can install self-updates without another confirmation once installation permission has been granted. Other systems present their installation screen. Updates preserve the application ID, account, offline model files, and local content.
+
+Publish signed releases with the original signing key and a strictly increasing `versionCode`. The updater reads `https://ulemi-updates.pages.dev/android/latest.json`. To stage the public update channel:
+
+```sh
+python3 apps/mobile/scripts/prepare-android-update.py signed-release.apk \
+  --build-tools "$ANDROID_HOME/build-tools/35.0.0" \
+  --output /path/to/update-channel \
+  --notes "Release improvements."
+wrangler pages deploy /path/to/update-channel --project-name ulemi-updates --branch main --force
+```
+
+The staging script verifies the existing release certificate and refuses lower version codes or changed bytes under an already published code. Keep the staging directory across releases to retain immutable APK URLs; it also retrieves the currently advertised prior package when starting a fresh directory. Before deployment, serialize publication and recheck that the production manifest has not advanced. After deployment, fetch the manifest and APK from the public URL and verify their version, size and SHA-256. Never place signing keys or credentials in the public directory.
