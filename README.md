@@ -54,7 +54,7 @@ Model requests use your configured provider. No model API calls are needed for t
 - Application generation and revision through natural-language requests.
 - A shared runtime for component interfaces, persistent data, tools, and service actions.
 - Separate agent-role invocations, validated handoffs, independent result review, and persistent execution records.
-- Model and harness selection through the application settings.
+- Model and harness selection through the application settings, with per-app Agent switching that preserves content and interaction state.
 - Memory for saved preferences and context.
 - Background job scheduling, status, and cancellation.
 - Browser-based application evaluation and an AppWorld integration.
@@ -97,7 +97,7 @@ Start with [.env.example](.env.example). Storage paths are local and ignored by 
 | `LIVEUI_NATIVE_DSH_TIMEOUT_MS`, `LIVEUI_NATIVE_DSH_MAX_CONCURRENT` | Per-inference deadline and concurrent-worker limit |
 | `LIVEUIAGENT_DSH_API_BASE` | Optional service endpoint for existing or explicit HTML applications |
 
-Codex appears in the harness selector when its server connection is configured. The relay must provide an inference-only `POST /v1/chat/completions` endpoint and manage its Codex login on the relay host. It must disable file, shell, network, MCP and delegated-agent execution; LiveUIAgent retains all application actions. Use HTTPS or a loopback tunnel. The Codex model is fixed by the server, and existing apps retain their selected harness.
+Codex appears in the harness selector when its server connection is configured. The relay must provide an inference-only `POST /v1/chat/completions` endpoint and manage its Codex login on the relay host. It must disable file, shell, network, MCP and delegated-agent execution; LiveUIAgent retains all application actions. Use HTTPS or a loopback tunnel. The Codex model is fixed by the server. Existing Native apps and visual workspaces can switch their Agent from the app window without changing their identity or saved content. Each app keeps its selected model independently of the default for new apps. Switching waits for active work to finish and rejects stale or unavailable choices. Legacy HTML apps continue to use their DSH coding runtime.
 
 The application settings can override provider settings for the current user. `liveuiagent.config.json` configures optional service and evaluator integrations. For a hosted installation with authentication and persistent storage, follow the [deployment guide](deploy/README.md).
 
