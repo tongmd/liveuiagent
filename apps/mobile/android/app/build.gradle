@@ -1,4 +1,7 @@
 plugins { id 'com.android.application' }
+if (!JavaVersion.current().isCompatibleWith(JavaVersion.VERSION_21)) {
+    throw new GradleException('Gemma 4 uses LiteRT-LM 0.19.0. Build with JDK 21 or newer (JAVA_HOME).')
+}
 android {
     namespace 'com.stonezhang.liveui'
     compileSdk 35

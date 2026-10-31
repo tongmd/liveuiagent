@@ -8,6 +8,7 @@ import android.os.*;
 import android.view.*;
 import android.widget.*;
 import com.google.ai.edge.litertlm.*;
+import com.google.ai.edge.litertlm.Message;
 import org.json.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
