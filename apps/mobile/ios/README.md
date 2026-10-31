@@ -21,13 +21,19 @@ xcodebuild -project LiveUI.xcodeproj -scheme LiveUI \
 
 The archive can be exported through Xcode Organizer for the chosen development, ad hoc or App Store distribution method. Store submission and distribution signing have not been performed.
 
-## Connection
+## First use
 
-The default address is `https://liveui.stonezhang.com/liveui/`. Enter the existing username and password. The Basic authentication realm is fixed to the service’s `LiveUIAgent` realm. The address is editable under Server in the login form.
+Version 0.2.0 opens with the black U mark, then a native account-and-password login. The brief reveal can be tapped to continue and has no delay when Reduce Motion is enabled. The app uses a fixed liveUI address; no server address or connection settings appear in the user flow. People without an account can open the existing waitlist in their browser.
+
+After verified login, three short, skippable pages introduce describing a need, refining an application and reopening saved work. Completion stays on the device, so returning users go straight to their applications. The account menu can replay the guide, reload, cancel downloads or sign out. Loading and network failures use native screens with a clear retry action; incorrect credentials remain on the login screen. Cancelling login invalidates its pending result, and a saved session is verified by WebKit before it can display first-use guidance.
+
+## Authentication
+
+The fixed address is `https://liveui.stonezhang.com/liveui/`. The Basic authentication realm is fixed to the service’s `LiveUIAgent` realm. A previously saved custom address is discarded rather than moving its credentials to another server.
 
 Only HTTPS addresses without embedded credentials, query strings or fragments are accepted. Login first uses an ephemeral URLSession. It follows only same-origin redirects, requires a successful HTML response after an accepted Basic challenge, and writes the connection to Keychain only after that succeeds. WKWebView and downloads then answer only the exact HTTPS scheme, host, port, Basic realm and first challenge. TLS trust uses system verification; there is no ATS exception or credential-injected JavaScript.
 
-The password is stored using `WhenUnlockedThisDeviceOnly`. Web cookies and application-local storage persist in WebKit until logout. Credentials use no URLCredential persistence. Each WebView gets a fresh WKProcessPool. Logout cancels downloads, deletes the saved connection, clears the app’s shared credential storage and removes WebKit website data. Settings shows the current service and account; changing connections signs out first. No passwords are printed or added to URLs.
+The password is stored using `WhenUnlockedThisDeviceOnly`. Web cookies and application-local storage persist in WebKit until logout. Credentials use no URLCredential persistence. Each WebView gets a fresh WKProcessPool. Logout cancels downloads, deletes the saved connection, clears the app’s shared credential storage and removes WebKit website data. The account menu provides sign-out confirmation without displaying the backend address. No passwords are printed or added to URLs.
 
 ## Mobile integration
 
@@ -35,7 +41,7 @@ SwiftUI respects device safe areas and keyboard resizing. The native Back button
 
 The app does not resubmit model or business requests after a network error. Reload is explicit. Background suspension is controlled by iOS; server tasks may continue while the app is suspended.
 
-The privacy manifest declares account identifiers and user-provided photos, audio and other content used by the connected service for app functionality, with no tracking. The native shell has no analytics SDK. Review the selected server's actual handling and App Store privacy answers before distribution.
+The privacy manifest declares account identifiers and user-provided photos, audio and other content used by the connected service for app functionality, with no tracking. The native shell has no analytics SDK. The local onboarding preference uses UserDefaults with the CA92.1 privacy-manifest reason. Review the service’s actual handling and App Store privacy answers before distribution.
 
 ## Checks
 
@@ -46,6 +52,6 @@ swiftc LiveUI/ConnectionPolicy.swift LiveUITests/PolicyCheck.swift -o /tmp/liveu
 /tmp/liveui-policy-check
 ```
 
-The project includes XCTest cases for HTTPS URL validation and exact credential scope. The [Mobile apps workflow](https://github.com/tongmd/liveuiagent/actions/runs/41143649935) built this app with Xcode 16.4, passed all three XCTest cases, installed and launched it in an iPhone simulator, captured the native login screen, and built an unsigned arm64 iPhone app. The artifacts include the simulator app and unsigned device app. A simulator build uses an ad hoc linker signature, not an Apple distribution identity. The device app still requires your signing identity and provisioning profile before installation. Physical-device login, upload/download, keyboard and 3D behavior have not been verified.
+The project includes eight XCTest cases covering HTTPS URL validation, exact credential scope, first-use and returning-user policy, Reduce Motion, login cancellation, saved endpoint migration and friendly failure messages. The standalone Foundation check covers 31 assertions. The [Mobile apps workflow](https://github.com/tongmd/liveuiagent/actions/workflows/mobile.yml) builds, runs XCTest, and captures an iPhone simulator login screen. Read the run for the current commit for build and test status; historical runs do not validate later changes. A simulator build uses an ad hoc linker signature, not an Apple distribution identity. The device app still requires your signing identity and provisioning profile before installation. Physical-device login, upload/download, keyboard and 3D behavior have not been verified.
 
 Before distribution, rerun the XCTest suite for your release, then verify real login and wrong-password rejection, safe areas and keyboard, all six harness choices, 3D gestures, HTML/rich applications, development progress and refresh, file/photo selection, ordinary and iframe blob downloads, external links, and logout followed by a different account.
