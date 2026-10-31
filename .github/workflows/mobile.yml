@@ -130,7 +130,7 @@ jobs:
             adb exec-out run-as com.stonezhang.liveui cat files/android-login.png > mobile-artifacts/android-login.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/android-local-assistant.png > mobile-artifacts/android-local-assistant.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/android-local-keyboard.png > mobile-artifacts/android-local-keyboard.png || true
-            grep -F 'OK (8 tests)' mobile-artifacts/android-native-tests.txt
+            grep -F 'OK (13 tests)' mobile-artifacts/android-native-tests.txt
       - name: Collect Android device evidence
         if: always()
         uses: actions/upload-artifact@v4
