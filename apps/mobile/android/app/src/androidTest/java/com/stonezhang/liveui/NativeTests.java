@@ -74,6 +74,9 @@ public final class NativeTests extends Instrumentation {
                 });
             } finally { a.getSharedPreferences("experience", 0).edit().clear().commit(); runOnMainSync(a::finish); }
         });
+        check("packagedLiteRtNativeLibraryLoads", () -> {
+            com.google.ai.edge.litertlm.Engine.Companion.setNativeMinLogSeverity(com.google.ai.edge.litertlm.LogSeverity.ERROR);
+        });
         check("offlineAssistantStartsWithoutAccountOrNetwork", () -> {
             Activity a = startActivitySync(new android.content.Intent(getTargetContext(), LocalAssistantActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
             try {
@@ -90,11 +93,11 @@ public final class NativeTests extends Instrumentation {
                 });
             } finally { runOnMainSync(a::finish); }
         });
-        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (6 tests)\n" : "\nFAILURES!!! Tests run: 6, Failures: " + failed + "\n");
-        result.putInt("numtests", 6); finish(Activity.RESULT_OK, result);
+        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (7 tests)\n" : "\nFAILURES!!! Tests run: 7, Failures: " + failed + "\n");
+        result.putInt("numtests", 7); finish(Activity.RESULT_OK, result);
     }
     private void check(String name, Check task) {
-        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 6); b.putInt("current", ++current);
+        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 7); b.putInt("current", ++current);
         sendStatus(1, b);
         try { task.run(); sendStatus(0, b); }
         catch (Throwable e) { failed++; b.putString("stack", android.util.Log.getStackTraceString(e)); sendStatus(-2, b); }
