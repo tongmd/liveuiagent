@@ -320,7 +320,7 @@ public final class MainActivity extends Activity {
                         });
                     } else chooseUpload(params);
                 }, () -> {
-                    if (upload == original) { capture.cancel(); upload = null; original.onReceiveValue(null); }
+                    if (upload == original) { upload = null; capture.cancel(); original.onReceiveValue(null); }
                 });
                 return true;
             }
