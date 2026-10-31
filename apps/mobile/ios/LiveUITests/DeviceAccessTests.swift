@@ -106,9 +106,9 @@ final class DeviceObservationTransferTests: XCTestCase {
             values: ["signal":-55], units: ["signal":"dBm"], details: ["name": dangerousName]))
         let text = model.snapshot().readableText()
         let requestID = UUID()
-        let receipt = try await execute(DeviceWorkspaceTransfer.script(text: text, requestID: requestID), web: web) as? [String: Any]
+        let receipt = try await transfer(text, requestID: requestID, web: web) as? [String: Any]
         XCTAssertEqual(receipt?["ok"] as? Bool, true)
-        let retried = try await execute(DeviceWorkspaceTransfer.script(text: text, requestID: requestID), web: web) as? [String: Any]
+        let retried = try await transfer(text, requestID: requestID, web: web) as? [String: Any]
         XCTAssertEqual(retried?["requestID"] as? String, requestID.uuidString)
         let state = try await execute("return {draft:document.querySelector('.rich-workspace-request textarea').value,global:document.querySelector('.liveui-composer textarea').value,sent:window.sent,inputs:window.inputs,received:window.received,pwned:!!window.pwned,app:document.querySelector('.app-sheet').dataset.appId}", web: web) as? [String: Any]
         XCTAssertEqual(state?["draft"] as? String, "Keep this task\n\n" + text)
@@ -128,7 +128,7 @@ final class DeviceObservationTransferTests: XCTestCase {
         let navigation = DeviceTestNavigation(ready); web.navigationDelegate = navigation
         web.loadHTMLString("<form class='liveui-composer'><textarea>Keep global</textarea></form><section class='app-sheet'>An app without an instruction field</section>", baseURL: URL(string: "https://example.invalid"))
         await fulfillment(of: [ready], timeout: 15)
-        let result = try await execute(DeviceWorkspaceTransfer.script(text: "Actual reading"), web: web) as? [String: Any]
+        let result = try await transfer("Actual reading", requestID: UUID(), web: web) as? [String: Any]
         XCTAssertEqual(result?["ok"] as? Bool, false)
         let value = try await execute("return document.querySelector('textarea').value", web: web) as? String
         XCTAssertEqual(value, "Keep global")
@@ -144,9 +144,17 @@ final class DeviceObservationTransferTests: XCTestCase {
         return window
     }
 
+    private func transfer(_ text: String, requestID: UUID, web: WKWebView) async throws -> Any {
+        try await withCheckedThrowingContinuation { continuation in
+            DeviceWorkspaceScriptRunner.run(text: text, requestID: requestID, in: web) { result in continuation.resume(with: result) }
+        }
+    }
     private func execute(_ script: String, web: WKWebView) async throws -> Any {
         try await withCheckedThrowingContinuation { continuation in
-            web.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { result in continuation.resume(with: result) }
+            web.evaluateJavaScript("(() => { \(script) })()") { value, error in
+                if let error { continuation.resume(throwing: error) }
+                else { continuation.resume(returning: value ?? NSNull()) }
+            }
         }
     }
 }
