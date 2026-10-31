@@ -1,14 +1,14 @@
 {
   "formatVersion": 2,
   "file": "index.html",
-  "sha256": "2f88b10870180f8c154afdb90fba80a4100de8d634b6b52bda7e96de92d894ac",
+  "sha256": "1272e73f6d6ee1e65b41dcecb47d8482a5cd4b3aea777f10c0fce5e01457bac8",
   "captured": "2026-10-21",
   "deployedRevisionDate": "2026-10-16",
   "resources": [
     {
       "file": "index.html",
-      "sha256": "2f88b10870180f8c154afdb90fba80a4100de8d634b6b52bda7e96de92d894ac",
-      "bytes": 1396408
+      "sha256": "1272e73f6d6ee1e65b41dcecb47d8482a5cd4b3aea777f10c0fce5e01457bac8",
+      "bytes": 1396424
     },
     {
       "file": "complete-apps.js",
