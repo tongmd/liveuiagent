@@ -75,7 +75,7 @@ public final class MainActivity extends Activity {
         LinearLayout center = new LinearLayout(this); center.setOrientation(LinearLayout.VERTICAL); center.setGravity(Gravity.CENTER);
         root.addView(center, new LinearLayout.LayoutParams(-1, -1));
         ImageView mark = icon(88); center.addView(mark, new LinearLayout.LayoutParams(dp(88), dp(88)));
-        TextView word = text("liveUI", 27, Color.BLACK); word.setPadding(0, dp(18), 0, 0); center.addView(word);
+        TextView word = text("Ulemi", 27, Color.BLACK); word.setPadding(0, dp(18), 0, 0); center.addView(word);
         reveal(center); center.setOnClickListener(v -> restoreAccount());
         ui.postDelayed(this::restoreAccount, animate() ? 420 : 0);
     }
@@ -153,7 +153,7 @@ public final class MainActivity extends Activity {
         outer.addView(box, new LinearLayout.LayoutParams(Math.min(getResources().getDisplayMetrics().widthPixels - dp(48), dp(420)), -2));
         LinearLayout header = new LinearLayout(this); header.setOrientation(LinearLayout.VERTICAL); loginHeader = header; box.addView(header);
         header.addView(icon(56), new LinearLayout.LayoutParams(dp(56), dp(56)));
-        TextView brand = text("liveUI", 30, Color.BLACK); brand.setPadding(0, dp(10), 0, dp(8)); header.addView(brand);
+        TextView brand = text("Ulemi", 30, Color.BLACK); brand.setPadding(0, dp(10), 0, dp(8)); header.addView(brand);
         TextView welcome = text("登录，开始创造你的应用", 19, 0xff222222); welcome.setPadding(0, 0, 0, dp(20)); header.addView(welcome);
         userInput = input(box, "账号", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL); userInput.setText(username);
         userInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_NEXT);
@@ -187,7 +187,7 @@ public final class MainActivity extends Activity {
         Button skip = button("跳过", false); skip.setContentDescription("跳过引导"); skip.setOnClickListener(v -> finishGuide()); top.addView(skip, new LinearLayout.LayoutParams(dp(80), dp(48))); page.addView(top);
         Space upper = new Space(this); page.addView(upper, new LinearLayout.LayoutParams(1, dp(24), 1));
         String[] titles = {"说出你需要什么", "边使用，边完善", "回来，接着使用"};
-        String[] copy = {"在底部输入需求，liveUI 会为你创建应用。", "继续告诉它想改什么。功能和界面可以随你的需求调整。", "创建好的应用都在你的空间里。点开它，就能继续使用。"};
+        String[] copy = {"在底部输入需求，Ulemi 会为你创建应用。", "继续告诉它想改什么。功能和界面可以随你的需求调整。", "创建好的应用都在你的空间里。点开它，就能继续使用。"};
         TextView title = text(titles[step], 28, Color.BLACK); title.setTypeface(null, android.graphics.Typeface.BOLD); page.addView(title);
         TextView body = text(copy[step], 17, 0xff555555); body.setLineSpacing(dp(5), 1); body.setPadding(0, dp(16), 0, dp(28)); page.addView(body);
         LinearLayout illustration = new LinearLayout(this); illustration.setOrientation(LinearLayout.VERTICAL); illustration.setPadding(dp(20), dp(22), dp(20), dp(22)); illustration.setBackground(rounded(0xfff5f5f5, 22));
@@ -355,14 +355,14 @@ public final class MainActivity extends Activity {
     }
     private void showMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
-        menu.getMenu().add(0, 1, 0, "刷新"); menu.getMenu().add(0, 5, 1, "使用引导"); menu.getMenu().add(0, 2, 2, "在浏览器打开"); menu.getMenu().add(0, 3, 3, "分享 liveUI"); menu.getMenu().add(0, 4, 4, "退出登录");
+        menu.getMenu().add(0, 1, 0, "刷新"); menu.getMenu().add(0, 5, 1, "使用引导"); menu.getMenu().add(0, 2, 2, "在浏览器打开"); menu.getMenu().add(0, 3, 3, "分享 Ulemi"); menu.getMenu().add(0, 4, 4, "退出登录");
         menu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
                 case 1: reloadWorkspace(); break;
                 case 5: showGuide(); break;
                 case 2: external(endpoint.toString()); break;
-                case 3: startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, endpoint.toString()), "分享 liveUI")); break;
-                case 4: new AlertDialog.Builder(this).setMessage("退出后会关闭 liveUI。你的应用和内容会保留，重新打开即可登录。").setNegativeButton("取消", null).setPositiveButton("退出", (d, w) -> logout()).show(); break;
+                case 3: startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, endpoint.toString()), "分享 Ulemi")); break;
+                case 4: new AlertDialog.Builder(this).setMessage("退出后会关闭 Ulemi。你的应用和内容会保留，重新打开即可登录。").setNegativeButton("取消", null).setPositiveButton("退出", (d, w) -> logout()).show(); break;
             } return true;
         }); menu.show();
     }

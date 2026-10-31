@@ -172,20 +172,20 @@ struct BrowserView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                      initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
-            let alert = UIAlertController(title: "liveUI", message: message, preferredStyle: .alert)
+            let alert = UIAlertController(title: "Ulemi", message: message, preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "好", style: .default) { _ in completionHandler() })
             present(alert, fallback: completionHandler)
         }
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                      initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
-            let alert = UIAlertController(title: "liveUI", message: message, preferredStyle: .alert)
+            let alert = UIAlertController(title: "Ulemi", message: message, preferredStyle: .alert)
             alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completionHandler(false) })
             alert.addAction(UIAlertAction(title: "确定", style: .default) { _ in completionHandler(true) })
             present(alert) { completionHandler(false) }
         }
         func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
                      initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
-            let alert = UIAlertController(title: "liveUI", message: prompt, preferredStyle: .alert)
+            let alert = UIAlertController(title: "Ulemi", message: prompt, preferredStyle: .alert)
             alert.addTextField { $0.text = defaultText }
             alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completionHandler(nil) })
             alert.addAction(UIAlertAction(title: "确定", style: .default) { _ in completionHandler(alert.textFields?.first?.text) })

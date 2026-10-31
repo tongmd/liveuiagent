@@ -6,6 +6,6 @@
         <item name="android:windowActionModeOverlay">true</item><item name="android:windowBackground">#FFFFFF</item>
     </style>
     <style name="AppTheme" parent="AppTheme.Base" />
-    <string name="app_name" translatable="false">liveUI</string>
+    <string name="app_name" translatable="false">Ulemi</string>
     <color name="icon_background">#FFFFFF</color>
 </resources>

@@ -1,6 +1,6 @@
-# liveUI for iPhone and iPad
+# Ulemi for iPhone and iPad
 
-A SwiftUI app that opens the complete liveUI service in WKWebView. It uses the same server, applications and accounts as the web app. The deployment target is iOS 16.0. There are no third-party SDKs or package installation steps.
+A SwiftUI app that opens the complete Ulemi workspace in WKWebView. It uses the same server, applications and accounts as the web app. Ulemi is the product name; the existing LiveUI project, bundle identifier, service URLs and storage keys remain unchanged. The deployment target is iOS 16.0. There are no third-party SDKs or package installation steps.
 
 Open `LiveUI.xcodeproj` in a full Xcode installation, select the **LiveUI** scheme, then select an iPhone or iPad simulator. For a physical device, select your Apple signing team in Signing & Capabilities and use an available bundle identifier. The supplied identifier is `com.stonezhang.liveui`; no developer team or signing credentials are included.
 
@@ -23,7 +23,7 @@ The archive can be exported through Xcode Organizer for the chosen development, 
 
 ## First use
 
-Version 0.2.0 opens with the black U mark, then a native account-and-password login. The brief reveal can be tapped to continue and has no delay when Reduce Motion is enabled. The app uses a fixed liveUI address; no server address or connection settings appear in the user flow. People without an account can open the existing waitlist in their browser.
+Version 0.2.0 opens with the black U mark, then a native account-and-password login. The brief reveal can be tapped to continue and has no delay when Reduce Motion is enabled. The app uses a fixed application address; no server address or connection settings appear in the user flow. People without an account can open the existing waitlist in their browser.
 
 After verified login, three short, skippable pages introduce describing a need, refining an application and reopening saved work. Completion stays on the device, so returning users go straight to their applications. The account menu can replay the guide, reload, cancel downloads or sign out. Loading and network failures use native screens with a clear retry action; incorrect credentials remain on the login screen. Cancelling login invalidates its pending result, and a saved session is verified by WebKit before it can display first-use guidance.
 
@@ -37,7 +37,7 @@ The password is stored using `WhenUnlockedThisDeviceOnly`. Web cookies and appli
 
 ## Mobile integration
 
-SwiftUI respects device safe areas and keyboard resizing. The native Back button first closes the visible liveUI application window, otherwise navigates web history. WebKit provides the standard HTML file/photo picker, media capture prompts, JavaScript dialogs and WebGL support. User-activated external links open outside the app. Same-origin new windows open in the current view. Native WKDownload receives ordinary downloads and `download` links, including blob/data links where supported by WebKit, then presents the iOS share sheet for Save to Files or sharing. Download destinations use fresh private temporary directories and sanitized filenames. Downloads with a declared size above 32 MiB are rejected. Downloads of unknown size remain cancellable from the menu. Failed downloads report failure. Blob downloads from sandboxed iframes and photo/camera picking still require device verification.
+SwiftUI respects device safe areas and keyboard resizing. The native Back button first closes the visible Ulemi application window, otherwise navigates web history. WebKit provides the standard HTML file/photo picker, media capture prompts, JavaScript dialogs and WebGL support. User-activated external links open outside the app. Same-origin new windows open in the current view. Native WKDownload receives ordinary downloads and `download` links, including blob/data links where supported by WebKit, then presents the iOS share sheet for Save to Files or sharing. Download destinations use fresh private temporary directories and sanitized filenames. Downloads with a declared size above 32 MiB are rejected. Downloads of unknown size remain cancellable from the menu. Failed downloads report failure. Blob downloads from sandboxed iframes and photo/camera picking still require device verification.
 
 The app does not resubmit model or business requests after a network error. Reload is explicit. Background suspension is controlled by iOS; server tasks may continue while the app is suspended.
 

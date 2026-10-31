@@ -129,7 +129,7 @@ struct RootView: View {
                     } else { ConnectionView() }
                 }
                 .background(AppStyle.background)
-                .navigationTitle(browser.connection == nil ? "" : "liveUI")
+                .navigationTitle(browser.connection == nil ? "" : "Ulemi")
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar(browser.connection == nil ? .hidden : .visible, for: .navigationBar)
                 .toolbar {
@@ -169,7 +169,7 @@ struct RootView: View {
             if starting {
                 VStack(spacing: 20) {
                     BrandMark(size: 82)
-                    Text("liveUI").font(.system(size: 28, weight: .semibold))
+                    Text("Ulemi").font(.system(size: 28, weight: .semibold))
                 }
                 .scaleEffect(revealed || reduceMotion ? 1 : 0.94)
                 .opacity(revealed || reduceMotion ? 1 : 0)
@@ -255,7 +255,7 @@ struct ConnectionView: View {
             VStack(alignment: .leading, spacing: 28) {
                 VStack(alignment: .leading, spacing: 20) {
                     BrandMark(size: 66)
-                    Text("欢迎来到 liveUI").font(.largeTitle.weight(.semibold))
+                    Text("欢迎来到 Ulemi").font(.largeTitle.weight(.semibold))
                     Text("从一个想法开始，做出自己的应用。")
                         .font(.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }.padding(.bottom, 8)
@@ -340,13 +340,13 @@ struct OnboardingView: View {
     @State private var page = 0
     private let pages: [(icon: String, title: String, body: String)] = [
         ("text.bubble", "说说你想做什么", "在底部输入你的想法，例如整理待办、规划行程，或比较一组数据。"),
-        ("slider.horizontal.3", "边用边调整", "打开应用后，继续告诉 liveUI 你的想法。你可以调整内容、功能和布局。"),
+        ("slider.horizontal.3", "边用边调整", "打开应用后，继续告诉 Ulemi 你的想法。你可以调整内容、功能和布局。"),
         ("square.grid.2x2", "随时回来继续", "关闭应用会回到列表。下次打开时，继续使用已保存的内容。")
     ]
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("liveUI").font(.headline)
+                Text("Ulemi").font(.headline)
                 Spacer()
                 Button("跳过") { finish() }.frame(minWidth: 44, minHeight: 44)
                     .accessibilityIdentifier("guide-skip")

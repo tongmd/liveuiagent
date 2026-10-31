@@ -1,8 +1,8 @@
-# liveUI for Android and iOS
+# Ulemi for Android and iOS
 
-Native installation projects for the current liveUI workspace. Android uses WebView; iOS uses WKWebView. The workspace remains served by your liveUI installation, so applications, model settings, development conversations, and saved data stay on the same server. These apps need an internet connection and a running server.
+Ulemi is the mobile app for the existing liveUI workspace. Android uses WebView; iOS uses WKWebView. The workspace remains served by your liveUI installation, so applications, model settings, development conversations, and saved data stay on the same server. These apps need an internet connection and a running server.
 
-The mobile projects use the selected black U icon. They do not bundle model credentials or an account password. Sign in with your existing liveUI account. The service address is built into the app; the first-use flow does not ask for backend configuration. The older `apps/shell` is a separate component-renderer prototype, not the build target for these apps.
+The mobile projects use the selected black U icon. The visible app name is Ulemi; existing package identifiers, credentials, and service addresses stay compatible. They do not bundle model credentials or an account password. Sign in with your existing liveUI account. The service address is built into the app; the first-use flow does not ask for backend configuration. The older `apps/shell` is a separate component-renderer prototype, not the build target for these apps.
 
 ## First use
 
