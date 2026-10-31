@@ -39,7 +39,7 @@ jobs:
             -destination "platform=iOS Simulator,id=$LIVEUI_SIMULATOR" \
             -derivedDataPath "$RUNNER_TEMP/liveui-simulator" \
             -resultBundlePath "$RUNNER_TEMP/liveui-tests.xcresult" \
-            CODE_SIGNING_ALLOWED=NO test
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO test
       - name: Launch native app
         run: |
           xcrun simctl bootstatus "$LIVEUI_SIMULATOR" -b
