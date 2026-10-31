@@ -30,7 +30,7 @@ def main():
         return result
 
     def collect_diagnostics():
-        for name in ['public-manifest', 'validate', 'blocked', 'scheduler', 'background-ready', 'requested', 'committed', 'failure', 'verify']:
+        for name in ['public-manifest', 'validate', 'blocked', 'scheduler', 'background-ready', 'requested', 'committed', 'pending-callback', 'failure', 'verify']:
             result = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/update-test-' + name + '.json', check=False)
             try:
                 value = json.loads(result.stdout)
@@ -161,7 +161,7 @@ def main():
     # A fresh process verifies the OS-installed version and persistent state.
     phase('verify')
     evidence = {}
-    for name in ['public-manifest', 'validate', 'blocked', 'scheduler', 'background-ready', 'requested', 'committed', 'verify']:
+    for name in ['public-manifest', 'validate', 'blocked', 'scheduler', 'background-ready', 'requested', 'committed', 'pending-callback', 'verify']:
         result = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/update-test-' + name + '.json', check=False)
         if result.returncode == 0:
             evidence[name] = json.loads(result.stdout)

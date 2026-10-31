@@ -110,6 +110,16 @@ public final class UpdateFlowTests extends Instrumentation {
                     AppUpdater.installVerified(c, AppUpdater.apk(c, next), next);
                     // The OS may terminate this process before finish: the external driver checks the installed package.
                     report("committed", diagnostics(c));
+                    if (android.os.Build.VERSION.SDK_INT < 31) {
+                        long deadline = android.os.SystemClock.elapsedRealtime() + 30000;
+                        while (!"confirmation_required".equals(AppUpdater.prefs(c).getString("install_status", "")) && android.os.SystemClock.elapsedRealtime() < deadline)
+                            android.os.SystemClock.sleep(50);
+                        require("confirmation_required".equals(AppUpdater.prefs(c).getString("install_status", "")), "OS pending confirmation callback not received");
+                        // Drain the actual receiver's main-thread transaction before ending
+                        // instrumentation, which can tear down the target process.
+                        runOnMainSync(() -> { });
+                        report("pending-callback", diagnostics(c));
+                    }
                 }
             } else if ("verify".equals(phase)) {
                 require(AppUpdater.installedVersion(c) == 1002, "New APK was not installed");
