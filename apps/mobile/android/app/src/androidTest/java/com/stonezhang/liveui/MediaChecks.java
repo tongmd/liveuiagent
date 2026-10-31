@@ -85,7 +85,7 @@ final class MediaChecks {
             try {
                 java.lang.reflect.Field field = ImageViewerActivity.class.getDeclaredField("status"); field.setAccessible(true); require(((android.widget.TextView)field.get(activity)).getText().toString().contains("Pinch"));
                 Bitmap screenshot = Bitmap.createBitmap(activity.getWindow().getDecorView().getWidth(),activity.getWindow().getDecorView().getHeight(),Bitmap.Config.ARGB_8888); activity.getWindow().getDecorView().draw(new Canvas(screenshot));
-                try(FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(),"media-image-viewer.png"))) { screenshot.compress(Bitmap.CompressFormat.PNG,100,out); } screenshot.recycle();
+                try(FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(),"android-image-viewer.png"))) { screenshot.compress(Bitmap.CompressFormat.PNG,100,out); } screenshot.recycle();
                 activity.finish();
             } catch (Exception e) { throw new AssertionError(e); }
         });
