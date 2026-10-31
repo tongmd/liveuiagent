@@ -30,7 +30,7 @@ Open **Devices & sensors** from the native sign-in screen or account menu. Each 
 - **Location:** a foreground, bounded current-location request; approximate location remains usable.
 - **USB on Android:** inventory of attached USB-host devices, without opening a data connection.
 
-These are native discovery and observation tools. Results are not uploaded or passed to generated web pages. Discovered devices are not automatically paired, connected or controlled. A robot or accessory still needs its own protocol adapter, device authentication and command/stop handling before it can be operated. iOS does not provide generic USB serial access merely by adding a permission. No background scanning, unrestricted hardware bridge or actuator commands are included.
+These are native discovery and observation tools. Readings stay local until you choose **Use in workspace**. That action adds the captured values, source, time and units to the current workspace draft for your next application or agent request. Existing draft text is preserved; it does not submit the request automatically. The app confirms insertion only after the current authenticated workspace acknowledges it, and retains the capture if insertion fails. Discovered devices are not automatically paired, connected or controlled. A robot or accessory still needs its own protocol adapter, device authentication and command/stop handling before it can be operated. iOS does not provide generic USB serial access merely by adding a permission. No background scanning, unrestricted hardware bridge or actuator commands are included.
 
 ## Android
 
