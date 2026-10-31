@@ -36,7 +36,7 @@ test('concurrent same-owner tasks and different owners cannot mix evidence; succ
 test('credentials are removed before disk while ordinary message URLs remain meaningful',t=>{
  const root=fixture(t),configured='CURRENT-OPAQUE-API-CREDENTIAL',nested='nested-private-value';
  const d=createNativeTaskDiagnostics({dataDirectory:root,owner:'test',chatId:1,secrets:[configured]})!;
- const plain='https://example.org/docs?q=shape';const protectedUrl=['https://','name:URLPASS','@example.org/docs?token=QUERYSECRET&view=tree#access_token=FRAGMENTSECRET&tab=1'].join('');
+ const plain='https://example.org/docs?q=shape';const protectedUrl=['https:','//','name:URLPASS','@example.org/docs?token=QUERYSECRET&view=tree#access_token=FRAGMENTSECRET&tab=1'].join('');
  const source={apiKey:nested,echo:nested,link:plain,protectedUrl,bearer:'Bearer abc123tokensecret',basic:'Basic dXNlcjpwYXNz',jwt:'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjMifQ.signaturevalue',github:'ghp_abcdefghijklmnop12345678',pem:['-----BEGIN ', 'PRIVATE KEY-----\nPRIVATEBODY\n-----END PRIVATE KEY-----'].join(''),opaque:configured,bin:'data:image/png;base64,QUJDRA=='};
  const seq=d.begin('stage','model',{messages:[{role:'user',content:JSON.stringify(source)}],headers:{Authorization:'SHOULDNOTBERECORDED'},apiBase:'https://private.provider.example'});
  d.end(seq,{status:200,text:JSON.stringify({choices:[{message:{content:JSON.stringify(source)}}]})});d.finish('error');
