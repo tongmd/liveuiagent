@@ -254,7 +254,7 @@ public final class MainActivity extends Activity {
         root = makeRoot();
         LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL); bar.setPadding(dp(20), dp(4), dp(16), dp(4));
         TextView title = new TextView(this); title.setText(R.string.app_name); title.setTextSize(18); title.setTextColor(NativeStyle.INK); title.setGravity(Gravity.CENTER_VERTICAL); bar.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
-        Button menu = button("···", false); menu.setTextSize(22); menu.setContentDescription("Account menu"); menu.setOnClickListener(this::showMenu); bar.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        Button menu = button("···", false); menu.setTextSize(22); menu.setPadding(0, 0, 0, 0); menu.setContentDescription("Account menu"); menu.setOnClickListener(this::showMenu); bar.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(48)));
         nativeBar = bar; nativeBar.setVisibility(View.GONE);
         root.addView(bar, new LinearLayout.LayoutParams(-1, dp(56)));
         workspace = new FrameLayout(this); root.addView(workspace, new LinearLayout.LayoutParams(-1, 0, 1));
