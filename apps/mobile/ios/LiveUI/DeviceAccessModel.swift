@@ -46,11 +46,10 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
     private let motion = CMMotionManager()
     private let altimeter = CMAltimeter()
     private var locationManager: CLLocationManager?
-    private var bluetoothSession = DeviceAccessSession()
+    private var bluetoothSession = DevicePermissionWindow()
     private var networkSession = DeviceAccessSession()
     private var sensorSession = DeviceAccessSession()
-    private var locationSession = DeviceAccessSession()
-    private var locationRequestStarted = false
+    private var locationSession = DevicePermissionWindow()
     private var timeouts: [String: DispatchWorkItem] = [:]
     private var networkResults: [String: [DiscoveredDevice]] = [:]
 
@@ -66,12 +65,8 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
         stopBluetooth()
         bluetoothDevices = []; clearObservations("ble:")
         scanningBluetooth = true
-        let ticket = bluetoothSession.begin()
+        _ = bluetoothSession.begin()
         bluetoothStatus = "Waiting for Bluetooth…"
-        timeout("bluetooth", seconds: DeviceAccessPolicy.discoverySeconds) { [weak self] in
-            guard let self, self.bluetoothSession.accepts(ticket) else { return }
-            self.stopBluetooth(message: "Scan finished. Tap Scan to search again.")
-        }
         // Use a new delegate identity for each scan, preventing queued callbacks
         // from an earlier scan from appearing in a later one.
         central = CBCentralManager(delegate: self, queue: .main)
@@ -85,8 +80,13 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
         guard central === self.central, scanningBluetooth, bluetoothSession.id != nil else { return }
         switch central.state {
         case .poweredOn:
+            guard let ticket = bluetoothSession.startAuthorizedOperation() else { return }
             bluetoothStatus = "Scanning for nearby devices…"
             central.scanForPeripherals(withServices: nil, options: [CBCentralManagerScanOptionAllowDuplicatesKey: false])
+            timeout("bluetooth", seconds: DeviceAccessPolicy.discoverySeconds) { [weak self] in
+                guard let self, self.bluetoothSession.accepts(ticket) else { return }
+                self.stopBluetooth(message: "Scan finished. Tap Scan to search again.")
+            }
         case .unauthorized: stopBluetooth(message: "Bluetooth access is denied. Enable it in Settings.")
         case .poweredOff: stopBluetooth(message: "Bluetooth is off. Turn it on in Settings, then scan again.")
         case .unsupported: stopBluetooth(message: "Bluetooth LE is unavailable on this device.")
@@ -225,14 +225,10 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
     func requestLocation() {
         stopLocation(); clearObservations("location:")
         guard CLLocationManager.locationServicesEnabled() else { locationStatus = "Location Services are off. Enable them in Settings."; return }
-        let ticket = locationSession.begin(); locating = true
+        _ = locationSession.begin(); locating = true
         locationStatus = "Waiting for a current location…"
         locationManager = CLLocationManager(); locationManager?.delegate = self
         locationManager?.desiredAccuracy = kCLLocationAccuracyHundredMeters
-        timeout("location", seconds: DeviceAccessPolicy.locationSeconds) { [weak self] in
-            guard let self, self.locationSession.accepts(ticket) else { return }
-            self.stopLocation(message: "No current location received. You can try again.")
-        }
         continueLocation()
     }
     private func continueLocation() {
@@ -240,8 +236,12 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
         switch manager.authorizationStatus {
         case .notDetermined: manager.requestWhenInUseAuthorization()
         case .authorizedWhenInUse, .authorizedAlways:
-            guard !locationRequestStarted else { return }
-            locationRequestStarted = true; manager.requestLocation()
+            guard let ticket = locationSession.startAuthorizedOperation() else { return }
+            manager.requestLocation()
+            timeout("location", seconds: DeviceAccessPolicy.locationSeconds) { [weak self] in
+                guard let self, self.locationSession.accepts(ticket) else { return }
+                self.stopLocation(message: "No current location received. You can try again.")
+            }
         case .denied, .restricted: stopLocation(message: "Location access is denied. Enable While Using the App in Settings.")
         @unknown default: stopLocation(message: "Location access is unavailable.")
         }
@@ -264,7 +264,7 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
     func stopLocation(message: String = "Location request stopped.") {
         locationSession.stop(); cancelTimeout("location")
         locationManager?.stopUpdatingLocation(); locationManager?.delegate = nil; locationManager = nil
-        locationRequestStarted = false; locating = false; locationStatus = message
+        locating = false; locationStatus = message
     }
     func stopAll() {
         stopBluetooth(); stopNetwork(); stopSensors(); stopLocation()
