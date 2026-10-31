@@ -172,11 +172,57 @@ public final class NativeTests extends Instrumentation {
                 runOnMainSync(() -> { try { set(a,"currentSession",null); } catch(Exception ignored) {} a.finish(); });
             }
         });
-        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (8 tests)\n" : "\nFAILURES!!! Tests run: 8, Failures: " + failed + "\n");
-        result.putInt("numtests", 8); finish(Activity.RESULT_OK, result);
+        check("deviceAccessStartsIdleAndIsNotExported", () -> {
+            android.content.pm.ActivityInfo info = getTargetContext().getPackageManager().getActivityInfo(new android.content.ComponentName(getTargetContext(), DeviceAccessActivity.class), 0);
+            require(!info.exported);
+            Activity a = startActivitySync(new android.content.Intent(getTargetContext(), DeviceAccessActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            try {
+                runOnMainSync(() -> { try {
+                    String content = labels(a.getWindow().getDecorView());
+                    require(content.contains("Devices & sensors") && content.contains("Bluetooth") && content.contains("USB") && content.contains("Location"));
+                    require(content.contains("Nothing is active"));
+                    java.lang.reflect.Field f = DeviceAccessActivity.class.getDeclaredField("session"); f.setAccessible(true);
+                    require(!((DeviceAccessPolicy.Session)f.get(a)).active());
+                    java.lang.reflect.Field requests = DeviceAccessActivity.class.getDeclaredField("permissionRequests"); requests.setAccessible(true); require(requests.getInt(a) == 0);
+                    for (String field : new String[]{"scanner", "discovery", "sensorListener", "locationListener", "multicast"}) {
+                        f = DeviceAccessActivity.class.getDeclaredField(field); f.setAccessible(true); require(f.get(a) == null);
+                    }
+                } catch(Exception e) { throw new AssertionError(e); } });
+                capture("android-devices.png");
+            } finally { runOnMainSync(a::finish); }
+        });
+        check("deviceSensorSessionStopsWhenActivityPauses", () -> {
+            Activity a = startActivitySync(new android.content.Intent(getTargetContext(), DeviceAccessActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            try {
+                runOnMainSync(() -> { try {
+                    android.hardware.SensorManager manager = (android.hardware.SensorManager)a.getSystemService(Context.SENSOR_SERVICE);
+                    android.hardware.Sensor sensor = manager.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);
+                    if (sensor != null) {
+                        java.lang.reflect.Method read = DeviceAccessActivity.class.getDeclaredMethod("readSensor", android.hardware.Sensor.class); read.setAccessible(true); read.invoke(a, sensor);
+                    } else {
+                        java.lang.reflect.Method begin = DeviceAccessActivity.class.getDeclaredMethod("begin", String.class); begin.setAccessible(true); begin.invoke(a, "Lifecycle fixture");
+                    }
+                    java.lang.reflect.Field f = DeviceAccessActivity.class.getDeclaredField("session"); f.setAccessible(true);
+                    DeviceAccessPolicy.Session session = (DeviceAccessPolicy.Session)f.get(a); require(session.active());
+                } catch(Exception e) { throw new AssertionError(e); } });
+                android.os.SystemClock.sleep(400);
+                capture("android-devices-sensor.png");
+                runOnMainSync(() -> { try {
+                    java.lang.reflect.Field f = DeviceAccessActivity.class.getDeclaredField("session"); f.setAccessible(true);
+                    DeviceAccessPolicy.Session session = (DeviceAccessPolicy.Session)f.get(a);
+                    NativeTests.this.callActivityOnPause(a); require(!session.active());
+                    for (String field : new String[]{"scanner", "discovery", "sensorListener", "locationListener", "multicast"}) {
+                        f = DeviceAccessActivity.class.getDeclaredField(field); f.setAccessible(true); require(f.get(a) == null);
+                    }
+                    NativeTests.this.callActivityOnResume(a); require(!session.active());
+                } catch(Exception e) { throw new AssertionError(e); } });
+            } finally { runOnMainSync(a::finish); }
+        });
+        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (10 tests)\n" : "\nFAILURES!!! Tests run: 10, Failures: " + failed + "\n");
+        result.putInt("numtests", 10); finish(Activity.RESULT_OK, result);
     }
     private void check(String name, Check task) {
-        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 8); b.putInt("current", ++current);
+        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 10); b.putInt("current", ++current);
         sendStatus(1, b);
         try { task.run(); sendStatus(0, b); }
         catch (Throwable e) { failed++; b.putString("stack", android.util.Log.getStackTraceString(e)); sendStatus(-2, b); }

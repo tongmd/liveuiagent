@@ -170,6 +170,8 @@ public final class MainActivity extends Activity {
         Button waitlist = button("还没有账号？加入候补名单", false); loginWaitlist = waitlist; waitlist.setTextSize(14); waitlist.setOnClickListener(v -> external("https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")); LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, dp(50)); wp.topMargin = dp(12); box.addView(waitlist, wp);
         Button local = button("离线助手 · Gemma 4", false); local.setOnClickListener(v -> startActivity(new Intent(this, LocalAssistantActivity.class)));
         LinearLayout.LayoutParams lpLocal = new LinearLayout.LayoutParams(-1, dp(50)); lpLocal.topMargin = dp(12); box.addView(local, lpLocal);
+        Button devices = button("Devices & sensors", false); devices.setOnClickListener(v -> startActivity(new Intent(this, DeviceAccessActivity.class)));
+        LinearLayout.LayoutParams lpDevices = new LinearLayout.LayoutParams(-1, dp(50)); lpDevices.topMargin = dp(10); box.addView(devices, lpDevices);
         reveal(box);
     }
     private void enterAccount() {
@@ -369,7 +371,7 @@ public final class MainActivity extends Activity {
     private void showMenu(View anchor) { showAccountMenu(); }
     private void showAccountMenu() {
         if (isFinishing() || isDestroyed()) return;
-        String[] items = {"离线助手 · Gemma 4", "使用引导", "重新载入", "在浏览器打开", "分享 Ulemi", "退出登录"};
+        String[] items = {"离线助手 · Gemma 4", "使用引导", "重新载入", "在浏览器打开", "分享 Ulemi", "退出登录", "Devices & sensors"};
         new AlertDialog.Builder(this).setTitle("Ulemi").setItems(items, (dialog, item) -> {
             switch (item) {
                 case 0: startActivity(new Intent(this, LocalAssistantActivity.class)); break;
@@ -377,6 +379,7 @@ public final class MainActivity extends Activity {
                 case 2: reloadWorkspace(); break;
                 case 3: external(endpoint.toString()); break;
                 case 4: startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, endpoint.toString()), "分享 Ulemi")); break;
+                case 6: startActivity(new Intent(this, DeviceAccessActivity.class)); break;
                 case 5: new AlertDialog.Builder(this).setMessage("退出后会关闭 Ulemi。你的应用和内容会保留，重新打开即可登录。").setNegativeButton("取消", null).setPositiveButton("退出", (d, w) -> logout()).show(); break;
             }
         }).setNegativeButton("取消", null).show();
