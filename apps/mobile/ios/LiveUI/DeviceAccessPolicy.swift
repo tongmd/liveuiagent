@@ -64,30 +64,31 @@ enum DeviceWorkspaceTransfer {
         let data = try JSONSerialization.data(withJSONObject: [text, requestID.uuidString])
         guard let json = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
         return """
-        return await new Promise(resolve => {
+        (() => {
           const [text, requestID] = \(json);
           const receipts = window.__ulemiDeviceObservationReceipts ||= Object.create(null);
-          if (receipts[requestID]) { resolve(receipts[requestID]); return; }
+          if (receipts[requestID]?.ok || receipts[requestID]?.pending) return receipts[requestID];
           const visible = node => node && node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden' && getComputedStyle(node).display !== 'none';
           const sheet = [...document.querySelectorAll('.app-sheet')].reverse().find(visible);
           const scope = sheet || document;
           const selectors = sheet ? '.ulemi-native-compose textarea, .rich-workspace-request textarea, .complete-app-edit textarea' : '.liveui-composer textarea';
           const input = [...scope.querySelectorAll(selectors)].find(node => visible(node) && !node.disabled && !node.readOnly);
-          if (!input) { resolve({ok:false, message:'Open the instruction field in your current app, then try again.'}); return; }
+          if (!input) return {ok:false, requestID, message:'Open the instruction field in your current app, then try again.'};
           const old = input.value;
           const next = old + (old ? '\\n\\n' : '') + text;
-          if (input.maxLength >= 0 && next.length > input.maxLength) { resolve({ok:false, message:'Your draft is too long for these observations. Shorten it and try again.'}); return; }
+          if (input.maxLength >= 0 && next.length > input.maxLength) return {ok:false, requestID, message:'Your draft is too long for these observations. Shorten it and try again.'};
           const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
           setter.call(input, next);
           input.dispatchEvent(new Event('input', {bubbles:true}));
+          receipts[requestID] = {pending:true, requestID};
           requestAnimationFrame(() => requestAnimationFrame(() => {
-            if (!input.isConnected || input.value !== next) { resolve({ok:false, message:'The instruction field changed before it accepted the observations. Please try again.'}); return; }
+            if (!input.isConnected || input.value !== next) { receipts[requestID] = {ok:false, requestID, message:'The instruction field changed before it accepted the observations. Please try again.'}; return; }
             const receipt = {ok:true, requestID, appendedCharacters:text.length, draftCharacters:next.length};
             receipts[requestID] = receipt;
             const keys = Object.keys(receipts); if (keys.length > 50) delete receipts[keys[0]];
-            resolve(receipt);
           }));
-        });
+          return receipts[requestID];
+        })();
         """
     }
 }

@@ -143,9 +143,7 @@ extension BrowserModel {
                 completion(.failure(NSError(domain: "UlemiDevices", code: 1, userInfo: [NSLocalizedDescriptionKey: "Your workspace changed. Reopen Devices & sensors from the current account."])))
                 return
             }
-            do {
-                let script = try DeviceWorkspaceTransfer.script(text: envelope.readableText(), requestID: envelope.transferID)
-                target.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { [weak self, weak target] result in
+            DeviceWorkspaceScriptRunner.run(text: envelope.readableText(), requestID: envelope.transferID, in: target) { [weak self, weak target] result in
                     guard let self, let target, self.connection == expected, self.webView === target else {
                         completion(.failure(NSError(domain: "UlemiDevices", code: 2, userInfo: [NSLocalizedDescriptionKey: "Your workspace changed before the observations were accepted."])))
                         return
@@ -160,8 +158,48 @@ extension BrowserModel {
                     case .failure:
                         completion(.failure(NSError(domain: "UlemiDevices", code: 4, userInfo: [NSLocalizedDescriptionKey: "Could not reach the current instruction field. Open it and try again."])))
                     }
+            }
+        }
+    }
+}
+
+
+@MainActor
+enum DeviceWorkspaceScriptRunner {
+    // evaluateJavaScript uses WebKit's Objective-C callback API already used by
+    // the app. callAsyncJavaScript's Swift Result overlay adds a libswiftWebKit
+    // dependency absent from the iOS 18.5 simulator runtime in Xcode 16.4.
+    // We retain the same two-frame DOM acknowledgement through a receipt query.
+    static func run(text: String, requestID: UUID, in webView: WKWebView,
+                    completion: @escaping (Result<Any, Error>) -> Void) {
+        do {
+            let script = try DeviceWorkspaceTransfer.script(text: text, requestID: requestID)
+            evaluate(script, requestID: requestID, in: webView, remaining: 100, completion: completion)
+        } catch { completion(.failure(error)) }
+    }
+    private static func evaluate(_ script: String, requestID: UUID, in webView: WKWebView,
+                                 remaining: Int, completion: @escaping (Result<Any, Error>) -> Void) {
+        webView.evaluateJavaScript(script) { [weak webView] value, error in
+            if let error { completion(.failure(error)); return }
+            guard let receipt = value as? [String: Any], receipt["requestID"] as? String == requestID.uuidString else {
+                completion(.failure(NSError(domain: "UlemiDevices", code: 5, userInfo: [NSLocalizedDescriptionKey: "The workspace did not return an observation receipt."])))
+                return
+            }
+            guard receipt["pending"] as? Bool == true else { completion(.success(receipt)); return }
+            guard remaining > 0 else {
+                completion(.failure(NSError(domain: "UlemiDevices", code: 6, userInfo: [NSLocalizedDescriptionKey: "The workspace has not confirmed the observations yet. Return to Ulemi and retry."])))
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak webView] in
+                guard let webView else {
+                    completion(.failure(NSError(domain: "UlemiDevices", code: 7, userInfo: [NSLocalizedDescriptionKey: "The workspace closed before it confirmed the observations."])))
+                    return
                 }
-            } catch { completion(.failure(error)) }
+                // A UUID is generated natively; this query only reads the original
+                // receipt. It never replays input events or appends text again.
+                let query = "window.__ulemiDeviceObservationReceipts?.['\(requestID.uuidString)'] || null"
+                evaluate(query, requestID: requestID, in: webView, remaining: remaining - 1, completion: completion)
+            }
         }
     }
 }
