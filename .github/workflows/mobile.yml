@@ -115,6 +115,8 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
+      - name: Install native video verification tool
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Build Android emulator tests
         working-directory: apps/mobile/android
         run: ./gradlew --no-daemon assembleDebug assembleDebugAndroidTest
