@@ -120,13 +120,21 @@ final class MediaChecks {
                     web.loadDataWithBaseURL("https://image-fixture.invalid/",html,"text/html","UTF-8",null);
                 });
                 require(loaded.await(15,java.util.concurrent.TimeUnit.SECONDS));
+                test.waitForIdleSync();
+                Bitmap screen=test.getUiAutomation().takeScreenshot();
+                if(screen!=null){try(FileOutputStream out=new FileOutputStream(new File(context.getFilesDir(),sandbox?"upload-sandbox-before.png":"upload-top-before.png"))){screen.compress(Bitmap.CompressFormat.PNG,100,out);}screen.recycle();}
+                java.util.concurrent.CountDownLatch geometryRead=new java.util.concurrent.CountDownLatch(1);
+                java.util.concurrent.atomic.AtomicReference<String> geometry=new java.util.concurrent.atomic.AtomicReference<>();
+                onMain(test, () -> browser[0].evaluateJavascript("JSON.stringify({url:location.href,width:innerWidth,height:innerHeight,focus:document.hasFocus(),input:document.querySelector('input')?.getBoundingClientRect().toJSON(),iframe:document.querySelector('iframe')?.getBoundingClientRect().toJSON(),hit:document.elementFromPoint(50,50)?.outerHTML,html:document.body.innerHTML})", value->{geometry.set(value);geometryRead.countDown();}));
+                require(geometryRead.await(3,java.util.concurrent.TimeUnit.SECONDS));
+                System.out.println("UPLOAD_FIXTURE " + (sandbox?"sandbox":"top") + " " + geometry.get());
                 // Both documents use a real user tap; the opaque frame is never scripted by its parent.
                 int[] xy = new int[2];onMain(test, () -> browser[0].getLocationOnScreen(xy));
                 float density=context.getResources().getDisplayMetrics().density;
                 float x=xy[0]+50*density,y=xy[1]+50*density;long when=SystemClock.uptimeMillis();
                 test.sendPointerSync(MotionEvent.obtain(when,when,MotionEvent.ACTION_DOWN,x,y,0));
                 test.sendPointerSync(MotionEvent.obtain(when,when+25,MotionEvent.ACTION_UP,x,y,0));
-                require(chooser.await(10,java.util.concurrent.TimeUnit.SECONDS));
+                if(!chooser.await(10,java.util.concurrent.TimeUnit.SECONDS))throw new AssertionError("File chooser did not open: " + (sandbox?"sandbox":"top") + " " + geometry.get());
                 String value = null;
                 for(int i=0;i<50;i++){
                     java.util.concurrent.atomic.AtomicReference<String> result=new java.util.concurrent.atomic.AtomicReference<>();java.util.concurrent.CountDownLatch read=new java.util.concurrent.CountDownLatch(1);
