@@ -61,26 +61,26 @@ public final class LocalAssistantActivity extends Activity {
             return insets;
         });
         setContentView(root); root.requestApplyInsets();
-        LinearLayout header = row(); Button back = button("返回"); back.setOnClickListener(v -> onBackPressed()); header.addView(back);
-        TextView title = label("离线助手", 23); header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        clear = button("新对话"); clear.setOnClickListener(v -> new AlertDialog.Builder(this).setMessage("清空这台手机上的离线对话？").setNegativeButton("取消", null).setPositiveButton("清空", (d,w) -> { history = new JSONArray(); historyUnreadable = false; try { saveHistory(); renderHistory(""); state.setText("新对话已准备好"); updateControls(); } catch (Exception e) { state.setText("无法创建新对话，请检查手机存储空间"); } }).show()); header.addView(clear); root.addView(header);
+        LinearLayout header = row(); header.setPadding(0, 0, 0, dp(12)); Button back = button("返回"); back.setOnClickListener(v -> onBackPressed()); header.addView(back, new LinearLayout.LayoutParams(dp(64), dp(44)));
+        TextView title = label("离线助手", 20); title.setGravity(Gravity.CENTER); title.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)); header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        clear = button("新对话"); clear.setOnClickListener(v -> new AlertDialog.Builder(this).setMessage("清空这台手机上的离线对话？").setNegativeButton("取消", null).setPositiveButton("清空", (d,w) -> { history = new JSONArray(); historyUnreadable = false; try { saveHistory(); renderHistory(""); state.setText("新对话已准备好"); updateControls(); } catch (Exception e) { state.setText("无法创建新对话，请检查手机存储空间"); } }).show()); header.addView(clear, new LinearLayout.LayoutParams(dp(76), dp(44))); root.addView(header);
         scroll = new ScrollView(this); scroll.setFillViewport(true);
         LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView modelLabel = label("Gemma 4 E4B · 设备本地运行", 16); modelLabel.setPadding(0, dp(12), 0, dp(4)); content.addView(modelLabel);
-        TextView note = label("首次下载 3.66 GB，之后无需联网。对话仅留在此手机；云端应用仍在原工作区使用。", 14); note.setTextColor(0xff666666); content.addView(note);
-        state = label(model.installed() ? "模型已下载，发送消息时自动加载" : model.downloaded() > 0 ? "下载已暂停，可以继续" : "下载后即可开始", 14); state.setPadding(0, dp(10), 0, dp(6)); state.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); content.addView(state);
+        TextView modelLabel = label("Gemma 4 E4B · 设备本地运行", 16); modelLabel.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)); modelLabel.setPadding(0, dp(12), 0, dp(10)); content.addView(modelLabel);
+        TextView note = label("首次下载 3.66 GB，之后无需联网。对话仅留在此手机；云端应用仍在原工作区使用。", 14); note.setTextColor(0xff6b6b6b); note.setLineSpacing(dp(3), 1); content.addView(note);
+        state = label(model.installed() ? "模型已下载，发送消息时自动加载" : model.downloaded() > 0 ? "下载已暂停，可以继续" : "下载后即可开始", 14); state.setTextColor(0xff555555); state.setLineSpacing(dp(3), 1); state.setPadding(0, dp(14), 0, dp(14)); state.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); content.addView(state);
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); progress.setMax(1000); progress.setVisibility(View.GONE); content.addView(progress, new LinearLayout.LayoutParams(-1, dp(4)));
-        LinearLayout actions = row(); prepare = button(model.downloaded() > 0 ? "继续下载" : "下载并配置"); prepare.setOnClickListener(v -> confirmDownload()); actions.addView(prepare, new LinearLayout.LayoutParams(0, dp(48), 1));
+        LinearLayout actions = row(); prepare = button(model.downloaded() > 0 ? "继续下载" : "下载并配置", true); prepare.setOnClickListener(v -> confirmDownload()); actions.addView(prepare, new LinearLayout.LayoutParams(0, dp(48), 1));
         stop = button("暂停"); stop.setVisibility(View.GONE); stop.setOnClickListener(v -> cancelWork());
-        Button source = button("官方来源"); source.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(LocalModelFile.SOURCE)))); actions.addView(source, new LinearLayout.LayoutParams(0, dp(48), 1));
-        remove = button("删除模型"); remove.setOnClickListener(v -> confirmRemove()); actions.addView(remove, new LinearLayout.LayoutParams(0, dp(48), 1)); content.addView(actions);
+        Button source = button("官方来源"); source.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(LocalModelFile.SOURCE)))); LinearLayout.LayoutParams sourceLayout = new LinearLayout.LayoutParams(0, dp(48), 1); sourceLayout.leftMargin = dp(8); actions.addView(source, sourceLayout);
+        remove = button("删除模型"); remove.setOnClickListener(v -> confirmRemove()); LinearLayout.LayoutParams removeLayout = new LinearLayout.LayoutParams(0, dp(48), 1); removeLayout.leftMargin = dp(8); actions.addView(remove, removeLayout); content.addView(actions);
         transcript = label("", 17); transcript.setTextIsSelectable(true); transcript.setPadding(0, dp(18), 0, dp(18)); transcript.setLineSpacing(dp(4), 1); content.addView(transcript);
-        LinearLayout composer = row(); root.addView(composer, new LinearLayout.LayoutParams(-1, -2));
-        input = new EditText(this); input.setTextSize(17); input.setHint("想聊什么？"); input.setContentDescription("离线消息"); input.setMaxLines(4); input.setMinLines(1); input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES); input.setImeOptions(android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI); composer.addView(input, new LinearLayout.LayoutParams(0, -2, 1));
+        LinearLayout composer = row(); composer.setPadding(0, dp(10), 0, 0); root.addView(composer, new LinearLayout.LayoutParams(-1, -2));
+        input = new EditText(this); input.setTextSize(17); input.setHint("想聊什么？"); input.setContentDescription("离线消息"); input.setMaxLines(4); input.setMinLines(1); input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES); input.setImeOptions(android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI); input.setTextColor(0xff181818); input.setHintTextColor(0xff777777); input.setPadding(dp(14), dp(12), dp(14), dp(12)); input.setBackground(rounded(0xfff3f3f3, 16)); composer.addView(input, new LinearLayout.LayoutParams(0, -2, 1));
         if (saved != null) input.setText(saved.getString(DRAFT_STATE, ""));
-        send = button("发送"); send.setOnClickListener(v -> send()); composer.addView(send, new LinearLayout.LayoutParams(dp(72), dp(50))); composer.addView(stop, new LinearLayout.LayoutParams(dp(72), dp(50)));
+        send = button("发送", true); send.setOnClickListener(v -> send()); LinearLayout.LayoutParams sendLayout = new LinearLayout.LayoutParams(dp(64), dp(50)); sendLayout.leftMargin = dp(8); composer.addView(send, sendLayout); LinearLayout.LayoutParams stopLayout = new LinearLayout.LayoutParams(dp(64), dp(50)); stopLayout.leftMargin = dp(8); composer.addView(stop, stopLayout);
         renderHistory("");
         if (unsupported != null) state.setText(unsupported);
         else if (historyUnreadable) state.setText("旧对话无法读取，原文件已保留。点击新对话后继续。");
@@ -88,7 +88,24 @@ public final class LocalAssistantActivity extends Activity {
     }
     private int dp(int x) { return Math.round(x * getResources().getDisplayMetrics().density); }
     private TextView label(String s, int size) { TextView t = new TextView(this); t.setText(s); t.setTextSize(size); t.setTextColor(Color.BLACK); return t; }
-    private Button button(String s) { Button b = new Button(this); b.setText(s); b.setTextSize(14); b.setAllCaps(false); b.setMinWidth(0); return b; }
+    private android.graphics.drawable.GradientDrawable rounded(int color, int radius) {
+        android.graphics.drawable.GradientDrawable drawable = new android.graphics.drawable.GradientDrawable();
+        drawable.setColor(color); drawable.setCornerRadius(dp(radius)); return drawable;
+    }
+    private Button button(String s) { return button(s, false); }
+    private Button button(String s, boolean primary) {
+        Button b = new Button(this); b.setText(s); b.setTextSize(13); b.setAllCaps(false); b.setMinWidth(0);
+        b.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
+        b.setPadding(dp(8), 0, dp(8), 0); b.setMinHeight(dp(44)); b.setMinimumHeight(dp(44));
+        b.setStateListAnimator(null); b.setElevation(0); b.setBackgroundTintList(null);
+        android.graphics.drawable.StateListDrawable background = new android.graphics.drawable.StateListDrawable();
+        background.addState(new int[]{-android.R.attr.state_enabled}, rounded(0xfff3f3f3, 14));
+        background.addState(new int[]{android.R.attr.state_pressed}, rounded(primary ? 0xff383838 : 0xffe5e5e5, 14));
+        background.addState(new int[]{}, rounded(primary ? 0xff181818 : 0xfff3f3f3, 14));
+        b.setBackground(background);
+        b.setTextColor(new android.content.res.ColorStateList(new int[][]{new int[]{-android.R.attr.state_enabled}, new int[]{}}, new int[]{0xff949494, primary ? Color.WHITE : 0xff333333}));
+        return b;
+    }
     private LinearLayout row() { LinearLayout r = new LinearLayout(this); r.setGravity(Gravity.CENTER_VERTICAL); return r; }
     private void post(Runnable r) { ui.post(() -> { if (!closing && !isDestroyed()) r.run(); }); }
     private void updateControls() {
