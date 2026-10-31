@@ -23,7 +23,7 @@ import { createEvaluatorArtifacts } from './evaluator-artifacts.js';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
 import { createGuiInteractionPlanner } from './gui-interaction-planner.js';
-import { createLiveUIRuntime, planNativeGuiInteractionStep, type LlmRuntimeConfig } from './liveuiagent.js';
+import { createLiveUIRuntime, createNativeTaskDiagnostics, planNativeGuiInteractionStep, type LlmRuntimeConfig } from './liveuiagent.js';
 import { createScheduledAgentGateway } from './agent-scheduler.js';
 import { runEvaluatorAgent } from './evaluator-agent.js';
 import { runGuiEvaluatorAgent } from './gui-evaluator-agent.js';
@@ -249,7 +249,11 @@ async function respondWithProgress(
   const taskHarness = runtimeSettings.forRequest(req,req.body?.appId||req.body?.selectedAppId);
   const taskPrompt = typeof req.body?.prompt==='string' ? req.body.prompt : req.body?.actionId ? JSON.stringify({appId:req.body.appId,actionId:req.body.actionId,input:req.body.eventPayload}) : '';
   const taskRowId = taskLabel ? recordTaskStart(owner, taskLabel, taskPrompt) : 0;
+  const taskDiagnostics = llm && taskRowId ? createNativeTaskDiagnostics({ dataDirectory: path.dirname(dbPath), owner, chatId: taskRowId, secrets: [llm.apiKey || ''] }) : undefined;
+  if (llm && taskDiagnostics) llm.taskDiagnostics = taskDiagnostics;
   const finishTask = (status: 'done' | 'error', text: string, code?: string) => {
+    // Freeze inference evidence before the task row update wakes the watcher.
+    taskDiagnostics?.finish(code === 'llm_config_required' ? 'done' : status);
     if (!taskRowId) return false;
     // 配置弹窗回路(llm_config_required)不是任务失败:删行,别在消息中心刷屏。
     if (code === 'llm_config_required') {
