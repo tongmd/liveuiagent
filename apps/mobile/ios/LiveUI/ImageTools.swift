@@ -64,7 +64,7 @@ enum ImagePreviewDecoder {
     }
     static func bounded(_ image: UIImage) -> UIImage {
         let longest = max(image.size.width, image.size.height)
-        guard longest > CGFloat(maximumDimension) else { return image }
+        guard longest * image.scale > CGFloat(maximumDimension) else { return image }
         let ratio = CGFloat(maximumDimension) / longest
         let size = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
@@ -73,8 +73,20 @@ enum ImagePreviewDecoder {
 }
 
 @MainActor
+final class ImagePreviewRequest: ObservableObject {
+    private var generation = UUID()
+    private var active = true
+    func begin() -> UUID { generation = UUID(); return generation }
+    func accepts(_ ticket: UUID) -> Bool { active && generation == ticket }
+    func cancel() { active = false; generation = UUID() }
+    func appear() { active = true }
+}
+
+@MainActor
 struct ImageToolsView: View {
     @Environment(\.dismiss) private var dismiss
+    @StateObject private var request = ImagePreviewRequest()
+    @State private var selectionTicket = UUID()
     @State private var image: UIImage?
     @State private var photos = false
     @State private var files = false
@@ -95,8 +107,8 @@ struct ImageToolsView: View {
                         Text("View an image").font(.title2.bold())
                         Text("Choose a photo or file, or take a picture. It stays on this device.")
                             .font(.body).multilineTextAlignment(.center).foregroundStyle(.white.opacity(0.75))
-                        Button("Choose photo") { photos = true }.buttonStyle(.borderedProminent)
-                        Button("Open image file") { files = true }.buttonStyle(.bordered)
+                        Button("Choose photo") { choosePhoto() }.buttonStyle(.borderedProminent)
+                        Button("Open image file") { chooseFile() }.buttonStyle(.bordered)
                         Button("Take photo") { takePhoto() }.buttonStyle(.bordered)
                     }.padding(32).foregroundStyle(.white)
                 }
@@ -105,11 +117,11 @@ struct ImageToolsView: View {
             .navigationTitle("Images").navigationBarTitleDisplayMode(.inline)
             .toolbarBackground(.visible, for: .navigationBar)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) { Button("Close") { dismiss() } }
+                ToolbarItem(placement: .navigationBarLeading) { Button("Close") { request.cancel(); dismiss() } }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Menu {
-                        Button("Choose photo") { photos = true }
-                        Button("Open image file") { files = true }
+                        Button("Choose photo") { choosePhoto() }
+                        Button("Open image file") { chooseFile() }
                         Button("Take photo") { takePhoto() }
                         Button("Permissions") { MediaAccess.openSettings() }
                     } label: { Image(systemName: "plus").accessibilityLabel("Open another image") }
@@ -117,8 +129,15 @@ struct ImageToolsView: View {
                 }
             }
         }
+        .onAppear { request.appear() }
+        .onDisappear {
+            // A full-screen camera covers this view without ending its session.
+            if !camera && !photos && !files { request.cancel() }
+        }
         .sheet(isPresented: $photos) {
+            let ticket = selectionTicket
             SelectedPhotoPicker { result in
+                guard request.accepts(ticket) else { return }
                 photos = false
                 switch result {
                 case .success(let selected): image = selected
@@ -127,7 +146,9 @@ struct ImageToolsView: View {
             } cancelled: { photos = false }
         }
         .fullScreenCover(isPresented: $camera) {
+            let ticket = selectionTicket
             CameraPhotoPicker { selected in
+                guard request.accepts(ticket) else { return }
                 camera = false
                 if let selected { image = ImagePreviewDecoder.bounded(selected) }
             }.ignoresSafeArea()
@@ -137,6 +158,8 @@ struct ImageToolsView: View {
                 if case .failure(let error) = result { message = error.localizedDescription }
                 return
             }
+            let ticket = selectionTicket
+            guard request.accepts(ticket) else { return }
             busy = true
             Task {
                 let loaded = await Task.detached(priority: .userInitiated) { () -> Result<UIImage, Error> in
@@ -144,6 +167,7 @@ struct ImageToolsView: View {
                     defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                     return Result { try ImagePreviewDecoder.load(url) }
                 }.value
+                guard request.accepts(ticket) else { return }
                 busy = false
                 switch loaded {
                 case .success(let selected): image = selected
@@ -160,12 +184,17 @@ struct ImageToolsView: View {
                   secondaryButton: .cancel(Text("Not now")))
         }
     }
+    private func choosePhoto() { selectionTicket = request.begin(); photos = true }
+    private func chooseFile() { selectionTicket = request.begin(); files = true }
     private func takePhoto() {
         guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
             message = "This device does not have an available camera. You can still choose a photo or image file."; return
         }
+        let ticket = request.begin(); selectionTicket = ticket
         Task {
-            if await MediaAccess.request(.video) { camera = true }
+            let granted = await MediaAccess.request(.video)
+            guard request.accepts(ticket) else { return }
+            if granted { camera = true }
             else { permission = .init(message: "Allow Camera in Settings to take a picture. You can still choose an existing photo.") }
         }
     }

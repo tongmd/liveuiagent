@@ -60,6 +60,28 @@ final class ImageToolsTests: XCTestCase {
     }
 
     @MainActor
+    func testCancelledAndReplacedImageRequestRejectsLateCompletions() {
+        let request = ImagePreviewRequest()
+        let first = request.begin()
+        XCTAssertTrue(request.accepts(first))
+        let second = request.begin()
+        XCTAssertFalse(request.accepts(first)); XCTAssertTrue(request.accepts(second))
+        request.cancel(); XCTAssertFalse(request.accepts(second))
+        request.appear(); XCTAssertFalse(request.accepts(second))
+        XCTAssertTrue(request.accepts(request.begin()))
+    }
+
+    func testRetinaCameraImageUsesPixelLimit() throws {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 2
+        let image = UIGraphicsImageRenderer(size: CGSize(width: 2500, height: 10), format: format).image { ctx in
+            UIColor.blue.setFill(); ctx.fill(CGRect(x: 0, y: 0, width: 2500, height: 10))
+        }
+        XCTAssertEqual(try XCTUnwrap(image.cgImage).width, 5000)
+        let preview = ImagePreviewDecoder.bounded(image)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(preview.cgImage).width, 4096)
+    }
+
+    @MainActor
     func testImageScreenRendersWithoutAccountAndZoomViewMaintainsBounds() {
         let controller = UIHostingController(rootView: ImageToolsView())
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
