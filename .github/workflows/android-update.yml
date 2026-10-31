@@ -56,7 +56,7 @@ jobs:
           arch: x86_64
           profile: pixel_3a
           disable-animations: true
-          script: python3 apps/mobile/android/tests/run-update-device.py --fixtures "$RUNNER_TEMP/update-fixtures" --output update-artifacts ${{ matrix.api == 30 && '--require-confirmation' || '' }}
+          script: python3 apps/mobile/android/tests/run-update-device.py --fixtures "$RUNNER_TEMP/update-fixtures" --output update-artifacts ${{ matrix.api == 30 && '--require-confirmation' || '--background-ready' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

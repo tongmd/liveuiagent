@@ -77,7 +77,7 @@ public final class UpdateFlowTests extends Instrumentation {
                 require(denied, "Installer ignored disabled permission");
                 require(c.getPackageManager().getPackageInstaller().getMySessions().size() == before, "Denied install created session");
                 report("blocked", new JSONObject().put("passed", true).put("createdSession", false));
-            } else if ("install".equals(phase)) {
+            } else if ("install".equals(phase) || "prepare-background".equals(phase)) {
                 require(c.getPackageManager().canRequestPackageInstalls(), "Unknown sources permission not enabled");
                 require(c.getSharedPreferences("update-test", 0).edit().putString("marker", "keep-this-state-1283").commit(), "Could not save fixture state");
                 c.getSharedPreferences("experience", 0).edit().putBoolean("guide_seen_v1", true).commit();
@@ -98,9 +98,19 @@ public final class UpdateFlowTests extends Instrumentation {
                 Files.copy(apk.toPath(), AppUpdater.apk(c, next).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                 require(AppUpdater.prefs(c).edit().putString("ready", next.json().toString()).commit(), "Could not save ready update");
                 report("requested", diagnostics(c).put("from", 1001).put("to", 1002).put("cachedSha256", UpdatePolicy.sha256(AppUpdater.apk(c, next))).put("path", "production AppUpdater.installVerified"));
-                AppUpdater.installVerified(c, AppUpdater.apk(c, next), next);
-                // The OS may terminate this process before finish: the external driver checks the installed package.
-                report("committed", diagnostics(c));
+                if ("prepare-background".equals(phase)) {
+                    AppUpdater.scheduleReady(c);
+                    android.app.job.JobInfo readyJob = scheduler.getPendingJob(1284);
+                    require(readyJob != null, "Ready installation job not scheduled");
+                    require(readyJob.getRequiredNetwork() == null, "Cached installation requires a network");
+                    require(AppUpdater.prefs(c).getLong("last_check", 0) > System.currentTimeMillis() - 60000, "Recent metadata throttle missing");
+                    require(c.getPackageManager().getPackageInstaller().getMySessions().isEmpty(), "Install ran before background trigger");
+                    report("background-ready", diagnostics(c).put("jobId", 1284).put("noNetworkRequirement", true).put("recentMetadataCheck", true));
+                } else {
+                    AppUpdater.installVerified(c, AppUpdater.apk(c, next), next);
+                    // The OS may terminate this process before finish: the external driver checks the installed package.
+                    report("committed", diagnostics(c));
+                }
             } else if ("verify".equals(phase)) {
                 require(AppUpdater.installedVersion(c) == 1002, "New APK was not installed");
                 require("keep-this-state-1283".equals(c.getSharedPreferences("update-test", 0).getString("marker", "")), "Preferences lost");

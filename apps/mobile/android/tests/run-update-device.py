@@ -17,6 +17,7 @@ def main():
     parser.add_argument('--fixtures', type=pathlib.Path, required=True)
     parser.add_argument('--output', type=pathlib.Path, required=True)
     parser.add_argument('--require-confirmation', action='store_true')
+    parser.add_argument('--background-ready', action='store_true')
     args = parser.parse_args()
     args.output.mkdir(parents=True, exist_ok=True)
 
@@ -29,7 +30,7 @@ def main():
         return result
 
     def collect_diagnostics():
-        for name in ['public-manifest', 'validate', 'blocked', 'scheduler', 'requested', 'committed', 'failure', 'verify']:
+        for name in ['public-manifest', 'validate', 'blocked', 'scheduler', 'background-ready', 'requested', 'committed', 'failure', 'verify']:
             result = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/update-test-' + name + '.json', check=False)
             try:
                 value = json.loads(result.stdout)
@@ -39,6 +40,7 @@ def main():
         safe = {key: value for key, value in update_preferences().items() if key in {'install_status', 'session_id', 'expected_version', 'last_check'}}
         (args.output / 'update-status.json').write_text(json.dumps(safe, indent=2))
         (args.output / 'package-sessions.txt').write_bytes(adb('shell', 'dumpsys', 'package', check=False).stdout)
+        (args.output / 'full-logcat.txt').write_bytes(adb('logcat', '-d', check=False).stdout)
 
     def phase(name):
         run = adb('shell', 'am', 'instrument', '-w', '-e', 'phase', name, RUNNER, timeout=120, check=False)
@@ -84,6 +86,8 @@ def main():
                 adb('shell', 'input', 'tap', str((values[0] + values[2]) // 2), str((values[1] + values[3]) // 2))
                 return
             time.sleep(1)
+        (args.output / (label + '-timeout.xml')).write_bytes(adb('exec-out', 'cat', '/sdcard/update-ui.xml', check=False).stdout)
+        (args.output / (label + '-timeout.png')).write_bytes(adb('exec-out', 'screencap', '-p', check=False).stdout)
         raise RuntimeError('Expected visible enabled button was not found: ' + label)
 
     # These are the only adb installs. The update itself goes through production app code.
@@ -99,8 +103,16 @@ def main():
     phase('blocked')
     adb('shell', 'appops', 'set', PACKAGE, 'REQUEST_INSTALL_PACKAGES', 'allow')
 
+    if args.background_ready:
+        phase('prepare-background')
+        adb('shell', 'input', 'keyevent', 'HOME')
+        # The emulator clock need not wait the entire job latency. This dispatches
+        # the real production JobService after instrumentation has exited.
+        install_command = ['adb', 'shell', 'cmd', 'jobscheduler', 'run', '-f', PACKAGE, '1284']
+    else:
+        install_command = ['adb', 'shell', 'am', 'instrument', '-w', '-e', 'phase', 'install', RUNNER]
     with (args.output / 'install.log').open('wb') as log:
-        process = subprocess.Popen(['adb', 'shell', 'am', 'instrument', '-w', '-e', 'phase', 'install', RUNNER], stdout=log, stderr=subprocess.STDOUT)
+        process = subprocess.Popen(install_command, stdout=log, stderr=subprocess.STDOUT)
         deadline = time.monotonic() + 120
         installed = False
         try:
@@ -118,10 +130,13 @@ def main():
                     (args.output / 'pending-logcat.txt').write_bytes(adb('logcat', '-d', '-b', 'crash', check=False).stdout)
                     raise RuntimeError('Android 11 did not deliver the real pending-user-action callback')
                 original_session = pending['session_id']
+                (args.output / 'pending-received.json').write_text(json.dumps({k: pending[k] for k in ['install_status', 'session_id', 'expected_version'] if k in pending}, indent=2))
                 # Complete the test instrumentation, then open the ordinary app prompt.
                 process.wait(timeout=15)
                 adb('shell', 'am', 'start', '-n', PACKAGE + '/.MainActivity')
                 tap_button({'UPDATE NOW'}, {PACKAGE}, 'app-update-ready')
+                current = update_preferences()
+                (args.output / 'after-app-confirmation.json').write_text(json.dumps({k: current[k] for k in ['install_status', 'session_id', 'expected_version'] if k in current}, indent=2))
                 if update_preferences().get('session_id') != original_session:
                     raise RuntimeError('Opening saved confirmation replaced the original OS session')
                 tap_button({'INSTALL'}, {'com.android.packageinstaller', 'com.google.android.packageinstaller'}, 'android-install-confirmation')
@@ -146,13 +161,13 @@ def main():
     # A fresh process verifies the OS-installed version and persistent state.
     phase('verify')
     evidence = {}
-    for name in ['public-manifest', 'validate', 'blocked', 'scheduler', 'requested', 'committed', 'verify']:
+    for name in ['public-manifest', 'validate', 'blocked', 'scheduler', 'background-ready', 'requested', 'committed', 'verify']:
         result = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/update-test-' + name + '.json', check=False)
         if result.returncode == 0:
             evidence[name] = json.loads(result.stdout)
     assert evidence['verify']['installedVersion'] == 1002
     assert evidence['verify']['passed'] is True
-    (args.output / 'verification.json').write_text(json.dumps({'passed': True, 'realPackageInstaller': True, 'adbUsedToInstallUpdate': False, 'systemUserConfirmation': args.require_confirmation, 'evidence': evidence}, indent=2))
+    (args.output / 'verification.json').write_text(json.dumps({'passed': True, 'realPackageInstaller': True, 'adbUsedToInstallUpdate': False, 'systemUserConfirmation': args.require_confirmation, 'backgroundReadyJob': args.background_ready, 'schedulerDispatchedByAdb': args.background_ready, 'evidence': evidence}, indent=2))
     print('Actual PackageInstaller self-update and persistent data verification passed.')
 
 
