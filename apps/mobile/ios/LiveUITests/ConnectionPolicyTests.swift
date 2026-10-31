@@ -1,4 +1,5 @@
 import XCTest
+import WebKit
 @testable import LiveUI
 
 final class ConnectionPolicyTests: XCTestCase {
@@ -67,5 +68,35 @@ final class OnboardingPolicyTests: XCTestCase {
         XCTAssertEqual(LoginFeedback.message(for: URLError(.notConnectedToInternet)), "网络连接不顺畅，请检查网络后重试。")
         XCTAssertEqual(LoginFeedback.message(for: URLError(.timedOut)), "网络连接不顺畅，请检查网络后重试。")
         XCTAssertEqual(LoginFeedback.message(for: NSError(domain: "private-backend-url", code: 503)), "暂时无法登录，请稍后重试。")
+    }
+}
+
+@MainActor
+final class WorkspacePresentationTests: XCTestCase {
+    func testRenderedWorkspaceOwnsTheOnlyHeader() async throws {
+        let connection = Connection(address: "https://liveui.example/liveui/", username: "fixture", password: "fixture", realm: "LiveUIAgent")
+        let model = BrowserModel()
+        model.connection = connection
+        let page = WKWebView(frame: CGRect(x: 0, y: 0, width: 320, height: 640))
+        let coordinator = BrowserView.Coordinator(connection: connection, model: model)
+        model.webView = page; coordinator.activeWebView = page; page.navigationDelegate = coordinator
+        page.loadHTMLString("<meta name='viewport' content='width=device-width'><button data-ulemi-native-menu='true'>Account</button><textarea>Saved draft</textarea>", baseURL: connection.url)
+        for _ in 0..<100 { if model.workspaceReady { break }; try await Task.sleep(nanoseconds: 100_000_000) }
+        XCTAssertTrue(model.workspaceReady)
+        XCTAssertTrue(model.hasNativeMenu)
+        XCTAssertFalse(model.loading)
+        XCTAssertNil(model.workspaceError)
+        page.stopLoading(); page.navigationDelegate = nil
+    }
+    func testLegacyWorkspaceRetainsNativeAccountAccess() async throws {
+        let connection = Connection(address: "https://liveui.example/liveui/", username: "fixture", password: "fixture", realm: "LiveUIAgent")
+        let model = BrowserModel(); model.connection = connection
+        let page = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 700))
+        let coordinator = BrowserView.Coordinator(connection: connection, model: model)
+        model.webView = page; coordinator.activeWebView = page; page.navigationDelegate = coordinator
+        page.loadHTMLString("<button data-ulemi-native-menu='true' style='display:none'>Hidden account</button><textarea>Legacy workspace</textarea>", baseURL: connection.url)
+        for _ in 0..<100 { if model.workspaceReady { break }; try await Task.sleep(nanoseconds: 100_000_000) }
+        XCTAssertTrue(model.workspaceReady); XCTAssertFalse(model.hasNativeMenu)
+        page.stopLoading(); page.navigationDelegate = nil
     }
 }

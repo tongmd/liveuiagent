@@ -11,6 +11,8 @@ struct BrowserView: UIViewRepresentable {
         config.websiteDataStore = .default()
         config.processPool = WKProcessPool()
         config.allowsInlineMediaPlayback = true
+        config.applicationNameForUserAgent = "UlemiMobile/1"
+        config.userContentController.addUserScript(WKUserScript(source: "document.addEventListener('DOMContentLoaded',()=>{document.documentElement.dataset.ulemiShell='true'})", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         config.mediaTypesRequiringUserActionForPlayback = [.audio]
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.navigationDelegate = context.coordinator
@@ -37,6 +39,7 @@ struct BrowserView: UIViewRepresentable {
         let connection: Connection
         let model: BrowserModel
         weak var activeWebView: WKWebView?
+        private var navigationTicket = 0
         init(connection: Connection, model: BrowserModel) { self.connection = connection; self.model = model }
         private func authenticate(_ challenge: URLAuthenticationChallenge,
                                   _ completion: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
@@ -104,12 +107,32 @@ struct BrowserView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             guard model.connection == connection, model.webView === webView else { return }
-            model.loading = true; model.workspaceError = nil
+            navigationTicket += 1
+            model.loading = true; model.workspaceError = nil; model.workspaceReady = false
         }
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             guard model.connection == connection, model.webView === webView else { return }
-            model.loading = false; model.canGoBack = webView.canGoBack
-            if model.workspaceError == nil { model.workspaceReady = true; model.authenticated = true }
+            model.canGoBack = webView.canGoBack
+            awaitWorkspace(webView, ticket: navigationTicket, attempt: 0)
+        }
+        private func awaitWorkspace(_ webView: WKWebView, ticket: Int, attempt: Int) {
+            guard model.connection == connection, model.webView === webView,
+                  ticket == navigationTicket, model.workspaceError == nil else { return }
+            webView.evaluateJavaScript("({ready:[...document.querySelectorAll('textarea')].some(e=>e.getClientRects().length),menu:[...document.querySelectorAll('[data-ulemi-native-menu=\"true\"]')].some(e=>e.getClientRects().length&&getComputedStyle(e).visibility!=='hidden'&&getComputedStyle(e).pointerEvents!=='none')})") { [weak self, weak webView] result, _ in
+                guard let self, let webView, self.model.connection == self.connection,
+                      self.model.webView === webView, ticket == self.navigationTicket,
+                      self.model.workspaceError == nil else { return }
+                if let state = result as? [String: Bool], state["ready"] == true {
+                    self.model.hasNativeMenu = state["menu"] == true
+                    self.model.loading = false; self.model.workspaceReady = true; self.model.authenticated = true
+                } else if attempt >= 60 {
+                    self.model.loading = false; self.model.workspaceError = "打开时间有点长，请重试。"
+                } else {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self, weak webView] in
+                        if let webView { self?.awaitWorkspace(webView, ticket: ticket, attempt: attempt + 1) }
+                    }
+                }
+            }
         }
         func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed(error, webView) }
         func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(error, webView) }
@@ -185,6 +208,13 @@ struct BrowserView: UIViewRepresentable {
         }
         func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
                      initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (String?) -> Void) {
+            if prompt == "__ulemi_menu_v1__" {
+                if frame.isMainFrame, let url = frame.request.url, connection.contains(url),
+                   model.connection == connection, model.webView === webView {
+                    model.showNativeMenu = true
+                }
+                completionHandler(nil); return
+            }
             let alert = UIAlertController(title: "Ulemi", message: prompt, preferredStyle: .alert)
             alert.addTextField { $0.text = defaultText }
             alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completionHandler(nil) })
