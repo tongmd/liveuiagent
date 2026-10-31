@@ -250,13 +250,13 @@ async function respondWithProgress(
   const taskPrompt = typeof req.body?.prompt==='string' ? req.body.prompt : req.body?.actionId ? JSON.stringify({appId:req.body.appId,actionId:req.body.actionId,input:req.body.eventPayload}) : '';
   const taskRowId = taskLabel ? recordTaskStart(owner, taskLabel, taskPrompt) : 0;
   const finishTask = (status: 'done' | 'error', text: string, code?: string) => {
-    if (!taskRowId) return;
+    if (!taskRowId) return false;
     // 配置弹窗回路(llm_config_required)不是任务失败:删行,别在消息中心刷屏。
     if (code === 'llm_config_required') {
       db.prepare('DELETE FROM chat_history WHERE id = ?').run(taskRowId);
-      return;
+      return false;
     }
-    recordTaskEnd(taskRowId, status, redactSecrets(`${text} · ${harnessLabel(taskHarness)} · ${llm?.model||''} · ${Math.round((Date.now() - startedAt) / 1000)}s`));
+    return recordTaskEnd(taskRowId, status, redactSecrets(`${text} · ${harnessLabel(taskHarness)} · ${llm?.model||''} · ${Math.round((Date.now() - startedAt) / 1000)}s`));
   };
   if (!String(req.header('accept') || '').includes('text/event-stream')) {
     try {
@@ -265,8 +265,9 @@ async function respondWithProgress(
       finishTask('done', describeOk(result));
       res.json(result);
     } catch (e) {
-      console.warn(`[${logTag}] FAIL ${Date.now() - startedAt}ms: ${(e as Error).message}`);
-      finishTask('error', (e as Error).message, String((e as any)?.code || ''));
+      const recorded = finishTask('error', (e as Error).message, String((e as any)?.code || ''));
+      const taskLink = recorded && ['tongzhang', 'test'].includes(owner) ? ` chat_history=${taskRowId} owner=${owner}` : '';
+      console.warn(`[${logTag}] FAIL${taskLink} ${Date.now() - startedAt}ms: ${redactSecrets((e as Error).message)}`);
       next(e);
     }
     return;
@@ -288,8 +289,9 @@ async function respondWithProgress(
     finishTask('done', describeOk(result));
     send('result', result);
   } catch (e) {
-    console.warn(`[${logTag}] FAIL ${Date.now() - startedAt}ms: ${(e as Error).message}`);
-    finishTask('error', (e as Error).message, String((e as any)?.code || ''));
+    const recorded = finishTask('error', (e as Error).message, String((e as any)?.code || ''));
+    const taskLink = recorded && ['tongzhang', 'test'].includes(owner) ? ` chat_history=${taskRowId} owner=${owner}` : '';
+    console.warn(`[${logTag}] FAIL${taskLink} ${Date.now() - startedAt}ms: ${redactSecrets((e as Error).message)}`);
     send('error', errorPayload(e));
   } finally {
     clearInterval(heartbeat);
@@ -464,8 +466,8 @@ function trimChatHistory(owner: string) {
 }
 
 function recordTaskEnd(taskRowId: number, status: 'done' | 'error', text: string) {
-  db.prepare(`UPDATE chat_history SET status = ?, text = ? WHERE id = ? AND kind = 'task'`)
-    .run(status, text.slice(0, 1000), taskRowId);
+  return db.prepare(`UPDATE chat_history SET status = ?, text = ? WHERE id = ? AND kind = 'task'`)
+    .run(status, text.slice(0, 1000), taskRowId).changes === 1;
 }
 
 app.post('/agent/chat-append', (req, res, next) => {
