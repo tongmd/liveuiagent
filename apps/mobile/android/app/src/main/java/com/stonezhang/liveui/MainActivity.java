@@ -143,18 +143,18 @@ public final class MainActivity extends Activity {
         EditText e = new EditText(this); e.setSingleLine(true); e.setTextSize(17); e.setHint(hint); e.setContentDescription(hint); e.setInputType(type);
         e.setTextColor(Color.BLACK); e.setHintTextColor(0xff777777); e.setPadding(dp(16), 0, dp(16), 0); e.setBackground(rounded(0xfff3f3f3, 14));
         e.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(58)); lp.bottomMargin = dp(12); box.addView(e, lp); return e;
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(56)); lp.bottomMargin = dp(10); box.addView(e, lp); return e;
     }
     private void showLogin(String message) {
         restoring = false; root = makeRoot();
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); root.addView(scroll, new LinearLayout.LayoutParams(-1, -1));
-        LinearLayout outer = new LinearLayout(this); outer.setGravity(Gravity.CENTER); outer.setOrientation(LinearLayout.VERTICAL); outer.setPadding(dp(24), dp(28), dp(24), dp(24)); scroll.addView(outer);
+        LinearLayout outer = new LinearLayout(this); outer.setGravity(Gravity.CENTER); outer.setOrientation(LinearLayout.VERTICAL); outer.setPadding(dp(24), dp(20), dp(24), dp(20)); scroll.addView(outer);
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL);
         outer.addView(box, new LinearLayout.LayoutParams(Math.min(getResources().getDisplayMetrics().widthPixels - dp(48), dp(420)), -2));
         LinearLayout header = new LinearLayout(this); header.setOrientation(LinearLayout.VERTICAL); loginHeader = header; box.addView(header);
-        header.addView(icon(64), new LinearLayout.LayoutParams(dp(64), dp(64)));
-        TextView brand = text("liveUI", 32, Color.BLACK); brand.setPadding(0, dp(14), 0, dp(10)); header.addView(brand);
-        TextView welcome = text("登录，开始创造你的应用", 21, 0xff222222); welcome.setPadding(0, 0, 0, dp(30)); header.addView(welcome);
+        header.addView(icon(56), new LinearLayout.LayoutParams(dp(56), dp(56)));
+        TextView brand = text("liveUI", 30, Color.BLACK); brand.setPadding(0, dp(10), 0, dp(8)); header.addView(brand);
+        TextView welcome = text("登录，开始创造你的应用", 19, 0xff222222); welcome.setPadding(0, 0, 0, dp(20)); header.addView(welcome);
         userInput = input(box, "账号", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL); userInput.setText(username);
         userInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_NEXT);
         passwordInput = input(box, "密码", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
@@ -163,9 +163,9 @@ public final class MainActivity extends Activity {
         CheckBox visible = new CheckBox(this); visible.setText("显示密码"); visible.setTextColor(0xff555555); visible.setTextSize(14);
         visible.setOnCheckedChangeListener((v, checked) -> { passwordInput.setTransformationMethod(checked ? null : android.text.method.PasswordTransformationMethod.getInstance()); passwordInput.setSelection(passwordInput.length()); });
         box.addView(visible, new LinearLayout.LayoutParams(-1, dp(48)));
-        connect = button("登录", true); connect.setOnClickListener(v -> connect()); LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(54)); bp.topMargin = dp(10); box.addView(connect, bp);
-        status = text(message == null ? "" : message, 14, 0xffad3333); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); status.setPadding(0, dp(14), 0, 0); box.addView(status);
-        Button waitlist = button("还没有账号？加入候补名单", false); loginWaitlist = waitlist; waitlist.setTextSize(14); waitlist.setOnClickListener(v -> external("https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")); LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, dp(50)); wp.topMargin = dp(20); box.addView(waitlist, wp);
+        connect = button("登录", true); connect.setOnClickListener(v -> connect()); LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(54)); bp.topMargin = dp(8); box.addView(connect, bp);
+        status = text(message == null ? "" : message, 14, 0xffad3333); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); status.setPadding(0, dp(14), 0, 0); box.addView(status); status.setVisibility(message == null || message.isEmpty() ? View.GONE : View.VISIBLE);
+        Button waitlist = button("还没有账号？加入候补名单", false); loginWaitlist = waitlist; waitlist.setTextSize(14); waitlist.setOnClickListener(v -> external("https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")); LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, dp(50)); wp.topMargin = dp(12); box.addView(waitlist, wp);
         reveal(box);
     }
     private void enterAccount() {
@@ -211,9 +211,9 @@ public final class MainActivity extends Activity {
         try {
             candidate = ConnectionPolicy.parse(ConnectionPolicy.DEFAULT_URL);
             if (u.isEmpty() || p.isEmpty() || u.contains(":") || u.contains("\n") || u.contains("\r")) throw new IllegalArgumentException("请输入有效的用户名和密码");
-        } catch (Exception e) { status.setText(e.getMessage()); return; }
+        } catch (Exception e) { status.setText(e.getMessage()); status.setVisibility(View.VISIBLE); return; }
         final int generation; synchronized (credentialLock) { generation = ++connectionGeneration; }
-        connect.setEnabled(false); connect.setText("正在登录…"); status.setText("");
+        connect.setEnabled(false); connect.setText("正在登录…"); status.setText(""); status.setVisibility(View.GONE);
         android.view.inputmethod.InputMethodManager keyboard = (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE); keyboard.hideSoftInputFromWindow(passwordInput.getWindowToken(), 0);
         network.execute(() -> {
             String error = null;
@@ -235,7 +235,7 @@ public final class MainActivity extends Activity {
             runOnUiThread(() -> {
                 if (isFinishing() || generation != connectionGeneration) return;
                 connect.setEnabled(true); connect.setText("登录");
-                if (finalError != null) { if (restoring) showLogin(finalError); else status.setText(finalError); return; }
+                if (finalError != null) { if (restoring) showLogin(finalError); else { status.setText(finalError); status.setVisibility(View.VISIBLE); } return; }
                 endpoint = candidate; username = u; password = p; currentSession = new Session(candidate, u, p); authenticated = true; restoring = false; enterAccount();
             });
         });
