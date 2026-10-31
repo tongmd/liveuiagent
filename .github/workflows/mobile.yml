@@ -150,7 +150,7 @@ jobs:
             ffprobe -v error -show_entries format=duration mobile-artifacts/android-motion.mp4
             adb exec-out run-as com.stonezhang.liveui cat files/android-motion-1.png > mobile-artifacts/android-motion-1.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/android-motion-2.png > mobile-artifacts/android-motion-2.png || true
-            for ULEMI_FRAME in android-preview-loader.png android-preview-login.png android-preview-guide.png android-preview-offline.png; do
+            for ULEMI_FRAME in android-preview-loading.png android-preview-login.png android-preview-guide.png android-preview-local.png; do
               adb exec-out run-as com.stonezhang.liveui cat "files/$ULEMI_FRAME" > "mobile-artifacts/$ULEMI_FRAME"
             done
             grep -F 'MOTION PREVIEW OK' mobile-artifacts/android-motion-preview.txt
