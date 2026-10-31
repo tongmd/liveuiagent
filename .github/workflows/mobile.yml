@@ -149,6 +149,8 @@ jobs:
             adb exec-out run-as com.stonezhang.liveui cat files/android-local-assistant.png > mobile-artifacts/android-local-assistant.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/android-local-keyboard.png > mobile-artifacts/android-local-keyboard.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/android-image-viewer.png > mobile-artifacts/android-image-viewer.png || true
+            adb exec-out run-as com.stonezhang.liveui cat files/upload-top-before.png > mobile-artifacts/upload-top-before.png || true
+            adb exec-out run-as com.stonezhang.liveui cat files/upload-sandbox-before.png > mobile-artifacts/upload-sandbox-before.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/media-upload-top.json > mobile-artifacts/media-upload-top.json || true
             adb exec-out run-as com.stonezhang.liveui cat files/media-upload-sandbox.json > mobile-artifacts/media-upload-sandbox.json || true
             grep -F 'OK (19 tests)' mobile-artifacts/android-native-tests.txt
