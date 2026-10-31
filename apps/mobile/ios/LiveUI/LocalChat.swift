@@ -174,6 +174,6 @@ final class LocalChat: ObservableObject {
     func save() {
         guard storageReadable else { return }
         do { try JSONEncoder().encode(messages).write(to: directory.appendingPathComponent("chat.json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]) }
-        catch { error = "这次对话未能保存，请勿关闭页面。" }
+        catch { self.error = "这次对话未能保存，请勿关闭页面。" }
     }
 }

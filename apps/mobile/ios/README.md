@@ -7,11 +7,11 @@ Open `LiveUI.xcodeproj` in a full Xcode installation, select the **LiveUI** sche
 ```sh
 xcodebuild -project LiveUI.xcodeproj -scheme LiveUI \
   -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+  -derivedDataPath build ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
 
 # Replace the simulator name with one listed by xcrun simctl list devices available.
 xcodebuild -project LiveUI.xcodeproj -scheme LiveUI \
-  -destination 'platform=iOS Simulator,name=iPhone 16' test
+  -destination 'platform=iOS Simulator,name=iPhone 16' ARCHS=arm64 ONLY_ACTIVE_ARCH=YES test
 
 # Requires your signing identity, team and provisioning profile.
 xcodebuild -project LiveUI.xcodeproj -scheme LiveUI \
@@ -19,11 +19,13 @@ xcodebuild -project LiveUI.xcodeproj -scheme LiveUI \
   -archivePath build/LiveUI.xcarchive DEVELOPMENT_TEAM=YOUR_TEAM archive
 ```
 
+Simulator builds and tests require an Apple Silicon Mac. This app disables model loading in the simulator; simulator checks exercise UI and test fixtures, not multi-gigabyte model inference.
+
 The archive can be exported through Xcode Organizer for the chosen development, ad hoc or App Store distribution method. Store submission and distribution signing have not been performed.
 
 ## First use
 
-Version 0.2.0 opens with the black U mark, then a native account-and-password login. The brief reveal can be tapped to continue and has no delay when Reduce Motion is enabled. The app uses a fixed application address; no server address or connection settings appear in the user flow. People without an account can open the existing waitlist in their browser.
+The app opens with the black U mark, then a native account-and-password login. The brief reveal can be tapped to continue and has no delay when Reduce Motion is enabled. The app uses a fixed application address; no server address or connection settings appear in the user flow. People without an account can open the existing waitlist in their browser.
 
 After verified login, three short, skippable pages introduce describing a need, refining an application and reopening saved work. Completion stays on the device, so returning users go straight to their applications. The account menu can replay the guide, reload, cancel downloads or sign out. Loading and network failures use native screens with a clear retry action; incorrect credentials remain on the login screen. Cancelling login invalidates its pending result, and a saved session is verified by WebKit before it can display first-use guidance.
 

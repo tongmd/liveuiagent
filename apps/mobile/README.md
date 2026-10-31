@@ -40,8 +40,10 @@ Simulator builds do not require device signing:
 ```sh
 xcodebuild -project ios/LiveUI.xcodeproj -scheme LiveUI \
   -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath ios/DerivedData CODE_SIGNING_ALLOWED=NO build
+  -derivedDataPath ios/DerivedData ARCHS=arm64 ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=NO build
 ```
+
+The local inference SDK supports ARM64 devices and ARM64 simulators. Simulator tests require an Apple Silicon Mac. The app disables model loading in the simulator; use a physical phone for actual inference.
 
 The iOS project requires the full Xcode application and its iOS SDK. Command Line Tools alone cannot build an iPhone app. TestFlight and App Store distribution require the appropriate Apple account and provisioning.
 
