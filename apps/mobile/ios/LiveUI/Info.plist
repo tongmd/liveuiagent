@@ -15,7 +15,7 @@
 <key>UIApplicationSceneManifest</key><dict><key>UIApplicationSupportsMultipleScenes</key><false/></dict>
 <key>UISupportedInterfaceOrientations</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
-<key>NSCameraUsageDescription</key><string>Upload photos or videos you choose to your current Ulemi app.</string>
-<key>NSPhotoLibraryUsageDescription</key><string>Choose photos or videos to upload to your current Ulemi app.</string>
-<key>NSMicrophoneUsageDescription</key><string>Use the microphone when you choose to record audio or video.</string>
+<key>NSCameraUsageDescription</key><string>Use the camera when you take a photo or start camera capture in an Ulemi app.</string>
+<key>NSPhotoLibraryUsageDescription</key><string>Choose photos or videos when you attach them to an Ulemi app.</string>
+<key>NSMicrophoneUsageDescription</key><string>Use the microphone when you start audio or video recording in an Ulemi app.</string>
 </dict></plist>

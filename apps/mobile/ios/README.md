@@ -70,3 +70,20 @@ E2B is recommended below 11 GiB physical memory; E4B remains selectable from 7 G
 SwiftPM pins the official repository to `bda624851d74be34d4e1f7fac1fc4155939539c7` (release `v0.18.1`). Its iOS binary is `v0.18.1/CLiteRTLM.xcframework.zip`, SHA-256 `5c51905e38c77ccc611dc2f8c2af6cf5144621046f1dde6518aab83f78488937`. The package supports iOS 15+, while this app keeps iOS 16+. Xcode resolves and verifies the binary automatically. Set `GIT_LFS_SKIP_SMUDGE=1` while resolving the package to avoid downloading unrelated upstream Linux/Android LFS assets.
 
 Sources: [Google Swift guide](https://developers.google.com/edge/litert-lm/swift), [Gemma 4 models and device measurements](https://developers.google.com/edge/litert-lm/models/gemma-4). Google's published iOS measurements use iPhone 17 Pro. Actual iPhone 16 inference, download interruption and thermal/memory behavior require a physical-device test; simulator compilation alone does not validate those behaviors.
+
+### Images and media access
+
+`View images` is available before login and in the workspace menu. It opens the
+system photo picker, an image file in Files, or the camera, then shows a full-screen
+preview with pinch zoom, double-tap zoom and panning. Selecting an image here does
+not upload it or send it to a model. Photo selection grants only the selected file;
+it does not request access to the entire library. Previews accept files up to
+32 MB and decode at no more than 4096 pixels on the longest edge.
+
+Camera use requests iOS permission at the time of capture. Workspace camera and
+microphone requests require the current authenticated connection, matching HTTPS
+origin and matching frame origin, then request system and WebKit consent. A
+permission refusal offers Settings and a clear retry path. External and opaque
+frames do not inherit workspace permission. Existing web file-upload controls
+continue to use the system picker; images selected there follow that application's
+upload behavior. The menu also exposes the system permissions page.

@@ -136,13 +136,13 @@ jobs:
             adb exec-out run-as com.stonezhang.liveui cat files/android-login.png > mobile-artifacts/android-login.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/android-local-assistant.png > mobile-artifacts/android-local-assistant.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/android-local-keyboard.png > mobile-artifacts/android-local-keyboard.png || true
-            grep -F 'OK (10 tests)' mobile-artifacts/android-native-tests.txt
+            grep -F 'OK (15 tests)' mobile-artifacts/android-native-tests.txt
             adb shell settings put global animator_duration_scale 1
             adb shell settings put global transition_animation_scale 1
             adb shell settings put global window_animation_scale 1
             adb shell am instrument -w com.stonezhang.liveui.test/com.stonezhang.liveui.NativeTests | tee mobile-artifacts/android-motion-tests.txt
             bash apps/mobile/android/tests/record-motion-preview.sh mobile-artifacts
-            grep -F 'OK (10 tests)' mobile-artifacts/android-motion-tests.txt
+            grep -F 'OK (15 tests)' mobile-artifacts/android-motion-tests.txt
       - name: Collect Android device evidence
         if: always()
         uses: actions/upload-artifact@v4

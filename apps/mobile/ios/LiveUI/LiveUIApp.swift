@@ -12,6 +12,8 @@ struct LiveUIApp: App {
 final class BrowserModel: ObservableObject {
     @Published var connection = CredentialStore.loadForApp()
     @Published var message: String?
+    @Published var imageTools = false
+    @Published var mediaPermissionIssue: MediaPermissionIssue?
     @Published var loading = true
     @Published var workspaceReady = false
     @Published var hasNativeMenu = false
@@ -56,6 +58,7 @@ final class BrowserModel: ObservableObject {
         webView?.stopLoading()
         cancelDownloads()
         share = nil
+        mediaPermissionIssue = nil
         connection = nil
         authenticated = false
         webView = nil
@@ -191,6 +194,8 @@ struct RootView: View {
                         ToolbarItem(placement: .navigationBarTrailing) {
                             Menu {
                                 Text(browser.connection?.username ?? "")
+                                Button { browser.imageTools = true } label: { Label("View images", systemImage: "photo") }
+                                Button("Permissions") { MediaAccess.openSettings() }
                                 Button { localChat = true } label: { Label("On-device chat", systemImage: "iphone") }
                                 Button { showGuide = true } label: { Label("Quick tour", systemImage: "sparkles") }
                                 Button { browser.reload() } label: { Label("Reload", systemImage: "arrow.clockwise") }
@@ -235,6 +240,12 @@ struct RootView: View {
         }
         .tint(AppStyle.ink)
         .sheet(isPresented: $localChat) { LocalChatView() }
+        .fullScreenCover(isPresented: $browser.imageTools) { ImageToolsView() }
+        .alert(item: $browser.mediaPermissionIssue) { issue in
+            Alert(title: Text("Media access"), message: Text(issue.message),
+                  primaryButton: .default(Text("Open Settings"), action: MediaAccess.openSettings),
+                  secondaryButton: .cancel(Text("Not now")))
+        }
         .sheet(item: $browser.share) { item in ShareSheet(url: item.url) }
         .fullScreenCover(isPresented: $showGuide) {
             OnboardingView {
@@ -243,6 +254,8 @@ struct RootView: View {
             }
         }
         .confirmationDialog("Ulemi", isPresented: $browser.showNativeMenu, titleVisibility: .visible) {
+            Button("View images") { browser.imageTools = true }
+            Button("Permissions") { MediaAccess.openSettings() }
             Button("Back") { browser.goBack() }
             Button("On-device chat") { localChat = true }
             Button("Quick tour") { showGuide = true }
@@ -356,6 +369,7 @@ struct ConnectionView: View {
                     }.buttonStyle(PrimaryButtonStyle())
                         .disabled(busy || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
                         .accessibilityIdentifier("login-submit")
+                    Button("View images") { browser.imageTools = true }.frame(minHeight: 44)
                     Button("Continue on this device") { localChat = true }.buttonStyle(SecondaryButtonStyle())
                     if busy { Button("Cancel") { cancelLogin() }.frame(minHeight: 44) }
                     else {

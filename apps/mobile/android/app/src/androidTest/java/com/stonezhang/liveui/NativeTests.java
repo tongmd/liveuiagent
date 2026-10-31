@@ -14,6 +14,11 @@ public final class NativeTests extends Instrumentation {
     @Override public void onCreate(Bundle args) { super.onCreate(args); motionPreview = args != null && "true".equals(args.getString("motionPreview")); start(); }
     @Override public void onStart() {
         if (motionPreview) { recordPreview(); return; }
+        check("actualImageBytesReachWebViewAndSandbox", () -> MediaChecks.webUploadPixels(this));
+        check("imageDecodeBoundsAndRealGestures", () -> MediaChecks.decodingAndGestures(this));
+        check("webPermissionOriginAndNavigationCancel", () -> MediaChecks.originsAndCancellation(this));
+        check("realOsGrantsAndApproximateLocation", () -> MediaChecks.realPermissionGrantAndApproximateLocation(this));
+        check("captureProviderAndActualImageViewer", () -> MediaChecks.captureProviderAndViewer(this));
         check("encryptedRoundTripAndLogout", () -> {
             Context c = getTargetContext(); CredentialStore store = new CredentialStore(c, ".test");
             try {
@@ -206,8 +211,8 @@ public final class NativeTests extends Instrumentation {
                 android.widget.Button flat=NativeStyle.button(a,"Menu",false); require(flat.getElevation()==0 && flat.getStateListAnimator()==null);
             } catch(Exception e) { throw new AssertionError(e); } }); } finally { runOnMainSync(a::finish); }
         });
-        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (10 tests)\n" : "\nFAILURES!!! Tests run: 10, Failures: " + failed + "\n");
-        result.putInt("numtests", 10); finish(Activity.RESULT_OK, result);
+        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (15 tests)\n" : "\nFAILURES!!! Tests run: 15, Failures: " + failed + "\n");
+        result.putInt("numtests", 15); finish(Activity.RESULT_OK, result);
     }
     /** Test-only screen recording sequence: real native views, no credentials, network or model requests. */
     private void recordPreview() {
@@ -239,7 +244,7 @@ public final class NativeTests extends Instrumentation {
         finish(Activity.RESULT_OK,result);
     }
     private void check(String name, Check task) {
-        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 10); b.putInt("current", ++current);
+        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 15); b.putInt("current", ++current);
         sendStatus(1, b);
         try { task.run(); sendStatus(0, b); }
         catch (Throwable e) { failed++; b.putString("stack", android.util.Log.getStackTraceString(e)); sendStatus(-2, b); }

@@ -23,6 +23,8 @@ public final class MainActivity extends Activity {
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private AppUpdater updater;
     private CredentialStore store;
+    private WebCapabilityPermissions capabilities;
+    private ImageCapture capture;
     private static Session currentSession;
     private static final class Session {
         final URI endpoint; final String username, password; final AuthBootstrap authBootstrap;
@@ -51,6 +53,7 @@ public final class MainActivity extends Activity {
     private volatile int connectionGeneration = 0;
     private final Object credentialLock = new Object();
     private ValueCallback<Uri[]> upload;
+    private boolean pickerActive;
     private File pendingDownload;
     private boolean downloadBusy = false;
     private String blobNonce;
@@ -60,7 +63,9 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         updater = new AppUpdater(this);
         store = new CredentialStore(this);
-        File[] oldExports = getCacheDir().listFiles((dir, name) -> name.startsWith("liveui-export-") || name.startsWith("liveui-download-"));
+        capture = new ImageCapture(this);
+        capabilities = new WebCapabilityPermissions(this, origin -> authenticated && web != null && ConnectionPolicy.sameOrigin(endpoint, origin) && ConnectionPolicy.sameOrigin(endpoint, web.getUrl()), () -> capture.busy() || pickerActive);
+        File[] oldExports = getCacheDir().listFiles((dir, name) -> name.startsWith("liveui-export-") || name.startsWith("liveui-download-") || name.startsWith("ulemi-capture-"));
         if (oldExports != null) for (File old : oldExports) old.delete();
         WebView.setWebContentsDebuggingEnabled((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
@@ -173,6 +178,8 @@ public final class MainActivity extends Activity {
         Button waitlist = button("Join the waitlist", false); loginWaitlist = waitlist; waitlist.setTextSize(14); waitlist.setOnClickListener(v -> external("https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")); LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, dp(50)); wp.topMargin = dp(12); box.addView(waitlist, wp);
         Button local = button("Offline assistant", false); local.setOnClickListener(v -> startActivity(new Intent(this, LocalAssistantActivity.class)));
         LinearLayout.LayoutParams lpLocal = new LinearLayout.LayoutParams(-1, dp(50)); lpLocal.topMargin = dp(12); box.addView(local, lpLocal);
+        Button images = button("Open image", false); images.setOnClickListener(v -> startActivity(new Intent(this, ImageViewerActivity.class)));
+        box.addView(images, new LinearLayout.LayoutParams(-1, dp(50)));
         reveal(box);
     }
     private void enterAccount() {
@@ -275,6 +282,7 @@ public final class MainActivity extends Activity {
         CookieManager.getInstance().setAcceptThirdPartyCookies(web, false);
         authBootstrap = currentSession.authBootstrap;
         web.setWebViewClient(new WebViewClient() {
+            @Override public void onPageStarted(WebView view, String url, android.graphics.Bitmap favicon) { capabilities.cancel(); capture.cancel(); if (upload != null) { upload.onReceiveValue(null); upload = null; } }
             @Override public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
                 String url = request.getUrl().toString();
                 if (ConnectionPolicy.sameOrigin(endpoint, url)) return false;
@@ -298,12 +306,32 @@ public final class MainActivity extends Activity {
         });
         web.setWebChromeClient(new WebChromeClient() {
             @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
+                if (capture.busy() || pickerActive) { callback.onReceiveValue(null); return true; }
                 if (upload != null) upload.onReceiveValue(null); upload = callback;
+                final ValueCallback<Uri[]> original = callback;
+                final int generation = workspaceAttempt;
+                capabilities.capture(view.getUrl(), () -> {
+                    if (upload != original || generation != workspaceAttempt) { capabilities.finishCapture(); return; }
+                    if (params.isCaptureEnabled() && ImageCapture.imageOnly(params.getAcceptTypes()) && params.getMode() != FileChooserParams.MODE_OPEN_MULTIPLE) {
+                        capture.start(uri -> {
+                            capabilities.finishCapture();
+                            if (upload == original) { upload = null; original.onReceiveValue(uri == null ? null : new Uri[]{uri}); }
+                        }, () -> {
+                            if (upload == original && generation == workspaceAttempt) chooseUpload(params);
+                            else capabilities.finishCapture();
+                        });
+                    } else chooseUpload(params);
+                }, () -> {
+                    if (upload == original) { upload = null; capture.cancel(); original.onReceiveValue(null); }
+                });
+                return true;
+            }
+            private void chooseUpload(FileChooserParams params) {
                 Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
                 String[] types = params.getAcceptTypes(); if (types != null && types.length > 0 && !types[0].isEmpty()) pick.putExtra(Intent.EXTRA_MIME_TYPES, types);
                 pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE);
-                try { startActivityForResult(pick, PICK_FILE); } catch (ActivityNotFoundException e) { upload.onReceiveValue(null); upload = null; notice("No file picker is available."); }
-                return true;
+                try { pickerActive = true; startActivityForResult(pick, PICK_FILE); }
+                catch (ActivityNotFoundException e) { pickerActive = false; if (upload != null) upload.onReceiveValue(null); upload = null; capabilities.finishCapture(); notice("No file picker is available."); }
             }
             @Override public boolean onJsPrompt(WebView view, String url, String message, String value, JsPromptResult result) {
                 if ("__ulemi_menu_v1__".equals(message)) {
@@ -329,8 +357,10 @@ public final class MainActivity extends Activity {
                 } catch (Exception e) { blobNonce = null; downloadBusy = false; notice("Export this temporary file in your browser."); }
                 return true;
             }
-            @Override public void onPermissionRequest(PermissionRequest request) { request.deny(); }
-            @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) { callback.invoke(origin, false, false); }
+            @Override public void onPermissionRequest(PermissionRequest request) { capabilities.media(request); }
+            @Override public void onPermissionRequestCanceled(PermissionRequest request) { capabilities.canceled(request); }
+            @Override public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) { capabilities.location(origin, callback); }
+            @Override public void onGeolocationPermissionsHidePrompt() { capabilities.cancelLocation(); }
             @Override public boolean onCreateWindow(WebView view, boolean dialog, boolean userGesture, Message result) {
                 if (!userGesture) return false;
                 WebView popup = new WebView(MainActivity.this);
@@ -372,9 +402,11 @@ public final class MainActivity extends Activity {
     private void showMenu(View anchor) { showAccountMenu(); }
     private void showAccountMenu() {
         if (isFinishing() || isDestroyed()) return;
-        String[] items = {"Offline assistant", "Quick tour", "Reload workspace", "Open in browser", "Share Ulemi", "Sign out", "Check for updates"};
+        String[] items = {"Offline assistant", "Quick tour", "Reload workspace", "Open in browser", "Share Ulemi", "Sign out", "Check for updates", "Open image", "Permissions"};
         new AlertDialog.Builder(this).setTitle("Ulemi").setItems(items, (dialog, item) -> {
             switch (item) {
+                case 7: startActivity(new Intent(this, ImageViewerActivity.class)); break;
+                case 8: capabilities.settings(); break;
                 case 0: startActivity(new Intent(this, LocalAssistantActivity.class)); break;
                 case 1: showGuide(); break;
                 case 2: reloadWorkspace(); break;
@@ -398,7 +430,7 @@ public final class MainActivity extends Activity {
         synchronized (credentialLock) { ++connectionGeneration; if (clear) store.clear(); }
     }
     private void logout() {
-        invalidateConnection(true); currentSession = null; authenticated = false; if (authBootstrap != null) authBootstrap.close(); password = "";
+        capabilities.cancel(); capture.cancel(); invalidateConnection(true); currentSession = null; authenticated = false; if (authBootstrap != null) authBootstrap.close(); password = "";
         if (upload != null) { upload.onReceiveValue(null); upload = null; }
         if (web != null) { web.stopLoading(); web.loadUrl("about:blank"); web.clearHistory(); web.clearCache(true); web.clearFormData(); if (web.getParent() instanceof ViewGroup) ((ViewGroup) web.getParent()).removeView(web); web.destroy(); web = null; }
         WebViewDatabase.getInstance(this).clearHttpAuthUsernamePassword(); WebStorage.getInstance().deleteAllData();
@@ -487,26 +519,11 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
-        if (request == PICK_FILE && upload != null) {
-            Uri[] values = null;
-            if (result == RESULT_OK && data != null) {
-                boolean valid = true;
-                if (data.getClipData() != null) {
-                    int n = data.getClipData().getItemCount();
-                    if (n > 0 && n <= 32) {
-                        values = new Uri[n];
-                        for (int i = 0; i < n; i++) {
-                            values[i] = data.getClipData().getItemAt(i).getUri();
-                            if (values[i] == null || !ConnectionPolicy.isContentUpload(values[i].toString())) valid = false;
-                        }
-                    } else valid = false;
-                } else if (data.getData() != null) {
-                    if (ConnectionPolicy.isContentUpload(data.getData().toString())) values = new Uri[]{data.getData()};
-                    else valid = false;
-                }
-                if (!valid) { values = null; notice("Choose up to 32 files from the file picker."); }
-            }
-            upload.onReceiveValue(values); upload = null;
+        capture.result(request, result); capabilities.resume();
+        if (request == PICK_FILE) {
+            pickerActive = false;
+            if (upload != null) { ValueCallback<Uri[]> resultCallback=upload; upload=null; resultCallback.onReceiveValue(UploadSelection.parse(result, data)); }
+            capabilities.finishCapture(); capabilities.resume();
         }
         if (request == SAVE_FILE && pendingDownload != null) {
             File file = pendingDownload; pendingDownload = null; downloadBusy = false;
@@ -524,8 +541,11 @@ public final class MainActivity extends Activity {
     @Override protected void onResume() { super.onResume(); if (updater != null) updater.resume(); }
     @Override protected void onPause() { if (updater != null) updater.pause(); super.onPause(); }
     @Override protected void onNewIntent(Intent intent) { super.onNewIntent(intent); setIntent(intent); }
+    @Override public void onRequestPermissionsResult(int request, String[] permissions, int[] results) {
+        super.onRequestPermissionsResult(request, permissions, results); capabilities.result(request); capture.permissions(request); capabilities.resume();
+    }
     @Override protected void onDestroy() {
-        invalidateConnection(false); ui.removeCallbacksAndMessages(null);
+        capabilities.cancel(); capture.cancel(); invalidateConnection(false); ui.removeCallbacksAndMessages(null);
         if (guide != null) { guide.setOnCancelListener(null); guide.dismiss(); guide = null; }
         if (upload != null) { upload.onReceiveValue(null); upload = null; }
         if (web != null) { web.stopLoading(); if (web.getParent() instanceof ViewGroup) ((ViewGroup) web.getParent()).removeView(web); web.destroy(); web = null; }
