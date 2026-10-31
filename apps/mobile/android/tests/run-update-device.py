@@ -28,6 +28,18 @@ def main():
             raise RuntimeError('adb command failed; see adb-failure.json')
         return result
 
+    def collect_diagnostics():
+        for name in ['public-manifest', 'validate', 'blocked', 'scheduler', 'requested', 'committed', 'failure', 'verify']:
+            result = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/update-test-' + name + '.json', check=False)
+            try:
+                value = json.loads(result.stdout)
+            except (ValueError, UnicodeDecodeError):
+                continue
+            (args.output / ('phase-' + name + '.json')).write_text(json.dumps(value, indent=2))
+        safe = {key: value for key, value in update_preferences().items() if key in {'install_status', 'session_id', 'expected_version', 'last_check'}}
+        (args.output / 'update-status.json').write_text(json.dumps(safe, indent=2))
+        (args.output / 'package-sessions.txt').write_bytes(adb('shell', 'dumpsys', 'package', check=False).stdout)
+
     def phase(name):
         run = adb('shell', 'am', 'instrument', '-w', '-e', 'phase', name, RUNNER, timeout=120, check=False)
         output = run.stdout.decode(errors='replace') + run.stderr.decode(errors='replace')
@@ -35,6 +47,7 @@ def main():
         if run.returncode or 'UPDATE_TEST_OK ' + name not in output:
             (args.output / 'instrumentations.txt').write_bytes(adb('shell', 'pm', 'list', 'instrumentation', check=False).stdout)
             (args.output / 'crash-logcat.txt').write_bytes(adb('logcat', '-d', '-b', 'crash', check=False).stdout)
+            collect_diagnostics()
             raise RuntimeError('Instrumentation did not pass: ' + name)
 
     def update_preferences():
@@ -80,6 +93,7 @@ def main():
     for source, destination in [('new.apk', 'next'), ('wrong-signer.apk', 'wrong-signer'), ('old.apk', 'old'), ('tests.apk', 'other-package')]:
         command = 'cat > files/update-test-' + destination + '.apk'
         adb('shell', '-T', 'run-as', PACKAGE, 'sh', '-c', "'" + command + "'", data=(args.fixtures / source).read_bytes(), timeout=120)
+    phase('public-manifest')
     phase('validate')
     adb('shell', 'appops', 'set', PACKAGE, 'REQUEST_INSTALL_PACKAGES', 'deny')
     phase('blocked')
@@ -123,6 +137,7 @@ def main():
                 (args.output / 'installer-logcat.txt').write_bytes(adb('logcat', '-d', '-s', 'PackageInstaller', 'PackageInstallerSession', 'PackageManager', timeout=30).stdout)
                 raise RuntimeError('Self-update did not install version 1002; no adb update or UI bypass attempted')
         finally:
+            collect_diagnostics()
             try:
                 process.wait(timeout=15)
             except subprocess.TimeoutExpired:
@@ -131,7 +146,7 @@ def main():
     # A fresh process verifies the OS-installed version and persistent state.
     phase('verify')
     evidence = {}
-    for name in ['validate', 'blocked', 'requested', 'committed', 'verify']:
+    for name in ['public-manifest', 'validate', 'blocked', 'scheduler', 'requested', 'committed', 'verify']:
         result = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/update-test-' + name + '.json', check=False)
         if result.returncode == 0:
             evidence[name] = json.loads(result.stdout)
