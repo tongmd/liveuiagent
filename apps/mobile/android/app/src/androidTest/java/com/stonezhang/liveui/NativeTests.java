@@ -127,7 +127,12 @@ public final class NativeTests extends Instrumentation {
                 runOnMainSync(() -> { try {
                     java.lang.reflect.Method await = MainActivity.class.getDeclaredMethod("awaitWorkspace", int.class, int.class); await.setAccessible(true); await.invoke(a, (int)get(a,"workspaceAttempt"), 0);
                 } catch (Exception e) { throw new AssertionError(e); } });
-                android.os.SystemClock.sleep(900);
+                for (int poll = 0; poll < 100; poll++) {
+                    final boolean[] ready = {false};
+                    runOnMainSync(() -> { try { ready[0] = ((android.view.View)get(a,"handoff")).getVisibility() == android.view.View.GONE; } catch(Exception ignored) {} });
+                    if (ready[0]) break;
+                    android.os.SystemClock.sleep(150);
+                }
                 runOnMainSync(() -> { try {
                     require(((android.view.View)get(a,"nativeBar")).getVisibility() == android.view.View.GONE);
                     require(((android.view.View)get(a,"handoff")).getVisibility() == android.view.View.GONE);

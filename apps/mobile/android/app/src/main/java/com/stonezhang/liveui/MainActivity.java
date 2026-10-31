@@ -364,7 +364,7 @@ public final class MainActivity extends Activity {
     }
     private void reloadWorkspace() {
         loadFailed = false; workspaceAttempt++; handoffSpinner.setVisibility(View.VISIBLE); handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE); handoffText.setText("正在打开你的空间…"); retryLoad.setVisibility(View.GONE);
-        web.reload();
+        web.loadUrl(endpoint.toString());
     }
     private void showMenu(View anchor) { showAccountMenu(); }
     private void showAccountMenu() {
