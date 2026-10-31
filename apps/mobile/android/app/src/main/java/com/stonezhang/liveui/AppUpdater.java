@@ -63,7 +63,7 @@ final class AppUpdater {
         }, 1800);
     }
     void pause() { resumed = false; if (foreground.get() == this) foreground.clear(); if (dialog != null) { dialog.dismiss(); dialog = null; showing = false; } }
-    void manualCheck() { if (!ready(true, false)) { message("Checking for updates…"); check(true, false, null); } }
+    void manualCheck() { message("Checking for updates…"); check(true, false, null); }
     private boolean available() { return resumed && !activity.isFinishing() && !activity.isDestroyed(); }
     private void message(String s) { if (available()) Toast.makeText(activity, s, Toast.LENGTH_LONG).show(); }
     private static AppUpdater active() { AppUpdater u = foreground.get(); return u != null && u.available() ? u : null; }
@@ -142,15 +142,39 @@ final class AppUpdater {
             return;
         }
         message("Preparing update…");
-        IO.execute(() -> { try { installVerified(activity.getApplicationContext(), apk(activity, r), r); } catch (Exception e) { onUi(() -> message("The update could not be installed. Check available storage and try again.")); } });
+        IO.execute(() -> {
+            Context c = activity.getApplicationContext();
+            try { verifyApk(c, apk(c, r), r); }
+            catch (Exception invalid) {
+                invalidateCached(c, r);
+                onUi(() -> message("The downloaded update is damaged. Check for updates to download a fresh copy.")); return;
+            }
+            try { installVerified(c, apk(c, r), r); }
+            catch (Exception e) { onUi(() -> message("The update could not be installed. Check available storage and try again.")); }
+        });
     }
     private static void tryAutomatic(Context c, UpdateRelease r) {
-        String state = prefs(c).getString("install_status", "");
-        if ("committed".equals(state) || "confirmation_required".equals(state)) { notifyReady(c); return; }
+        int savedSession = prefs(c).getInt("session_id", -1);
+        PackageInstaller.SessionInfo existing = c.getPackageManager().getPackageInstaller().getSessionInfo(savedSession);
+        if (existing != null && existing.isSealed()) { notifyReady(c); return; }
+        // A crash before commit can leave a saved "committed" label but an unsealed
+        // session. installVerified reconciles the actual OS state, not that label.
         if (Build.VERSION.SDK_INT >= 31 && c.getPackageManager().canRequestPackageInstalls() && !LocalAssistantActivity.isUpdateBlocked()) {
             if (active() != null || LocalAssistantActivity.isUpdateBlocked()) { notifyReady(c); return; }
+            try { verifyApk(c, apk(c, r), r); }
+            catch (Exception invalid) { invalidateCached(c, r); return; }
             try { installVerified(c, apk(c, r), r); } catch (Exception e) { notifyReady(c); }
         } else notifyReady(c);
+    }
+    static boolean invalidateCached(Context c, UpdateRelease r) {
+        int id = prefs(c).getInt("session_id", -1);
+        PackageInstaller.SessionInfo existing = c.getPackageManager().getPackageInstaller().getSessionInfo(id);
+        if (existing != null && existing.isSealed()) return false;
+        UpdateRelease saved = stored(c);
+        if (saved != null && saved.versionCode != r.versionCode) return false;
+        apk(c, r).delete();
+        prefs(c).edit().remove("ready").remove("last_check").remove("prompt_version").remove("prompt_at").apply();
+        return true;
     }
     static void notifyReady(Context c) {
         try {
@@ -238,7 +262,18 @@ final class AppUpdater {
             int flags = PendingIntent.FLAG_UPDATE_CURRENT; if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
             PendingIntent status = PendingIntent.getBroadcast(c, id, result, flags);
             session.commit(status.getIntentSender()); committed = true;
-        } finally { if (!committed) { try { installer.abandonSession(id); } catch (Exception ignored) { } prefs(c).edit().putString("install_status", "failed").apply(); } }
+        } finally {
+            if (!committed) {
+                PackageInstaller.SessionInfo actual = installer.getSessionInfo(id);
+                if (actual != null && actual.isSealed()) {
+                    // The binder call may have committed before its result was lost.
+                    prefs(c).edit().putString("install_status", "committed").apply();
+                } else {
+                    try { installer.abandonSession(id); } catch (Exception ignored) { }
+                    prefs(c).edit().putString("install_status", "failed").apply();
+                }
+            }
+        }
     }
     static void installResult(Context c, Intent intent) {
         SharedPreferences p = prefs(c); int id = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1);

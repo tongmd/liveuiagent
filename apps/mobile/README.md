@@ -69,7 +69,7 @@ Run `android/tests/run-policy-tests.sh` for Android URL and authentication-bound
 
 ## Android updates
 
-Ulemi checks for a newer Android release on return to the app and through a periodic Android job. It automatically downloads on unmetered connections and verifies the exact size, SHA-256, package, version, and installed signing identity before installation. The Updates menu also supports a manual check. Android controls installation approval; supported systems can install self-updates without another confirmation once installation permission has been granted. Other systems present their installation screen. Updates preserve the application ID, account, offline model files, and local content.
+Ulemi checks for a newer Android release on return to the app and through a periodic Android job. It automatically downloads on unmetered connections and verifies the exact size, SHA-256, package, version, and installed signing identity before installation. The account menu’s Check for updates action also supports a manual check. Android controls installation approval; supported systems can install self-updates in the background without another confirmation once installation permission has been granted. While Ulemi is in use, an Update now prompt avoids interrupting the current activity. Other systems present their installation screen. Updates preserve the application ID, account, offline model files, and local content.
 
 Publish signed releases with the original signing key and a strictly increasing `versionCode`. The updater reads `https://ulemi-updates.pages.dev/android/latest.json`. To stage the public update channel:
 

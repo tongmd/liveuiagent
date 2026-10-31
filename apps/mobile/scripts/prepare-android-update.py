@@ -45,6 +45,7 @@ if old and old.get('url') != HOST+'/'+release:
 dest=a.output/release; dest.parent.mkdir(parents=True,exist_ok=True); dest.write_bytes(body)
 manifest={'schemaVersion':1,'packageName':m[1],'versionCode':version,'versionName':name,'minSdk':min_sdk,'url':HOST+'/'+release,'sha256':digest,'size':len(body),'notes':a.notes}
 (a.output/'android/latest.json').write_text(json.dumps(manifest,indent=2)+'\n')
+(a.output/'404.html').write_text('<!doctype html><title>Not found</title><p>This release is not available.</p>')
 (a.output/'_headers').write_text('/android/latest.json\n  Cache-Control: no-store, max-age=0\n  Content-Type: application/json\n/android/releases/*\n  Cache-Control: public, max-age=31536000, immutable\n  Content-Type: application/vnd.android.package-archive\n/*\n  X-Content-Type-Options: nosniff\n')
 (a.output/'index.html').write_text('<!doctype html><meta charset="utf-8"><title>Ulemi updates</title><h1>Ulemi</h1><p>Android updates</p><a href="/'+release+'">Download Ulemi '+name+'</a>')
 print(json.dumps(manifest,indent=2))
