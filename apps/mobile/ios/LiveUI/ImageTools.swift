@@ -50,9 +50,11 @@ enum ImagePreviewDecoder {
     static let maximumFileBytes = 32 * 1024 * 1024
     static let maximumDimension = 4096
     static func load(_ url: URL) throws -> UIImage {
-        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
-        guard let size, size > 0 else { throw ImagePreviewError.unreadable }
-        guard size <= maximumFileBytes else { throw ImagePreviewError.tooLarge }
+        // URL resource values can cache an old size when a selected file changes.
+        // Read fresh filesystem attributes on every decode, including retries.
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        guard let size = attributes[.size] as? NSNumber, size.uint64Value > 0 else { throw ImagePreviewError.unreadable }
+        guard size.uint64Value <= UInt64(maximumFileBytes) else { throw ImagePreviewError.tooLarge }
         guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary),
               let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,

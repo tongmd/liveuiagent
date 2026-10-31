@@ -54,7 +54,11 @@ final class ImageToolsTests: XCTestCase {
         XCTAssertLessThanOrEqual(try ImagePreviewDecoder.load(file).size.width, 4096)
         XCTAssertLessThanOrEqual(ImagePreviewDecoder.bounded(image).size.width, 4096)
         let handle = try FileHandle(forWritingTo: file)
-        try handle.truncate(atOffset: UInt64(ImagePreviewDecoder.maximumFileBytes + 1)); try handle.close()
+        try handle.truncate(atOffset: UInt64(ImagePreviewDecoder.maximumFileBytes + 1))
+        XCTAssertEqual(try handle.seekToEnd(), UInt64(ImagePreviewDecoder.maximumFileBytes + 1))
+        try handle.close()
+        // Reuse the exact URL previously decoded, so stale URL resource caches
+        // cannot silently bypass the size boundary after the file changes.
         XCTAssertThrowsError(try ImagePreviewDecoder.load(file)) { error in
             XCTAssertEqual(error.localizedDescription, ImagePreviewError.tooLarge.localizedDescription)
         }
