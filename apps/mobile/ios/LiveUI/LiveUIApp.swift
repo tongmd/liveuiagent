@@ -116,6 +116,7 @@ struct RootView: View {
     @State private var revealed = false
     @State private var showGuide = false
     @State private var confirmLogout = false
+    @State private var localChat = false
 
     var body: some View {
         ZStack {
@@ -141,6 +142,7 @@ struct RootView: View {
                         ToolbarItem(placement: .navigationBarTrailing) {
                             Menu {
                                 Text(browser.connection?.username ?? "")
+                                Button { localChat = true } label: { Label("本机对话", systemImage: "iphone") }
                                 Button { showGuide = true } label: { Label("使用指引", systemImage: "sparkles") }
                                 Button { browser.reload() } label: { Label("重新载入", systemImage: "arrow.clockwise") }
                                 if !browser.activeDownloads.isEmpty {
@@ -183,6 +185,7 @@ struct RootView: View {
             }
         }
         .tint(AppStyle.ink)
+        .sheet(isPresented: $localChat) { LocalChatView() }
         .sheet(item: $browser.share) { item in ShareSheet(url: item.url) }
         .fullScreenCover(isPresented: $showGuide) {
             OnboardingView {
@@ -247,6 +250,7 @@ struct ConnectionView: View {
     @State private var error: String?
     @State private var loginTask: Task<Void, Never>?
     @State private var attempt = LoginAttempt()
+    @State private var localChat = false
     @FocusState private var focusedField: Field?
     private enum Field { case username, password }
 
@@ -285,6 +289,7 @@ struct ConnectionView: View {
                     }.buttonStyle(PrimaryButtonStyle())
                         .disabled(busy || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
                         .accessibilityIdentifier("login-submit")
+                    Button("使用手机模型，不登录") { localChat = true }.frame(minHeight: 44)
                     if busy { Button("取消") { cancelLogin() }.frame(minHeight: 44) }
                     else {
                         Link("还没有账号？加入候补名单", destination: URL(string: "https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")!)
@@ -296,6 +301,7 @@ struct ConnectionView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(AppStyle.background)
+        .sheet(isPresented: $localChat) { LocalChatView() }
         .onDisappear { cancelLogin() }
     }
 
