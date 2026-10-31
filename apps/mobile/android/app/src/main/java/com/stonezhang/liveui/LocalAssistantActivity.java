@@ -35,6 +35,7 @@ public final class LocalAssistantActivity extends Activity {
     private EditText input;
     private Button prepare, send, stop, clear, remove;
     private ScrollView scroll;
+    private static final String DRAFT_STATE = "ulemi.local.draft";
     private JSONArray history = new JSONArray();
 
     @Override public void onCreate(Bundle saved) {
@@ -53,23 +54,33 @@ public final class LocalAssistantActivity extends Activity {
                 android.graphics.Insets ime = insets.getInsets(WindowInsets.Type.ime());
                 v.setPadding(dp(20) + bars.left, dp(12) + bars.top, dp(20) + bars.right, dp(12) + Math.max(bars.bottom, ime.bottom));
             } else v.setPadding(dp(20), dp(12) + insets.getSystemWindowInsetTop(), dp(20), dp(12) + insets.getSystemWindowInsetBottom());
+            if (input != null) {
+                int available = v.getHeight() - v.getPaddingTop() - v.getPaddingBottom();
+                input.setMaxLines(available > 0 && available < dp(260) ? 1 : 4);
+            }
             return insets;
         });
         setContentView(root); root.requestApplyInsets();
         LinearLayout header = row(); Button back = button("返回"); back.setOnClickListener(v -> onBackPressed()); header.addView(back);
         TextView title = label("离线助手", 23); header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
         clear = button("新对话"); clear.setOnClickListener(v -> new AlertDialog.Builder(this).setMessage("清空这台手机上的离线对话？").setNegativeButton("取消", null).setPositiveButton("清空", (d,w) -> { history = new JSONArray(); historyUnreadable = false; try { saveHistory(); renderHistory(""); state.setText("新对话已准备好"); updateControls(); } catch (Exception e) { state.setText("无法创建新对话，请检查手机存储空间"); } }).show()); header.addView(clear); root.addView(header);
-        TextView modelLabel = label("Gemma 4 E4B · 设备本地运行", 16); modelLabel.setPadding(0, dp(12), 0, dp(4)); root.addView(modelLabel);
-        TextView note = label("首次下载 3.66 GB，之后无需联网。对话仅留在此手机；云端应用仍在原工作区使用。", 14); note.setTextColor(0xff666666); root.addView(note);
-        state = label(model.installed() ? "模型已下载，发送消息时自动加载" : model.downloaded() > 0 ? "下载已暂停，可以继续" : "下载后即可开始", 14); state.setPadding(0, dp(10), 0, dp(6)); state.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); root.addView(state);
-        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); progress.setMax(1000); progress.setVisibility(View.GONE); root.addView(progress, new LinearLayout.LayoutParams(-1, dp(4)));
+        scroll = new ScrollView(this); scroll.setFillViewport(true);
+        LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL);
+        scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
+        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
+        TextView modelLabel = label("Gemma 4 E4B · 设备本地运行", 16); modelLabel.setPadding(0, dp(12), 0, dp(4)); content.addView(modelLabel);
+        TextView note = label("首次下载 3.66 GB，之后无需联网。对话仅留在此手机；云端应用仍在原工作区使用。", 14); note.setTextColor(0xff666666); content.addView(note);
+        state = label(model.installed() ? "模型已下载，发送消息时自动加载" : model.downloaded() > 0 ? "下载已暂停，可以继续" : "下载后即可开始", 14); state.setPadding(0, dp(10), 0, dp(6)); state.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); content.addView(state);
+        progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); progress.setMax(1000); progress.setVisibility(View.GONE); content.addView(progress, new LinearLayout.LayoutParams(-1, dp(4)));
         LinearLayout actions = row(); prepare = button(model.downloaded() > 0 ? "继续下载" : "下载并配置"); prepare.setOnClickListener(v -> confirmDownload()); actions.addView(prepare, new LinearLayout.LayoutParams(0, dp(48), 1));
-        stop = button("暂停"); stop.setVisibility(View.GONE); stop.setOnClickListener(v -> cancelWork()); actions.addView(stop, new LinearLayout.LayoutParams(0, dp(48), 1));
+        stop = button("暂停"); stop.setVisibility(View.GONE); stop.setOnClickListener(v -> cancelWork());
         Button source = button("官方来源"); source.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(LocalModelFile.SOURCE)))); actions.addView(source, new LinearLayout.LayoutParams(0, dp(48), 1));
-        remove = button("删除模型"); remove.setOnClickListener(v -> confirmRemove()); actions.addView(remove, new LinearLayout.LayoutParams(0, dp(48), 1)); root.addView(actions);
-        scroll = new ScrollView(this); scroll.setFillViewport(true); transcript = label("", 17); transcript.setTextIsSelectable(true); transcript.setPadding(0, dp(18), 0, dp(18)); transcript.setLineSpacing(dp(4), 1); scroll.addView(transcript); root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        input = new EditText(this); input.setTextSize(17); input.setHint("想聊什么？"); input.setContentDescription("离线消息"); input.setMaxLines(4); input.setMinLines(1); input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES); root.addView(input, new LinearLayout.LayoutParams(-1, -2));
-        send = button("发送"); send.setOnClickListener(v -> send()); root.addView(send, new LinearLayout.LayoutParams(-1, dp(50)));
+        remove = button("删除模型"); remove.setOnClickListener(v -> confirmRemove()); actions.addView(remove, new LinearLayout.LayoutParams(0, dp(48), 1)); content.addView(actions);
+        transcript = label("", 17); transcript.setTextIsSelectable(true); transcript.setPadding(0, dp(18), 0, dp(18)); transcript.setLineSpacing(dp(4), 1); content.addView(transcript);
+        LinearLayout composer = row(); root.addView(composer, new LinearLayout.LayoutParams(-1, -2));
+        input = new EditText(this); input.setTextSize(17); input.setHint("想聊什么？"); input.setContentDescription("离线消息"); input.setMaxLines(4); input.setMinLines(1); input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES); input.setImeOptions(android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI); composer.addView(input, new LinearLayout.LayoutParams(0, -2, 1));
+        if (saved != null) input.setText(saved.getString(DRAFT_STATE, ""));
+        send = button("发送"); send.setOnClickListener(v -> send()); composer.addView(send, new LinearLayout.LayoutParams(dp(72), dp(50))); composer.addView(stop, new LinearLayout.LayoutParams(dp(72), dp(50)));
         renderHistory("");
         if (unsupported != null) state.setText(unsupported);
         else if (historyUnreadable) state.setText("旧对话无法读取，原文件已保留。点击新对话后继续。");
@@ -86,6 +97,7 @@ public final class LocalAssistantActivity extends Activity {
         prepare.setEnabled(unsupported == null);
         stop.setVisibility(busy ? View.VISIBLE : View.GONE); stop.setEnabled(busy && !cancelled.get());
         remove.setEnabled(!busy && (model.installed() || model.downloaded() > 0)); clear.setEnabled(!busy);
+        send.setVisibility(busy ? View.GONE : View.VISIBLE);
         send.setEnabled(!busy && model.installed() && unsupported == null && !historyUnreadable);
         if (busy) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
@@ -210,6 +222,10 @@ public final class LocalAssistantActivity extends Activity {
     private void renderHistory(String suffix) {
         StringBuilder s = new StringBuilder(); for (int i = 0; i < history.length(); i++) { JSONObject h = history.optJSONObject(i); if (h != null) s.append("user".equals(h.optString("role")) ? "你\n" : "Gemma\n").append(h.optString("text")).append("\n\n"); }
         transcript.setText(s.append(suffix).toString()); scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
+    }
+    @Override protected void onSaveInstanceState(Bundle out) {
+        if (input != null) out.putString(DRAFT_STATE, input.getText().toString());
+        super.onSaveInstanceState(out);
     }
     @Override protected void onStop() { super.onStop(); if (busy) cancelWork(); }
     @Override public void onBackPressed() { if (busy) { cancelWork(); new AlertDialog.Builder(this).setMessage("正在停止，完成后可以返回。下载进度会保留。").setPositiveButton("知道了", null).show(); } else super.onBackPressed(); }

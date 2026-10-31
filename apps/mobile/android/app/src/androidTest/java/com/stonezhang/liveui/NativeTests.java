@@ -89,6 +89,16 @@ public final class NativeTests extends Instrumentation {
                         java.lang.reflect.Field send = LocalAssistantActivity.class.getDeclaredField("send"); send.setAccessible(true);
                         LocalModelFile model = new LocalModelFile(new java.io.File(a.getNoBackupFilesDir(), "local-models"));
                         if (!model.installed()) require(!((android.widget.Button)send.get(a)).isEnabled());
+                        java.lang.reflect.Field input = LocalAssistantActivity.class.getDeclaredField("input"); input.setAccessible(true);
+                        android.widget.EditText draft = (android.widget.EditText)input.get(a); draft.setText("保留未发送的草稿\n下一行");
+                        Bundle saved = new Bundle(); NativeTests.this.callActivityOnSaveInstanceState(a, saved);
+                        require("保留未发送的草稿\n下一行".equals(saved.getString("ulemi.local.draft")));
+                        java.lang.reflect.Field scroll = LocalAssistantActivity.class.getDeclaredField("scroll"); scroll.setAccessible(true);
+                        android.view.ViewGroup viewport = (android.view.ViewGroup)scroll.get(a);
+                        require(viewport.getChildCount() == 1);
+                        require(labels(viewport).contains("Gemma 4 E4B") && labels(viewport).contains("官方来源"));
+                        require(draft.getParent() == ((android.widget.Button)send.get(a)).getParent());
+
                     } catch (Exception e) { throw new AssertionError(e); }
                 });
             } finally { runOnMainSync(a::finish); }
