@@ -57,14 +57,14 @@ final class ModelDownload: NSObject, URLSessionDownloadDelegate, @unchecked Send
     private var finished = false
     private var paused = false
     private let stateLock = NSLock()
-    init(model: LocalModel, destination: URL, cellular: Bool,
+    init(model: LocalModel, destination: URL, cellular: Bool, configuration: URLSessionConfiguration? = nil,
          progress: @escaping @Sendable (Double) -> Void,
          completion: @escaping @Sendable (Result<URL, Error>) -> Void) {
         self.model = model; self.destination = destination
         self.resumeURL = destination.appendingPathExtension("resume")
         self.progress = progress; self.completion = completion
         super.init()
-        let config = URLSessionConfiguration.default
+        let config = configuration ?? URLSessionConfiguration.default
         config.allowsCellularAccess = cellular
         config.waitsForConnectivity = true
         config.timeoutIntervalForResource = 24 * 3600
@@ -79,9 +79,12 @@ final class ModelDownload: NSObject, URLSessionDownloadDelegate, @unchecked Send
         } else { task = session.downloadTask(with: model.url) }
         task?.resume()
     }
-    private func finish(_ result: Result<URL, Error>) {
+    private func finish(_ result: Result<URL, Error>, resumeData: Data? = nil) {
         stateLock.lock()
         guard !finished else { stateLock.unlock(); return }
+        if let resumeData {
+            try? resumeData.write(to: resumeURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+        }
         finished = true; stateLock.unlock()
         completion(result)
     }
@@ -93,8 +96,7 @@ final class ModelDownload: NSObject, URLSessionDownloadDelegate, @unchecked Send
         guard !finished, !paused else { stateLock.unlock(); return }
         paused = true; stateLock.unlock()
         task?.cancel { [self] data in
-            if let data { try? data.write(to: resumeURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]) }
-            finish(.failure(LocalModelError.message("下载已暂停，可继续下载。")))
+            finish(.failure(LocalModelError.message("下载已暂停，可继续下载。")), resumeData: data)
         }
     }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
@@ -128,10 +130,8 @@ final class ModelDownload: NSObject, URLSessionDownloadDelegate, @unchecked Send
         defer { session.finishTasksAndInvalidate() }
         if let error, !installed, !isPaused {
             let nsError = error as NSError
-            if let data = nsError.userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
-                try? data.write(to: resumeURL, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
-            }
-            finish(.failure(LocalModelError.message("下载中断，可继续下载。若无法继续，请清除未完成下载后重试。")))
+            let data = nsError.userInfo[NSURLSessionDownloadTaskResumeData] as? Data
+            finish(.failure(LocalModelError.message("下载中断，可继续下载。若无法继续，请清除未完成下载后重试。")), resumeData: data)
         }
     }
 }

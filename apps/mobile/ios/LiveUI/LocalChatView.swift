@@ -6,10 +6,11 @@ struct LocalChatView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var input = ""
     @State private var confirmDelete = false
+    @State private var showModels = true
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                DisclosureGroup("手机模型") {
+                DisclosureGroup("手机模型", isExpanded: $showModels) {
                     VStack(alignment: .leading, spacing: 12) {
                         Picker("模型", selection: Binding(get: { chat.selectedID }, set: chat.select)) {
                             ForEach(LocalModel.all) { model in Text("\(model.title) · \(model.sizeLabel)").tag(model.id) }
@@ -47,7 +48,7 @@ struct LocalChatView: View {
                             ForEach(chat.messages) { item in
                                 VStack(alignment: .leading, spacing: 6) {
                                     Text(item.role == "user" ? "你" : "Ulemi").font(.caption).foregroundStyle(.secondary)
-                                    Text(item.text.isEmpty ? "正在思考…" : item.text).textSelection(.enabled)
+                                    Text(item.text.isEmpty ? (chat.busy ? "正在思考…" : "未完成") : item.text).textSelection(.enabled)
                                 }.frame(maxWidth: .infinity, alignment: .leading).id(item.id)
                             }
                         }.padding(16)
@@ -73,7 +74,7 @@ struct LocalChatView: View {
             .confirmationDialog("删除手机里的模型文件？", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("删除模型", role: .destructive) { chat.removeDownload() }
             } message: { Text("对话保留，之后可以重新下载。") }
-            .onChange(of: scenePhase) { phase in if phase != .active { chat.stop(); chat.pauseDownload() } }
+            .onChange(of: scenePhase) { phase in if phase != .active { chat.unload(); chat.pauseDownload() } }
             .onDisappear { chat.stop(); chat.pauseDownload(); chat.unload() }
         }
     }

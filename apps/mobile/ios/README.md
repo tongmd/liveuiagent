@@ -1,6 +1,6 @@
 # Ulemi for iPhone and iPad
 
-A SwiftUI app that opens the complete Ulemi workspace in WKWebView. It uses the same server, applications and accounts as the web app. Ulemi is the product name; the existing LiveUI project, bundle identifier, service URLs and storage keys remain unchanged. The deployment target is iOS 16.0. There are no third-party SDKs or package installation steps.
+A SwiftUI app that opens the complete Ulemi workspace in WKWebView. It uses the same server, applications and accounts as the web app. Ulemi is the product name; the existing LiveUI project, bundle identifier, service URLs and storage keys remain unchanged. The deployment target is iOS 16.0. The cloud workspace uses WKWebView; offline model inference uses the official Google LiteRT-LM Swift package, which Xcode resolves automatically.
 
 Open `LiveUI.xcodeproj` in a full Xcode installation, select the **LiveUI** scheme, then select an iPhone or iPad simulator. For a physical device, select your Apple signing team in Signing & Capabilities and use an available bundle identifier. The supplied identifier is `com.stonezhang.liveui`; no developer team or signing credentials are included.
 

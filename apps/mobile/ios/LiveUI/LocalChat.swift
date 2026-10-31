@@ -6,6 +6,7 @@ struct LocalChatMessage: Identifiable, Codable {
     var id = UUID()
     let role: String
     var text: String
+    var complete: Bool = false
 }
 
 @MainActor
@@ -25,6 +26,7 @@ final class LocalChat: ObservableObject {
     private var conversation: Conversation?
     private var generation = UUID()
     private var autoLoad = true
+    private var pendingUnload = false
     private var storageReadable = true
     let directory: URL
     var model: LocalModel { LocalModel.all.first { $0.id == selectedID } ?? .e2b }
@@ -86,7 +88,7 @@ final class LocalChat: ObservableObject {
         return
         #else
         guard ProcessInfo.processInfo.physicalMemory >= model.minimumRAM else { error = "内存不足，请选择 E2B。"; return }
-        busy = true; ready = false; error = nil; state = "正在检查和载入模型…"
+        pendingUnload = false; busy = true; ready = false; error = nil; state = "正在检查和载入模型…"
         let selected = model; let location = file
         request = Task {
             do {
@@ -107,6 +109,7 @@ final class LocalChat: ObservableObject {
                 engine = instance; ready = true; state = "\(selected.title) · \(backend) · 离线可用"
             } catch { self.error = error.localizedDescription; engine = nil; state = "" }
             busy = false; request = nil
+            if pendingUnload { unload() }
         }
         #endif
     }
@@ -115,12 +118,17 @@ final class LocalChat: ObservableObject {
         guard ready, !busy, let engine, !text.isEmpty else { return }
         guard text.utf8.count <= 1200 else { error = "请把这条消息缩短到 约 400 个汉字以内。"; return }
         busy = true; error = nil
-        let prior = messages.suffix(8)
         var history: [Message] = []; var count = 0
-        for item in prior.reversed() where item.role == "user" || item.role == "assistant" {
-            guard count + item.text.utf8.count <= 600 else { break }
-            count += item.text.utf8.count
-            history.insert(Message(item.text, role: item.role == "user" ? .user : .model), at: 0)
+        // Only replay complete successful turns. A cancelled/failed answer is never model history.
+        if messages.count >= 2 {
+            for index in stride(from: messages.count - 2, through: 0, by: -2) {
+                let user = messages[index]; let assistant = messages[index + 1]
+                guard user.role == "user", assistant.role == "assistant", assistant.complete else { continue }
+                let bytes = user.text.utf8.count + assistant.text.utf8.count
+                guard count + bytes <= 600 else { break }
+                count += bytes
+                history.insert(contentsOf: [Message(user.text, role: .user), Message(assistant.text, role: .model)], at: 0)
+            }
         }
         messages.append(LocalChatMessage(role: "user", text: text))
         let reply = LocalChatMessage(role: "assistant", text: ""); messages.append(reply)
@@ -129,21 +137,26 @@ final class LocalChat: ObservableObject {
             do {
                 let chat = try await engine.createConversation(with: ConversationConfig(systemMessage: Message("你是 Ulemi。根据用户语言提供清楚、具体的回答。你在手机离线运行，无法访问网络或用户的云端应用。"), initialMessages: history, thinkingConfig: ThinkingConfig(enableThinking: false, thinkingTokenBudget: 0)))
                 conversation = chat
+                if Task.isCancelled { try? chat.cancel(); throw CancellationError() }
                 for try await chunk in chat.sendMessageStream(Message(text), maxOutputTokens: 512) {
                     try Task.checkCancellation()
                     if let index = messages.firstIndex(where: { $0.id == reply.id }) { messages[index].text += chunk.toString }
                 }
                 if messages.last?.text.isEmpty == true { throw LocalModelError.message("模型没有返回文字，请重试。") }
+                if let index = messages.firstIndex(where: { $0.id == reply.id }) { messages[index].complete = true }
             } catch {
                 self.error = Task.isCancelled ? "已停止生成。" : "生成未完成：\(error.localizedDescription)"
             }
             conversation = nil; busy = false; request = nil; save()
+            if pendingUnload { unload() }
         }
     }
     func stop() { try? conversation?.cancel(); request?.cancel() }
     func unload() {
+        pendingUnload = true
         guard !busy else { stop(); return }
-        conversation = nil; engine = nil; ready = false
+        conversation = nil; engine = nil; ready = false; pendingUnload = false
+        state = ""
     }
     func clearChat() {
         guard !busy else { return }
