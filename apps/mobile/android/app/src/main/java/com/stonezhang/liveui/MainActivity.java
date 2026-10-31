@@ -76,7 +76,7 @@ public final class MainActivity extends Activity {
         LinearLayout center = new LinearLayout(this); center.setOrientation(LinearLayout.VERTICAL); center.setGravity(Gravity.CENTER);
         root.addView(center, new LinearLayout.LayoutParams(-1, -1));
         BrandMotionView mark = new BrandMotionView(this); center.addView(mark, new LinearLayout.LayoutParams(dp(160), dp(160)));
-        TextView word = text("Ulemi", 28, NativeStyle.INK); word.setPadding(0, dp(18), 0, 0); center.addView(word);
+        TextView word = text("Ulemi", 28, NativeStyle.INK); word.setPadding(0, dp(18), 0, 0); word.setGravity(Gravity.CENTER); center.addView(word, new LinearLayout.LayoutParams(-1, -2));
         reveal(center); center.setOnClickListener(v -> restoreAccount());
         ui.postDelayed(this::restoreAccount, animate() ? 280 : 0);
     }
@@ -106,8 +106,8 @@ public final class MainActivity extends Activity {
         LinearLayout center = new LinearLayout(this); center.setOrientation(LinearLayout.VERTICAL); center.setGravity(Gravity.CENTER);
         root.addView(center, new LinearLayout.LayoutParams(-1, -1));
         center.addView(new BrandMotionView(this), new LinearLayout.LayoutParams(dp(160), dp(160)));
-        TextView name = text("Ulemi", 27, NativeStyle.INK); name.setPadding(0, dp(18), 0, dp(10)); center.addView(name);
-        TextView t = text("Opening your space", 15, 0xff767671); center.addView(t);
+        TextView name = text("Ulemi", 27, NativeStyle.INK); name.setPadding(0, dp(18), 0, dp(10)); name.setGravity(Gravity.CENTER); center.addView(name, new LinearLayout.LayoutParams(-1, -2));
+        TextView t = text("Opening your space", 15, 0xff767671); t.setGravity(Gravity.CENTER); center.addView(t, new LinearLayout.LayoutParams(-1, -2));
 
     }
     private ImageView icon(int size) {

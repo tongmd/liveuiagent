@@ -150,6 +150,8 @@ public final class NativeTests extends Instrumentation {
                 });
                 android.os.SystemClock.sleep(1200);
                 runOnMainSync(() -> { try {
+                    assertBrandCentered(a.getWindow().getDecorView(), "Ulemi");
+                    assertBrandCentered(a.getWindow().getDecorView(), "Opening your space");
                     java.lang.reflect.Method await = MainActivity.class.getDeclaredMethod("awaitWorkspace", int.class, int.class); await.setAccessible(true); await.invoke(a, (int)get(a,"workspaceAttempt"), 0);
                 } catch (Exception e) { throw new AssertionError(e); } });
                 for (int poll = 0; poll < 100; poll++) {
@@ -177,12 +179,17 @@ public final class NativeTests extends Instrumentation {
             android.os.SystemClock.sleep(650);
             final BrandMotionView[] mark = {null}; final float[] phases = new float[2];
             try {
+                runOnMainSync(() -> { try { invoke(a, "showLaunch"); } catch(Exception e) { throw new AssertionError(e); } });
+                android.os.SystemClock.sleep(400);
+                runOnMainSync(() -> assertBrandCentered(a.getWindow().getDecorView(), "Ulemi"));
                 runOnMainSync(() -> { try {
                     invoke(a,"showRestoring"); mark[0] = findMotion(a.getWindow().getDecorView()); require(mark[0] != null);
                     require(labels(a.getWindow().getDecorView()).contains("Opening your space"));
                     require(!labels(a.getWindow().getDecorView()).matches(".*[\\u4e00-\\u9fff].*")); phases[0] = mark[0].motionPhase();
                 } catch(Exception e) { throw new AssertionError(e); } });
-                capture("android-motion-1.png"); android.os.SystemClock.sleep(600);
+                capture("android-motion-1.png");
+                runOnMainSync(() -> { assertBrandCentered(a.getWindow().getDecorView(), "Ulemi"); assertBrandCentered(a.getWindow().getDecorView(), "Opening your space"); });
+                android.os.SystemClock.sleep(600);
                 runOnMainSync(() -> { phases[1] = mark[0].motionPhase(); if(android.animation.ValueAnimator.areAnimatorsEnabled()) { require(mark[0].motionRunning()); require(phases[1] != phases[0]); } else require(!mark[0].motionRunning()); });
                 capture("android-motion-2.png");
                 runOnMainSync(() -> { mark[0].setVisibility(android.view.View.GONE); require(!mark[0].motionRunning()); mark[0].setVisibility(android.view.View.VISIBLE); mark[0].setActive(false); require(!mark[0].motionRunning()); });
@@ -227,6 +234,20 @@ public final class NativeTests extends Instrumentation {
         String value = v instanceof android.widget.TextView ? ((android.widget.TextView) v).getText().toString() : "";
         if (v instanceof android.view.ViewGroup) for (int i=0; i<((android.view.ViewGroup)v).getChildCount(); i++) value += " " + labels(((android.view.ViewGroup)v).getChildAt(i));
         return value;
+    }
+    private static void assertBrandCentered(android.view.View stage, String title) {
+        BrandMotionView mark = findMotion(stage); android.widget.TextView label = findLabel(stage, title);
+        require(mark != null && label != null && label.getLayout() != null);
+        int[] iconAt = new int[2], textAt = new int[2]; mark.getLocationOnScreen(iconAt); label.getLocationOnScreen(textAt);
+        android.text.Layout layout = label.getLayout();
+        float inkCenter = textAt[0] + label.getCompoundPaddingLeft() + (layout.getLineLeft(0) + layout.getLineRight(0)) / 2f;
+        float markCenter = iconAt[0] + mark.getWidth() / 2f;
+        if (Math.abs(inkCenter - markCenter) > 2f * stage.getResources().getDisplayMetrics().density)
+            throw new AssertionError(title + " is not centered beneath the brand: " + inkCenter + " vs " + markCenter);
+    }
+    private static android.widget.TextView findLabel(android.view.View v, String title) {
+        if (v instanceof android.widget.TextView && title.contentEquals(((android.widget.TextView)v).getText()) && v.getVisibility() == android.view.View.VISIBLE) return (android.widget.TextView)v;
+        if(v instanceof android.view.ViewGroup) for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++) { android.widget.TextView found=findLabel(((android.view.ViewGroup)v).getChildAt(i),title); if(found!=null) return found; } return null;
     }
     private static BrandMotionView findMotion(android.view.View v) {
         if(v instanceof BrandMotionView) return (BrandMotionView)v;
