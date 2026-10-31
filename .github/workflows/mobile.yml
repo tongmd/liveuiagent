@@ -124,11 +124,13 @@ jobs:
             mkdir -p mobile-artifacts
             adb install apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk
             adb install apps/mobile/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell settings put secure show_ime_with_hard_keyboard 1
             adb shell am instrument -w com.stonezhang.liveui.test/com.stonezhang.liveui.NativeTests | tee mobile-artifacts/android-native-tests.txt
+            adb logcat -d -b crash > mobile-artifacts/android-crash.txt
+            adb exec-out run-as com.stonezhang.liveui cat files/android-login.png > mobile-artifacts/android-login.png || true
+            adb exec-out run-as com.stonezhang.liveui cat files/android-local-assistant.png > mobile-artifacts/android-local-assistant.png || true
+            adb exec-out run-as com.stonezhang.liveui cat files/android-local-keyboard.png > mobile-artifacts/android-local-keyboard.png || true
             grep -F 'OK (8 tests)' mobile-artifacts/android-native-tests.txt
-            adb exec-out run-as com.stonezhang.liveui cat files/android-login.png > mobile-artifacts/android-login.png
-            adb exec-out run-as com.stonezhang.liveui cat files/android-local-assistant.png > mobile-artifacts/android-local-assistant.png
-            adb exec-out run-as com.stonezhang.liveui cat files/android-local-keyboard.png > mobile-artifacts/android-local-keyboard.png
       - name: Collect Android device evidence
         if: always()
         uses: actions/upload-artifact@v4
