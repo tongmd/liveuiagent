@@ -43,9 +43,9 @@ public final class LocalAssistantActivity extends Activity {
         model = new LocalModelFile(new File(getNoBackupFilesDir(), "local-models"));
         readHistory();
         ActivityManager.MemoryInfo hardware = new ActivityManager.MemoryInfo(); ((ActivityManager)getSystemService(ACTIVITY_SERVICE)).getMemoryInfo(hardware);
-        if (!Arrays.asList(Build.SUPPORTED_ABIS).contains("arm64-v8a")) unsupported = "此模型需要 64 位 ARM 安卓设备";
-        else if (hardware.totalMem < 7L * 1024 * 1024 * 1024) unsupported = "此模型需要至少 8 GB 内存的安卓手机";
-        LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(Color.WHITE);
+        if (!Arrays.asList(Build.SUPPORTED_ABIS).contains("arm64-v8a")) unsupported = "This model needs a 64-bit ARM Android device.";
+        else if (hardware.totalMem < 7L * 1024 * 1024 * 1024) unsupported = "This model needs an Android phone with at least 8 GB of memory.";
+        LinearLayout root = new LinearLayout(this); root.setOrientation(LinearLayout.VERTICAL); root.setBackgroundColor(NativeStyle.PAPER);
         root.setPadding(dp(20), dp(12), dp(20), dp(12));
         if (Build.VERSION.SDK_INT >= 30) getWindow().setDecorFitsSystemWindows(false);
         root.setOnApplyWindowInsetsListener((v, insets) -> {
@@ -61,29 +61,29 @@ public final class LocalAssistantActivity extends Activity {
             return insets;
         });
         setContentView(root); root.requestApplyInsets();
-        LinearLayout header = row(); header.setPadding(0, 0, 0, dp(12)); Button back = button("返回"); back.setOnClickListener(v -> onBackPressed()); header.addView(back, new LinearLayout.LayoutParams(dp(64), dp(44)));
-        TextView title = label("离线助手", 20); title.setGravity(Gravity.CENTER); title.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)); header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        clear = button("新对话"); clear.setOnClickListener(v -> new AlertDialog.Builder(this).setMessage("清空这台手机上的离线对话？").setNegativeButton("取消", null).setPositiveButton("清空", (d,w) -> { history = new JSONArray(); historyUnreadable = false; try { saveHistory(); renderHistory(""); state.setText("新对话已准备好"); updateControls(); } catch (Exception e) { state.setText("无法创建新对话，请检查手机存储空间"); } }).show()); header.addView(clear, new LinearLayout.LayoutParams(dp(76), dp(44))); root.addView(header);
+        LinearLayout header = row(); header.setPadding(0, 0, 0, dp(12)); Button back = button("Back"); back.setOnClickListener(v -> onBackPressed()); header.addView(back, new LinearLayout.LayoutParams(dp(56), dp(48)));
+        TextView title = label("Offline assistant", 17); title.setGravity(Gravity.CENTER); title.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)); header.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
+        clear = button("New chat"); clear.setOnClickListener(v -> new AlertDialog.Builder(this).setMessage("Clear the offline conversation on this phone?").setNegativeButton("Cancel", null).setPositiveButton("Clear", (d,w) -> { history = new JSONArray(); historyUnreadable = false; try { saveHistory(); renderHistory(""); state.setText("Ready for a new conversation."); updateControls(); } catch (Exception e) { state.setText("Could not start a new conversation. Check your storage."); } }).show()); header.addView(clear, new LinearLayout.LayoutParams(dp(80), dp(48))); root.addView(header);
         scroll = new ScrollView(this); scroll.setFillViewport(true);
         LinearLayout content = new LinearLayout(this); content.setOrientation(LinearLayout.VERTICAL);
         scroll.addView(content, new ScrollView.LayoutParams(-1, -2));
         root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
-        TextView modelLabel = label("Gemma 4 E4B · 设备本地运行", 16); modelLabel.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)); modelLabel.setPadding(0, dp(12), 0, dp(10)); content.addView(modelLabel);
-        TextView note = label("首次下载 3.66 GB，之后无需联网。对话仅留在此手机；云端应用仍在原工作区使用。", 14); note.setTextColor(0xff6b6b6b); note.setLineSpacing(dp(3), 1); content.addView(note);
-        state = label(model.installed() ? "模型已下载，发送消息时自动加载" : model.downloaded() > 0 ? "下载已暂停，可以继续" : "下载后即可开始", 14); state.setTextColor(0xff555555); state.setLineSpacing(dp(3), 1); state.setPadding(0, dp(14), 0, dp(14)); state.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); content.addView(state);
+        TextView modelLabel = label("Gemma 4 E4B", 16); modelLabel.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)); modelLabel.setPadding(0, dp(12), 0, dp(10)); content.addView(modelLabel);
+        TextView note = label("A private conversation, right on your phone. Download once (3.66 GB), then chat offline. Your cloud apps stay in your workspace.", 14); note.setTextColor(0xff6b6b6b); note.setLineSpacing(dp(3), 1); content.addView(note);
+        state = label(model.installed() ? "Ready to chat. The model loads when you send a message." : model.downloaded() > 0 ? "Download paused. Ready to resume." : "Download the model to get started.", 14); state.setTextColor(0xff555555); state.setLineSpacing(dp(3), 1); state.setPadding(0, dp(14), 0, dp(14)); state.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); content.addView(state);
         progress = new ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal); progress.setMax(1000); progress.setVisibility(View.GONE); content.addView(progress, new LinearLayout.LayoutParams(-1, dp(4)));
-        LinearLayout actions = row(); prepare = button(model.downloaded() > 0 ? "继续下载" : "下载并配置", true); prepare.setOnClickListener(v -> confirmDownload()); actions.addView(prepare, new LinearLayout.LayoutParams(0, dp(48), 1));
-        stop = button("暂停"); stop.setVisibility(View.GONE); stop.setOnClickListener(v -> cancelWork());
-        Button source = button("官方来源"); source.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(LocalModelFile.SOURCE)))); LinearLayout.LayoutParams sourceLayout = new LinearLayout.LayoutParams(0, dp(48), 1); sourceLayout.leftMargin = dp(8); actions.addView(source, sourceLayout);
-        remove = button("删除模型"); remove.setOnClickListener(v -> confirmRemove()); LinearLayout.LayoutParams removeLayout = new LinearLayout.LayoutParams(0, dp(48), 1); removeLayout.leftMargin = dp(8); actions.addView(remove, removeLayout); content.addView(actions);
+        LinearLayout actions = row(); prepare = button(model.downloaded() > 0 ? "Resume" : "Download", true); prepare.setOnClickListener(v -> confirmDownload()); actions.addView(prepare, new LinearLayout.LayoutParams(0, dp(48), 1));
+        stop = button("Pause"); stop.setVisibility(View.GONE); stop.setOnClickListener(v -> cancelWork());
+        Button source = button("Model source"); source.setOnClickListener(v -> startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(LocalModelFile.SOURCE)))); LinearLayout.LayoutParams sourceLayout = new LinearLayout.LayoutParams(0, dp(48), 1); sourceLayout.leftMargin = dp(8); actions.addView(source, sourceLayout);
+        remove = button("Remove"); remove.setOnClickListener(v -> confirmRemove()); LinearLayout.LayoutParams removeLayout = new LinearLayout.LayoutParams(0, dp(48), 1); removeLayout.leftMargin = dp(8); actions.addView(remove, removeLayout); content.addView(actions);
         transcript = label("", 17); transcript.setTextIsSelectable(true); transcript.setPadding(0, dp(18), 0, dp(18)); transcript.setLineSpacing(dp(4), 1); content.addView(transcript);
         LinearLayout composer = row(); composer.setPadding(0, dp(10), 0, 0); root.addView(composer, new LinearLayout.LayoutParams(-1, -2));
-        input = new EditText(this); input.setTextSize(17); input.setHint("想聊什么？"); input.setContentDescription("离线消息"); input.setMaxLines(4); input.setMinLines(1); input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES); input.setImeOptions(android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI); input.setTextColor(0xff181818); input.setHintTextColor(0xff777777); input.setPadding(dp(14), dp(12), dp(14), dp(12)); input.setBackground(rounded(0xfff3f3f3, 16)); composer.addView(input, new LinearLayout.LayoutParams(0, -2, 1));
+        input = new EditText(this); input.setTextSize(17); input.setHint("Message Gemma"); input.setContentDescription("Offline message"); input.setMaxLines(4); input.setMinLines(1); input.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE | android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES); input.setImeOptions(android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI); input.setTextColor(0xff181818); input.setHintTextColor(0xff777777); input.setPadding(dp(14), dp(12), dp(14), dp(12)); input.setBackground(rounded(0xffffffff, 18)); composer.addView(input, new LinearLayout.LayoutParams(0, -2, 1));
         if (saved != null) input.setText(saved.getString(DRAFT_STATE, ""));
-        send = button("发送", true); send.setOnClickListener(v -> send()); LinearLayout.LayoutParams sendLayout = new LinearLayout.LayoutParams(dp(64), dp(50)); sendLayout.leftMargin = dp(8); composer.addView(send, sendLayout); LinearLayout.LayoutParams stopLayout = new LinearLayout.LayoutParams(dp(64), dp(50)); stopLayout.leftMargin = dp(8); composer.addView(stop, stopLayout);
+        send = button("Send", true); send.setOnClickListener(v -> send()); LinearLayout.LayoutParams sendLayout = new LinearLayout.LayoutParams(dp(64), dp(50)); sendLayout.leftMargin = dp(8); composer.addView(send, sendLayout); LinearLayout.LayoutParams stopLayout = new LinearLayout.LayoutParams(dp(64), dp(50)); stopLayout.leftMargin = dp(8); composer.addView(stop, stopLayout);
         renderHistory("");
         if (unsupported != null) state.setText(unsupported);
-        else if (historyUnreadable) state.setText("旧对话无法读取，原文件已保留。点击新对话后继续。");
+        else if (historyUnreadable) state.setText("The previous conversation could not be read. Its file is preserved. Start a new chat to continue.");
         updateControls();
     }
     private int dp(int x) { return Math.round(x * getResources().getDisplayMetrics().density); }
@@ -94,23 +94,13 @@ public final class LocalAssistantActivity extends Activity {
     }
     private Button button(String s) { return button(s, false); }
     private Button button(String s, boolean primary) {
-        Button b = new Button(this); b.setText(s); b.setTextSize(13); b.setAllCaps(false); b.setMinWidth(0);
-        b.setTypeface(android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL));
-        b.setPadding(dp(8), 0, dp(8), 0); b.setMinHeight(dp(44)); b.setMinimumHeight(dp(44));
-        b.setStateListAnimator(null); b.setElevation(0); b.setBackgroundTintList(null);
-        android.graphics.drawable.StateListDrawable background = new android.graphics.drawable.StateListDrawable();
-        background.addState(new int[]{-android.R.attr.state_enabled}, rounded(0xfff3f3f3, 14));
-        background.addState(new int[]{android.R.attr.state_pressed}, rounded(primary ? 0xff383838 : 0xffe5e5e5, 14));
-        background.addState(new int[]{}, rounded(primary ? 0xff181818 : 0xfff3f3f3, 14));
-        b.setBackground(background);
-        b.setTextColor(new android.content.res.ColorStateList(new int[][]{new int[]{-android.R.attr.state_enabled}, new int[]{}}, new int[]{0xff949494, primary ? Color.WHITE : 0xff333333}));
-        return b;
+        Button b = NativeStyle.button(this, s, primary); b.setTextSize(13); b.setPadding(dp(8), 0, dp(8), 0); return b;
     }
     private LinearLayout row() { LinearLayout r = new LinearLayout(this); r.setGravity(Gravity.CENTER_VERTICAL); return r; }
     private void post(Runnable r) { ui.post(() -> { if (!closing && !isDestroyed()) r.run(); }); }
     private void updateControls() {
         prepare.setVisibility(!busy && !model.installed() ? View.VISIBLE : View.GONE);
-        prepare.setText(model.downloaded() > 0 ? "继续下载" : "下载并配置");
+        prepare.setText(model.downloaded() > 0 ? "Resume" : "Download");
         prepare.setEnabled(unsupported == null);
         stop.setVisibility(busy ? View.VISIBLE : View.GONE); stop.setEnabled(busy && !cancelled.get());
         remove.setEnabled(!busy && (model.installed() || model.downloaded() > 0)); clear.setEnabled(!busy);
@@ -121,46 +111,46 @@ public final class LocalAssistantActivity extends Activity {
     private void begin(String s, String stopLabel) { busy = true; cancelled.set(false); state.setText(s); stop.setText(stopLabel); updateControls(); }
     private void complete(String s) { post(() -> { busy = false; state.setText(s); progress.setVisibility(View.GONE); updateControls(); }); }
     private void confirmDownload() {
-        new AlertDialog.Builder(this).setTitle("下载 Gemma 4 E4B")
-            .setMessage("将从 Google AI Edge 官方文档指定的 Hugging Face 仓库下载 3.66 GB 模型并校验完整性。建议使用 Wi-Fi，并至少留出 4.2 GB 空间。离开此页会暂停，可随时继续。")
-            .setNegativeButton("取消", null).setPositiveButton("开始下载", (d,w) -> download()).show();
+        new AlertDialog.Builder(this).setTitle("Download Gemma 4 E4B")
+            .setMessage("Download and verify the 3.66 GB model from the repository linked by Google AI Edge. Use Wi-Fi and keep at least 4.2 GB free. Leaving this screen pauses the download; you can resume anytime.")
+            .setNegativeButton("Cancel", null).setPositiveButton("Download", (d,w) -> download()).show();
     }
     private void download() {
-        if (busy) return; begin("正在下载…", "暂停"); progress.setVisibility(View.VISIBLE);
+        if (busy) return; begin("Downloading…", "Pause"); progress.setVisibility(View.VISIBLE);
         worker.execute(() -> {
             try {
-                model.download(cancelled, (bytes, verifying) -> post(() -> { progress.setIndeterminate(verifying); progress.setProgress((int)(bytes * 1000 / LocalModelFile.SIZE)); state.setText(verifying ? "正在校验模型…" : String.format(Locale.getDefault(), "正在下载 %.2f / 3.66 GB", bytes / 1e9)); }));
-                if (cancelled.get()) { complete("已暂停，稍后可以继续"); return; }
-                post(() -> { progress.setIndeterminate(true); state.setText("模型已校验，正在配置…"); });
-                loadModel(false); complete("已准备好 · " + backend);
-            } catch (Exception | LinkageError e) { complete(cancelled.get() ? "已暂停，稍后可以继续" : readable(e)); }
+                model.download(cancelled, (bytes, verifying) -> post(() -> { progress.setIndeterminate(verifying); progress.setProgress((int)(bytes * 1000 / LocalModelFile.SIZE)); state.setText(verifying ? "Verifying the model…" : String.format(Locale.getDefault(), "Downloading %.2f / 3.66 GB", bytes / 1e9)); }));
+                if (cancelled.get()) { complete("Paused. You can resume anytime."); return; }
+                post(() -> { progress.setIndeterminate(true); state.setText("Verified. Setting up the model…"); });
+                loadModel(false); complete("Ready · " + backend);
+            } catch (Exception | LinkageError e) { complete(cancelled.get() ? "Paused. You can resume anytime." : readable(e)); }
         });
     }
     private void loadModel(boolean verify) throws Exception {
         if (engine != null) return;
-        if (verify && !model.verify(cancelled)) { model.delete(); throw new IOException("模型校验失败，请重新下载"); }
-        if (cancelled.get()) throw new InterruptedIOException("已停止");
+        if (verify && !model.verify(cancelled)) { model.delete(); throw new IOException("Model verification failed. Please download again."); }
+        if (cancelled.get()) throw new InterruptedIOException("Stopped.");
         ActivityManager.MemoryInfo memory = new ActivityManager.MemoryInfo(); ((ActivityManager)getSystemService(ACTIVITY_SERVICE)).getMemoryInfo(memory);
-        if (memory.lowMemory) throw new IOException("手机可用内存不足，请先关闭其他应用再试");
+        if (memory.lowMemory) throw new IOException("Memory is low. Close other apps and try again.");
         Engine candidate = null;
         try {
             candidate = new Engine(new EngineConfig(model.model().getAbsolutePath(), new Backend.GPU(), null, null, 4096, null, getCacheDir().getAbsolutePath()));
             candidate.initialize(); engine = candidate; backend = "GPU";
         } catch (Exception | LinkageError failure) {
             if (candidate != null) try { candidate.close(); } catch (Exception ignored) {}
-            if (cancelled.get()) throw new InterruptedIOException("已停止");
-            post(() -> state.setText("此设备改用 CPU，首次加载可能较慢…"));
+            if (cancelled.get()) throw new InterruptedIOException("Stopped.");
+            post(() -> state.setText("Loading on CPU. This may take a moment…"));
             candidate = new Engine(new EngineConfig(model.model().getAbsolutePath(), new Backend.CPU(), null, null, 4096, null, getCacheDir().getAbsolutePath()));
             try { candidate.initialize(); engine = candidate; backend = "CPU"; }
             catch (Exception | LinkageError e) { try { candidate.close(); } catch (Exception ignored) {} throw e; }
         }
-        if (cancelled.get()) { closeEngine(); throw new InterruptedIOException("已停止"); }
+        if (cancelled.get()) { closeEngine(); throw new InterruptedIOException("Stopped."); }
     }
     private void send() {
         String prompt = input.getText().toString().trim(); if (busy || prompt.isEmpty()) return;
-        if (prompt.getBytes(StandardCharsets.UTF_8).length > 2000) { state.setText("这条消息太长，请拆成较短的消息再发"); return; }
-        begin(engine == null ? "正在校验并加载模型…" : "正在思考…", "停止"); input.setText("");
-        renderHistory("你\n" + prompt + "\n\nGemma\n");
+        if (prompt.getBytes(StandardCharsets.UTF_8).length > 2000) { state.setText("This message is too long. Please split it into shorter messages."); return; }
+        begin(engine == null ? "Loading the model…" : "Thinking…", "Stop"); input.setText("");
+        renderHistory("You\n" + prompt + "\n\nGemma\n");
         worker.execute(() -> {
             StringBuilder answer = new StringBuilder();
             try {
@@ -172,14 +162,14 @@ public final class LocalAssistantActivity extends Activity {
                     if (contextBytes + bytes > 1000) break; contextBytes += bytes; first = i;
                 }
                 for (int i = first; i < history.length(); i++) { JSONObject h = history.getJSONObject(i); previous.add("user".equals(h.getString("role")) ? Message.Companion.user(h.getString("text")) : Message.Companion.model(h.getString("text"))); }
-                ConversationConfig config = new ConversationConfig(Contents.Companion.of("你是 Ulemi 的离线助手。根据用户的语言简洁回答。你只能处理本对话中的文字，不能联网或操作云端应用。"), previous, Collections.emptyList(), null, false, Collections.emptyList(), Collections.emptyMap(), null, false, 512);
+                ConversationConfig config = new ConversationConfig(Contents.Companion.of("You are Ulemi's offline assistant. Reply concisely in the user's language. You can only work with text in this conversation. You cannot access the internet or operate cloud apps."), previous, Collections.emptyList(), null, false, Collections.emptyList(), Collections.emptyMap(), null, false, 512);
                 conversation = engine.createConversation(config);
-                if (cancelled.get()) throw new InterruptedIOException("已停止");
+                if (cancelled.get()) throw new InterruptedIOException("Stopped.");
                 CountDownLatch done = new CountDownLatch(1); Throwable[] error = {null};
                 conversation.sendMessageAsync(prompt, new MessageCallback() {
                     public void onMessage(Message message) {
                         for (Content c : message.getContents().getContents()) if (c instanceof Content.Text) answer.append(((Content.Text)c).getText());
-                        String result = answer.toString(); post(() -> { state.setText("正在回答 · " + backend); renderHistory("你\n" + prompt + "\n\nGemma\n" + result); });
+                        String result = answer.toString(); post(() -> { state.setText("Replying · " + backend); renderHistory("You\n" + prompt + "\n\nGemma\n" + result); });
                     }
                     public void onDone() { done.countDown(); }
                     public void onError(Throwable e) { error[0] = e; done.countDown(); }
@@ -188,56 +178,56 @@ public final class LocalAssistantActivity extends Activity {
                 // Wait for the actual native terminal callback, including after cancellation.
                 if (!done.await(180, TimeUnit.SECONDS)) {
                     cancelled.set(true); conversation.cancelProcess();
-                    post(() -> { state.setText("回答超时，正在停止…"); updateControls(); });
+                    post(() -> { state.setText("The reply timed out. Stopping…"); updateControls(); });
                     done.await();
                 }
-                if (cancelled.get()) throw new InterruptedIOException("已停止");
-                if (error[0] != null) throw new IOException("模型未完成回答，请新建对话后再试", error[0]);
-                if (answer.toString().trim().isEmpty()) throw new IOException("模型未返回文字，请换一种问法");
+                if (cancelled.get()) throw new InterruptedIOException("Stopped.");
+                if (error[0] != null) throw new IOException("The model did not finish. Start a new chat and try again.", error[0]);
+                if (answer.toString().trim().isEmpty()) throw new IOException("No reply was returned. Try rephrasing your message.");
                 history.put(new JSONObject().put("role", "user").put("text", prompt)); history.put(new JSONObject().put("role", "model").put("text", answer.toString()));
                 while (history.length() > 40) history.remove(0);
-                saveHistory(); post(() -> renderHistory("")); complete("已保存到此手机 · " + backend);
+                saveHistory(); post(() -> renderHistory("")); complete("Saved on this phone · " + backend);
             } catch (Exception | LinkageError e) {
-                complete(cancelled.get() ? "已停止，本次未完成的回答没有保存" : readable(e));
+                complete(cancelled.get() ? "Stopped. The unfinished reply was not saved." : readable(e));
                 post(() -> { if (input.length() == 0) input.setText(prompt); });
             } finally { Conversation c = conversation; conversation = null; if (c != null) try { c.close(); } catch (Exception ignored) {} }
         });
     }
     private String readable(Throwable e) {
-        if ((e instanceof IOException || e instanceof IllegalStateException) && e.getMessage() != null && "对话未能保存到手机".equals(e.getMessage())) return e.getMessage();
-        if (e instanceof IOException && e.getMessage() != null && e.getMessage().matches(".*[\\u4e00-\\u9fff].*")) return e.getMessage();
-        if (e instanceof IOException) return "连接中断，下载进度已保留。检查网络后可以继续。";
-        return "此设备暂时无法运行模型。请关闭其他应用后重试；已下载模型会保留。";
+        if ((e instanceof IOException || e instanceof IllegalStateException) && e.getMessage() != null && "The conversation could not be saved on this phone.".equals(e.getMessage())) return e.getMessage();
+        if (e instanceof IOException && e.getMessage() != null && (LocalModelFile.isUserMessage(e.getMessage()) || java.util.Arrays.asList("Memory is low. Close other apps and try again.", "The model did not finish. Start a new chat and try again.", "No reply was returned. Try rephrasing your message.").contains(e.getMessage()))) return e.getMessage();
+        if (e instanceof IOException) return "Connection interrupted. Download progress is saved. Check your connection to resume.";
+        return "The model could not run on this device. Close other apps and try again. Your download is preserved.";
     }
     private void cancelWork() {
         cancelled.set(true); model.cancel(); Conversation c = conversation; if (c != null) c.cancelProcess();
-        state.setText("正在停止…"); updateControls();
+        state.setText("Stopping…"); updateControls();
     }
     private void closeEngine() { if (engine != null) { try { engine.close(); } catch (Exception ignored) {} engine = null; } }
     private void confirmRemove() {
-        new AlertDialog.Builder(this).setMessage("删除已下载模型和下载进度，释放空间？对话记录会保留。").setNegativeButton("取消", null).setPositiveButton("删除", (d,w) -> {
-            if (busy) return; begin("正在释放模型…", "停止"); worker.execute(() -> { try { closeEngine(); model.delete(); complete("模型已删除"); } catch (Exception e) { complete(readable(e)); } });
+        new AlertDialog.Builder(this).setMessage("Remove the model and partial download to free up space? Your conversations stay saved.").setNegativeButton("Cancel", null).setPositiveButton("Remove", (d,w) -> {
+            if (busy) return; begin("Releasing the model…", "Stop"); worker.execute(() -> { try { closeEngine(); model.delete(); complete("Model removed."); } catch (Exception e) { complete(readable(e)); } });
         }).show();
     }
     private File historyFile() { return new File(getNoBackupFilesDir(), "local-chat.json"); }
     private void readHistory() {
         try {
             if (!historyFile().isFile()) return;
-            if (historyFile().length() > 2 * 1024 * 1024) throw new IOException("记录太大");
+            if (historyFile().length() > 2 * 1024 * 1024) throw new IOException("History is too large.");
             history = new JSONArray(new String(java.nio.file.Files.readAllBytes(historyFile().toPath()), StandardCharsets.UTF_8));
-            if (history.length() > 40 || history.length() % 2 != 0) throw new IOException("记录不完整");
+            if (history.length() > 40 || history.length() % 2 != 0) throw new IOException("History is incomplete.");
             for (int i = 0; i < history.length(); i++) {
                 JSONObject h = history.getJSONObject(i);
-                if (!(i % 2 == 0 ? "user" : "model").equals(h.getString("role")) || !(h.get("text") instanceof String)) throw new IOException("记录不完整");
+                if (!(i % 2 == 0 ? "user" : "model").equals(h.getString("role")) || !(h.get("text") instanceof String)) throw new IOException("History is incomplete.");
             }
         } catch (Exception ignored) { historyUnreadable = true; history = new JSONArray(); }
     }
     private void saveHistory() {
         try { android.util.AtomicFile f = new android.util.AtomicFile(historyFile()); FileOutputStream out = f.startWrite(); try { out.write(history.toString().getBytes(StandardCharsets.UTF_8)); f.finishWrite(out); } catch (Exception e) { f.failWrite(out); throw e; } }
-        catch (Exception e) { throw new IllegalStateException("对话未能保存到手机", e); }
+        catch (Exception e) { throw new IllegalStateException("The conversation could not be saved on this phone.", e); }
     }
     private void renderHistory(String suffix) {
-        StringBuilder s = new StringBuilder(); for (int i = 0; i < history.length(); i++) { JSONObject h = history.optJSONObject(i); if (h != null) s.append("user".equals(h.optString("role")) ? "你\n" : "Gemma\n").append(h.optString("text")).append("\n\n"); }
+        StringBuilder s = new StringBuilder(); for (int i = 0; i < history.length(); i++) { JSONObject h = history.optJSONObject(i); if (h != null) s.append("user".equals(h.optString("role")) ? "You\n" : "Gemma\n").append(h.optString("text")).append("\n\n"); }
         transcript.setText(s.append(suffix).toString()); scroll.post(() -> scroll.fullScroll(View.FOCUS_DOWN));
     }
     @Override protected void onSaveInstanceState(Bundle out) {
@@ -245,6 +235,6 @@ public final class LocalAssistantActivity extends Activity {
         super.onSaveInstanceState(out);
     }
     @Override protected void onStop() { super.onStop(); if (busy) cancelWork(); }
-    @Override public void onBackPressed() { if (busy) { cancelWork(); new AlertDialog.Builder(this).setMessage("正在停止，完成后可以返回。下载进度会保留。").setPositiveButton("知道了", null).show(); } else super.onBackPressed(); }
+    @Override public void onBackPressed() { if (busy) { cancelWork(); new AlertDialog.Builder(this).setMessage("Stopping. You can go back when this finishes. Download progress is saved.").setPositiveButton("OK", null).show(); } else super.onBackPressed(); }
     @Override protected void onDestroy() { closing = true; cancelled.set(true); model.cancel(); Conversation c = conversation; if (c != null) c.cancelProcess(); worker.execute(this::closeEngine); super.onDestroy(); }
 }

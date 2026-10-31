@@ -2,10 +2,10 @@
     <style name="AppTheme.Base" parent="android:style/Theme.Material.Light.NoActionBar">
         <item name="android:fontFamily">sans</item><item name="android:colorAccent">#111111</item>
         <item name="android:windowLightStatusBar">true</item>
-        <item name="android:statusBarColor">#FFFFFF</item><item name="android:navigationBarColor">#FFFFFF</item>
-        <item name="android:windowActionModeOverlay">true</item><item name="android:windowBackground">#FFFFFF</item>
+        <item name="android:statusBarColor">#FAFAF8</item><item name="android:navigationBarColor">#FAFAF8</item>
+        <item name="android:windowActionModeOverlay">true</item><item name="android:windowBackground">#FAFAF8</item>
     </style>
     <style name="AppTheme" parent="AppTheme.Base" />
     <string name="app_name" translatable="false">Ulemi</string>
-    <color name="icon_background">#FFFFFF</color>
+    <color name="icon_background">#FAFAF8</color>
 </resources>

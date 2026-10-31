@@ -36,7 +36,7 @@ final class CredentialStore {
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE, key());
         byte[] data = cipher.doFinal(record.toString().getBytes(StandardCharsets.UTF_8));
         if (!prefs.edit().putString("iv", Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP))
-                .putString("data", Base64.encodeToString(data, Base64.NO_WRAP)).commit()) throw new Exception("无法保存连接");
+                .putString("data", Base64.encodeToString(data, Base64.NO_WRAP)).commit()) throw new Exception("Could not save your account.");
     }
     JSONObject load() throws Exception {
         if (!prefs.contains("data")) return null;

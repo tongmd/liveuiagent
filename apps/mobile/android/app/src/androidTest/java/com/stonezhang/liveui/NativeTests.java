@@ -49,7 +49,7 @@ public final class NativeTests extends Instrumentation {
                 try {
                     java.lang.reflect.Method login = MainActivity.class.getDeclaredMethod("showLogin", String.class); login.setAccessible(true); login.invoke(a, new Object[]{null});
                     android.view.View decor = a.getWindow().getDecorView(); String labels = labels(decor);
-                    require(labels.contains("登录，开始创造你的应用")); require(labels.contains("加入候补名单"));
+                    require(labels.contains("Your ideas, made yours.")); require(labels.contains("Join the waitlist"));
                     require(!labels.contains("服务地址") && !labels.contains("连接设置") && !labels.contains("https://"));
                     require(countInputs(decor) == 2);
                 } catch (Exception e) { throw new AssertionError(e); }
@@ -66,7 +66,7 @@ public final class NativeTests extends Instrumentation {
                         a.getSharedPreferences("experience", 0).edit().clear().commit();
                         java.lang.reflect.Method show = MainActivity.class.getDeclaredMethod("showGuide"); show.setAccessible(true); show.invoke(a);
                         java.lang.reflect.Field field = MainActivity.class.getDeclaredField("guide"); field.setAccessible(true);
-                        android.app.Dialog dialog = (android.app.Dialog) field.get(a); require(dialog.isShowing()); require(labels(dialog.getWindow().getDecorView()).contains("说出你需要什么"));
+                        android.app.Dialog dialog = (android.app.Dialog) field.get(a); require(dialog.isShowing()); require(labels(dialog.getWindow().getDecorView()).contains("Start with an idea."));
                         java.lang.reflect.Method finish = MainActivity.class.getDeclaredMethod("finishGuide"); finish.setAccessible(true); finish.invoke(a);
                         require(a.getSharedPreferences("experience", 0).getBoolean("guide_seen_v1", false)); require(!dialog.isShowing());
                         show.invoke(a); dialog = (android.app.Dialog) field.get(a); require(dialog.isShowing()); finish.invoke(a);
@@ -84,8 +84,8 @@ public final class NativeTests extends Instrumentation {
                 runOnMainSync(() -> {
                     try {
                         String text = labels(a.getWindow().getDecorView());
-                        require(text.contains("离线助手") && text.contains("Gemma 4 E4B") && text.contains("官方来源"));
-                        require(!text.contains("账号") && !text.contains("密码") && countInputs(a.getWindow().getDecorView()) == 1);
+                        require(text.contains("Offline assistant") && text.contains("Gemma 4 E4B") && text.contains("Model source"));
+                        require(!text.contains("Username") && !text.contains("Password") && countInputs(a.getWindow().getDecorView()) == 1);
                         java.lang.reflect.Field engine = LocalAssistantActivity.class.getDeclaredField("engine"); engine.setAccessible(true); require(engine.get(a) == null);
                         java.lang.reflect.Field send = LocalAssistantActivity.class.getDeclaredField("send"); send.setAccessible(true);
                         LocalModelFile model = new LocalModelFile(new java.io.File(a.getNoBackupFilesDir(), "local-models"));
@@ -97,7 +97,7 @@ public final class NativeTests extends Instrumentation {
                         java.lang.reflect.Field scroll = LocalAssistantActivity.class.getDeclaredField("scroll"); scroll.setAccessible(true);
                         android.view.ViewGroup viewport = (android.view.ViewGroup)scroll.get(a);
                         require(viewport.getChildCount() == 1);
-                        require(labels(viewport).contains("Gemma 4 E4B") && labels(viewport).contains("官方来源"));
+                        require(labels(viewport).contains("Gemma 4 E4B") && labels(viewport).contains("Model source"));
                         require(draft.getParent() == ((android.widget.Button)send.get(a)).getParent());
 
                     } catch (Exception e) { throw new AssertionError(e); }
@@ -164,7 +164,7 @@ public final class NativeTests extends Instrumentation {
                     require(page[0].getHeight() > a.getResources().getDisplayMetrics().heightPixels / 2);
                     java.lang.reflect.Method fail = MainActivity.class.getDeclaredMethod("workspaceError", String.class, boolean.class); fail.setAccessible(true); fail.invoke(a,"Network fixture",false);
                     require(((android.view.View)get(a,"nativeBar")).getVisibility() == android.view.View.VISIBLE);
-                    require(((android.view.View)get(a,"handoffSpinner")).getVisibility() == android.view.View.GONE);
+                    require(!((BrandMotionView)get(a,"handoffMotion")).motionRunning());
                     require(((android.view.View)get(a,"retryLoad")).getVisibility() == android.view.View.VISIBLE);
                     require(!hasHorizontalProgress(a.getWindow().getDecorView()));
                 } catch (Exception e) { throw new AssertionError(e); } });
@@ -172,11 +172,36 @@ public final class NativeTests extends Instrumentation {
                 runOnMainSync(() -> { try { set(a,"currentSession",null); } catch(Exception ignored) {} a.finish(); });
             }
         });
-        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (8 tests)\n" : "\nFAILURES!!! Tests run: 8, Failures: " + failed + "\n");
-        result.putInt("numtests", 8); finish(Activity.RESULT_OK, result);
+        check("brandMotionHasRealPhasesAndStopsWhenHidden", () -> {
+            Activity a = startActivitySync(new android.content.Intent(getTargetContext(), MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            android.os.SystemClock.sleep(650);
+            final BrandMotionView[] mark = {null}; final float[] phases = new float[2];
+            try {
+                runOnMainSync(() -> { try {
+                    invoke(a,"showRestoring"); mark[0] = findMotion(a.getWindow().getDecorView()); require(mark[0] != null);
+                    require(labels(a.getWindow().getDecorView()).contains("Opening your space"));
+                    require(!labels(a.getWindow().getDecorView()).matches(".*[\\u4e00-\\u9fff].*")); phases[0] = mark[0].motionPhase();
+                } catch(Exception e) { throw new AssertionError(e); } });
+                capture("android-motion-1.png"); android.os.SystemClock.sleep(600);
+                runOnMainSync(() -> { phases[1] = mark[0].motionPhase(); if(android.animation.ValueAnimator.areAnimatorsEnabled()) { require(mark[0].motionRunning()); require(phases[1] != phases[0]); } else require(!mark[0].motionRunning()); });
+                capture("android-motion-2.png");
+                runOnMainSync(() -> { mark[0].setVisibility(android.view.View.GONE); require(!mark[0].motionRunning()); mark[0].setVisibility(android.view.View.VISIBLE); mark[0].setActive(false); require(!mark[0].motionRunning()); });
+            } finally { runOnMainSync(a::finish); }
+        });
+        check("englishErrorsPreserveMeaningAndRejectPrivateText", () -> {
+            require(LocalModelFile.isUserMessage("Model verification failed. Please download again.")); require(LocalModelFile.isUserMessage("Free up additional storage: 4.2 GB")); require(!LocalModelFile.isUserMessage("provider: private-token-123"));
+            Activity a = startActivitySync(new android.content.Intent(getTargetContext(), LocalAssistantActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            try { runOnMainSync(() -> { try {
+                java.lang.reflect.Method m = LocalAssistantActivity.class.getDeclaredMethod("readable",Throwable.class); m.setAccessible(true); String memory="Memory is low. Close other apps and try again.";
+                require(memory.equals(m.invoke(a,new java.io.IOException(memory)))); require(!((String)m.invoke(a,new java.io.IOException("provider private-token-123"))).contains("private-token"));
+                android.widget.Button flat=NativeStyle.button(a,"Menu",false); require(flat.getElevation()==0 && flat.getStateListAnimator()==null);
+            } catch(Exception e) { throw new AssertionError(e); } }); } finally { runOnMainSync(a::finish); }
+        });
+        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (10 tests)\n" : "\nFAILURES!!! Tests run: 10, Failures: " + failed + "\n");
+        result.putInt("numtests", 10); finish(Activity.RESULT_OK, result);
     }
     private void check(String name, Check task) {
-        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 8); b.putInt("current", ++current);
+        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 10); b.putInt("current", ++current);
         sendStatus(1, b);
         try { task.run(); sendStatus(0, b); }
         catch (Throwable e) { failed++; b.putString("stack", android.util.Log.getStackTraceString(e)); sendStatus(-2, b); }
@@ -202,6 +227,10 @@ public final class NativeTests extends Instrumentation {
         String value = v instanceof android.widget.TextView ? ((android.widget.TextView) v).getText().toString() : "";
         if (v instanceof android.view.ViewGroup) for (int i=0; i<((android.view.ViewGroup)v).getChildCount(); i++) value += " " + labels(((android.view.ViewGroup)v).getChildAt(i));
         return value;
+    }
+    private static BrandMotionView findMotion(android.view.View v) {
+        if(v instanceof BrandMotionView) return (BrandMotionView)v;
+        if(v instanceof android.view.ViewGroup) for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++) { BrandMotionView found=findMotion(((android.view.ViewGroup)v).getChildAt(i)); if(found!=null) return found; } return null;
     }
     private static int countInputs(android.view.View v) {
         int n = v instanceof android.widget.EditText ? 1 : 0;

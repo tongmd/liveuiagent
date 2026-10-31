@@ -12,7 +12,7 @@ public final class ConnectionPolicy {
         if (!"https".equalsIgnoreCase(u.getScheme()) || u.getHost() == null || u.getUserInfo() != null
                 || u.getFragment() != null || u.getQuery() != null || u.getPort() == 0 || u.getPort() > 65535
                 || input.indexOf('\\') >= 0 || input.indexOf('\r') >= 0 || input.indexOf('\n') >= 0)
-            throw new IllegalArgumentException("请输入不含账号、参数或片段的 HTTPS 地址");
+            throw new IllegalArgumentException("Enter an HTTPS address without credentials, query parameters or fragments.");
         String path = u.getRawPath();
         if (path == null || path.isEmpty()) path = "/";
         if (!path.endsWith("/")) path += "/";
