@@ -105,8 +105,11 @@ final class DeviceObservationTransferTests: XCTestCase {
         model.record(DeviceObservation(id: "ble:fixture", source: "CoreBluetooth advertisement", capturedAt: Date(timeIntervalSince1970: 1000),
             values: ["signal":-55], units: ["signal":"dBm"], details: ["name": dangerousName]))
         let text = model.snapshot().readableText()
-        let receipt = try await execute(DeviceWorkspaceTransfer.script(text: text), web: web) as? [String: Any]
+        let requestID = UUID()
+        let receipt = try await execute(DeviceWorkspaceTransfer.script(text: text, requestID: requestID), web: web) as? [String: Any]
         XCTAssertEqual(receipt?["ok"] as? Bool, true)
+        let retried = try await execute(DeviceWorkspaceTransfer.script(text: text, requestID: requestID), web: web) as? [String: Any]
+        XCTAssertEqual(retried?["requestID"] as? String, requestID.uuidString)
         let state = try await execute("return {draft:document.querySelector('.rich-workspace-request textarea').value,global:document.querySelector('.liveui-composer textarea').value,sent:window.sent,inputs:window.inputs,received:window.received,pwned:!!window.pwned,app:document.querySelector('.app-sheet').dataset.appId}", web: web) as? [String: Any]
         XCTAssertEqual(state?["draft"] as? String, "Keep this task\n\n" + text)
         XCTAssertEqual(state?["received"] as? String, "Keep this task\n\n" + text)

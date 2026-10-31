@@ -170,7 +170,7 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
                 guard let self, self.sensorSession.accepts(ticket) else { return }
                 if let data {
                     self.sensorReadings["Acceleration"] = vector(data.acceleration.x, data.acceleration.y, data.acceleration.z, "g")
-                    self.record(DeviceObservation(id: "sensor:acceleration", source: "CoreMotion accelerometer", capturedAt: Date(), values: ["x":data.acceleration.x,"y":data.acceleration.y,"z":data.acceleration.z], units: ["x":"g","y":"g","z":"g"], details: [:]))
+                    self.record(DeviceObservation(id: "sensor:acceleration", source: "CoreMotion accelerometer", capturedAt: Date(), values: ["x":data.acceleration.x,"y":data.acceleration.y,"z":data.acceleration.z,"sensorTimestamp":data.timestamp], units: ["x":"g","y":"g","z":"g","sensorTimestamp":"s since boot"], details: [:]))
                 }
                 else if error != nil { self.sensorReadings["Acceleration"] = "Reading unavailable" }
             }
@@ -181,7 +181,7 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
                 guard let self, self.sensorSession.accepts(ticket) else { return }
                 if let data {
                     self.sensorReadings["Rotation"] = vector(data.rotationRate.x, data.rotationRate.y, data.rotationRate.z, "rad/s")
-                    self.record(DeviceObservation(id: "sensor:rotation", source: "CoreMotion gyroscope", capturedAt: Date(), values: ["x":data.rotationRate.x,"y":data.rotationRate.y,"z":data.rotationRate.z], units: ["x":"rad/s","y":"rad/s","z":"rad/s"], details: [:]))
+                    self.record(DeviceObservation(id: "sensor:rotation", source: "CoreMotion gyroscope", capturedAt: Date(), values: ["x":data.rotationRate.x,"y":data.rotationRate.y,"z":data.rotationRate.z,"sensorTimestamp":data.timestamp], units: ["x":"rad/s","y":"rad/s","z":"rad/s","sensorTimestamp":"s since boot"], details: [:]))
                 }
                 else if error != nil { self.sensorReadings["Rotation"] = "Reading unavailable" }
             }
@@ -192,7 +192,7 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
                 guard let self, self.sensorSession.accepts(ticket) else { return }
                 if let data {
                     self.sensorReadings["Magnetic field"] = vector(data.magneticField.x, data.magneticField.y, data.magneticField.z, "µT")
-                    self.record(DeviceObservation(id: "sensor:magnetic", source: "CoreMotion magnetometer", capturedAt: Date(), values: ["x":data.magneticField.x,"y":data.magneticField.y,"z":data.magneticField.z], units: ["x":"µT","y":"µT","z":"µT"], details: [:]))
+                    self.record(DeviceObservation(id: "sensor:magnetic", source: "CoreMotion magnetometer", capturedAt: Date(), values: ["x":data.magneticField.x,"y":data.magneticField.y,"z":data.magneticField.z,"sensorTimestamp":data.timestamp], units: ["x":"µT","y":"µT","z":"µT","sensorTimestamp":"s since boot"], details: [:]))
                 }
                 else if error != nil { self.sensorReadings["Magnetic field"] = "Reading unavailable" }
             }
@@ -205,7 +205,7 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
                 altimeter.startRelativeAltitudeUpdates(to: .main) { [weak self] data, error in
                     guard let self, self.sensorSession.accepts(ticket) else { return }
                     if let data {
-                        self.record(DeviceObservation(id: "sensor:altimeter", source: "CoreMotion altimeter", capturedAt: Date(), values: ["pressure":data.pressure.doubleValue,"relativeAltitude":data.relativeAltitude.doubleValue], units: ["pressure":"kPa","relativeAltitude":"m"], details: [:]))
+                        self.record(DeviceObservation(id: "sensor:altimeter", source: "CoreMotion altimeter", capturedAt: Date(), values: ["pressure":data.pressure.doubleValue,"relativeAltitude":data.relativeAltitude.doubleValue,"sensorTimestamp":data.timestamp], units: ["pressure":"kPa","relativeAltitude":"m","sensorTimestamp":"s since boot"], details: [:]))
                         self.sensorReadings["Pressure / altitude"] = String(format: "%.2f kPa · %+.2f m relative", data.pressure.doubleValue, data.relativeAltitude.doubleValue)
                     } else if error != nil { self.sensorReadings["Pressure / altitude"] = "Reading unavailable. Check Motion access in Settings." }
                 }

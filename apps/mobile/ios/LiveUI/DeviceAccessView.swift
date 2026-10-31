@@ -9,6 +9,7 @@ struct DeviceAccessView: View {
     @State private var bound = false
     @State private var transferring = false
     @State private var transferMessage: String?
+    @State private var pendingTransfer: DeviceObservationEnvelope?
     @StateObject private var model = DeviceAccessModel()
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -22,6 +23,7 @@ struct DeviceAccessView: View {
                     card("Bluetooth", icon: "antenna.radiowaves.left.and.right") {
                         status(model.bluetoothStatus)
                         control(model.scanningBluetooth ? "Stop scan" : "Scan for devices", active: model.scanningBluetooth) {
+                            pendingTransfer = nil; transferMessage = nil
                             if model.scanningBluetooth { model.stopBluetooth() } else { model.startBluetooth() }
                         }
                         devices(model.bluetoothDevices)
@@ -29,6 +31,7 @@ struct DeviceAccessView: View {
                     card("Local network", icon: "wifi") {
                         status(model.networkStatus)
                         control(model.scanningNetwork ? "Stop search" : "Find devices", active: model.scanningNetwork) {
+                            pendingTransfer = nil; transferMessage = nil
                             if model.scanningNetwork { model.stopNetwork() } else { model.startNetwork() }
                         }
                         devices(model.networkDevices)
@@ -36,6 +39,7 @@ struct DeviceAccessView: View {
                     card("Motion & environment", icon: "gyroscope") {
                         status(model.sensorStatus)
                         control(model.readingSensors ? "Stop readings" : "Start readings", active: model.readingSensors) {
+                            pendingTransfer = nil; transferMessage = nil
                             if model.readingSensors { model.stopSensors() } else { model.startSensors() }
                         }
                         ForEach(model.sensorReadings.keys.sorted(), id: \.self) { name in
@@ -48,6 +52,7 @@ struct DeviceAccessView: View {
                     card("Location", icon: "location") {
                         status(model.locationStatus)
                         control(model.locating ? "Cancel request" : "Get current location", active: model.locating) {
+                            pendingTransfer = nil; transferMessage = nil
                             if model.locating { model.stopLocation() } else { model.requestLocation() }
                         }
                     }
@@ -55,7 +60,8 @@ struct DeviceAccessView: View {
                         Button {
                             guard !transferring, !model.observations.isEmpty, let sink = boundSink else { return }
                             transferring = true; transferMessage = nil
-                            sink(model.snapshot()) { result in
+                            let snapshot = pendingTransfer ?? model.snapshot(); pendingTransfer = snapshot
+                            sink(snapshot) { result in
                                 transferring = false
                                 switch result {
                                 case .success: model.stopAll(); dismiss()
@@ -63,7 +69,7 @@ struct DeviceAccessView: View {
                                 }
                             }
                         } label: {
-                            Label(transferring ? "Adding observations…" : "Use in workspace", systemImage: "arrow.up.doc")
+                            Label(transferring ? "Adding observations…" : (pendingTransfer == nil ? "Use in workspace" : "Retry adding observations"), systemImage: "arrow.up.doc")
                                 .font(.headline).frame(maxWidth: .infinity, minHeight: 48)
                         }.buttonStyle(.borderedProminent).tint(.black)
                             .disabled(model.observations.isEmpty || transferring)
@@ -138,7 +144,7 @@ extension BrowserModel {
                 return
             }
             do {
-                let script = try DeviceWorkspaceTransfer.script(text: envelope.readableText())
+                let script = try DeviceWorkspaceTransfer.script(text: envelope.readableText(), requestID: envelope.transferID)
                 target.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { [weak self, weak target] result in
                     guard let self, let target, self.connection == expected, self.webView === target else {
                         completion(.failure(NSError(domain: "UlemiDevices", code: 2, userInfo: [NSLocalizedDescriptionKey: "Your workspace changed before the observations were accepted."])))
@@ -146,7 +152,7 @@ extension BrowserModel {
                     }
                     switch result {
                     case .success(let value):
-                        if let receipt = value as? [String: Any], receipt["ok"] as? Bool == true { completion(.success(())) }
+                        if let receipt = value as? [String: Any], receipt["ok"] as? Bool == true, receipt["requestID"] as? String == envelope.transferID.uuidString { completion(.success(())) }
                         else {
                             let message = (value as? [String: Any])?["message"] as? String ?? "The instruction field did not accept the observations. Please try again."
                             completion(.failure(NSError(domain: "UlemiDevices", code: 3, userInfo: [NSLocalizedDescriptionKey: message])))

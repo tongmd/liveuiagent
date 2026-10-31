@@ -36,6 +36,7 @@ struct DeviceObservationEnvelope: Codable {
     let format = "ulemi-device-observations-v1"
     let platform = "iOS"
     let createdAt: Date
+    var transferID = UUID()
     let observations: [DeviceObservation]
     var availability: [String: String] = [:]
 
@@ -46,9 +47,9 @@ struct DeviceObservationEnvelope: Codable {
                 "\(key): \(sample.values[key]!)\(sample.units[key].map { " " + $0 } ?? "")"
             }
             let details = sample.details.keys.sorted().map { "\($0): \(sample.details[$0]!)" }
-            return "• \(sample.source) at \(date.string(from: sample.capturedAt))\n  " + (values + details).joined(separator: "; ")
+            return "• \(sample.source) observed \(date.string(from: sample.capturedAt))\n  " + (values + details).joined(separator: "; ")
         }
-        return "Phone observations (iOS, captured \(date.string(from: createdAt)))\n" + rows.joined(separator: "\n") + (availability.isEmpty ? "" : "\nStatus: " + availability.keys.sorted().map { "\($0): \(availability[$0]!)" }.joined(separator: "; "))
+        return "Phone observations (iOS, prepared \(date.string(from: createdAt)))\n" + rows.joined(separator: "\n") + (availability.isEmpty ? "" : "\nStatus: " + availability.keys.sorted().map { "\($0): \(availability[$0]!)" }.joined(separator: "; "))
     }
     func encoded() throws -> Data {
         let encoder = JSONEncoder(); encoder.dateEncodingStrategy = .iso8601
@@ -59,12 +60,14 @@ struct DeviceObservationEnvelope: Codable {
 
 enum DeviceWorkspaceTransfer {
     // JSON encoding keeps device names and readings as data, never JavaScript.
-    static func script(text: String) throws -> String {
-        let data = try JSONSerialization.data(withJSONObject: [text])
+    static func script(text: String, requestID: UUID = UUID()) throws -> String {
+        let data = try JSONSerialization.data(withJSONObject: [text, requestID.uuidString])
         guard let json = String(data: data, encoding: .utf8) else { throw CocoaError(.fileReadInapplicableStringEncoding) }
         return """
         return await new Promise(resolve => {
-          const text = \(json)[0];
+          const [text, requestID] = \(json);
+          const receipts = window.__ulemiDeviceObservationReceipts ||= Object.create(null);
+          if (receipts[requestID]) { resolve(receipts[requestID]); return; }
           const visible = node => node && node.getClientRects().length && getComputedStyle(node).visibility !== 'hidden' && getComputedStyle(node).display !== 'none';
           const sheet = [...document.querySelectorAll('.app-sheet')].reverse().find(visible);
           const scope = sheet || document;
@@ -79,7 +82,10 @@ enum DeviceWorkspaceTransfer {
           input.dispatchEvent(new Event('input', {bubbles:true}));
           requestAnimationFrame(() => requestAnimationFrame(() => {
             if (!input.isConnected || input.value !== next) { resolve({ok:false, message:'The instruction field changed before it accepted the observations. Please try again.'}); return; }
-            resolve({ok:true, appendedCharacters:text.length, draftCharacters:next.length});
+            const receipt = {ok:true, requestID, appendedCharacters:text.length, draftCharacters:next.length};
+            receipts[requestID] = receipt;
+            const keys = Object.keys(receipts); if (keys.length > 50) delete receipts[keys[0]];
+            resolve(receipt);
           }));
         });
         """
