@@ -109,17 +109,23 @@ public final class NativeTests extends Instrumentation {
                     input.requestFocus();
                     ((android.view.inputmethod.InputMethodManager)a.getSystemService(Context.INPUT_METHOD_SERVICE)).showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
                 } catch(Exception e) { throw new AssertionError(e); } });
-                android.os.SystemClock.sleep(900);
-                runOnMainSync(() -> { try {
-                    java.lang.reflect.Field f = LocalAssistantActivity.class.getDeclaredField("input"); f.setAccessible(true);
-                    android.view.View input = (android.view.View)f.get(a);
-                    android.view.WindowInsets insets = input.getRootWindowInsets();
-                    require(insets.isVisible(android.view.WindowInsets.Type.ime()));
-                    android.graphics.Rect frame = new android.graphics.Rect(); input.getWindowVisibleDisplayFrame(frame);
-                    int[] at = new int[2]; input.getLocationOnScreen(at);
-                    require(at[1] + input.getHeight() <= frame.bottom);
-                } catch(Exception e) { throw new AssertionError(e); } });
+                final boolean[] visible = {false};
+                final int[] bounds = {0, 0};
+                for (int poll = 0; poll < 50; poll++) {
+                    runOnMainSync(() -> { try {
+                        java.lang.reflect.Field f = LocalAssistantActivity.class.getDeclaredField("input"); f.setAccessible(true);
+                        android.view.View input = (android.view.View)f.get(a);
+                        visible[0] = input.getRootWindowInsets().isVisible(android.view.WindowInsets.Type.ime());
+                        android.graphics.Rect frame = new android.graphics.Rect(); input.getWindowVisibleDisplayFrame(frame);
+                        int[] at = new int[2]; input.getLocationOnScreen(at);
+                        bounds[0] = at[1] + input.getHeight(); bounds[1] = frame.bottom;
+                    } catch(Exception e) { throw new AssertionError(e); } });
+                    if (visible[0]) break;
+                    android.os.SystemClock.sleep(100);
+                }
                 capture("android-local-keyboard.png");
+                if (!visible[0]) throw new AssertionError("Actual IME did not become visible");
+                if (bounds[0] > bounds[1]) throw new AssertionError("Composer bottom " + bounds[0] + " exceeds visible frame " + bounds[1]);
             } finally { runOnMainSync(a::finish); }
         });
         check("workspaceHasOneHeaderAndNoBrowserProgress", () -> {
