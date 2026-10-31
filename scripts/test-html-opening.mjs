@@ -1,0 +1,70 @@
+// Real Chrome, current shipped frontend, local mock service only.
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import path from 'node:path';
+import assert from 'node:assert/strict';
+// Set PLAYWRIGHT_MODULE to an installed Playwright module when it is outside this workspace.
+const {chromium}=await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
+const root=process.env.LIVEUI_TEST_FRONTEND_DIR||new URL('../frontend/snapshot',import.meta.url).pathname;
+const output=process.env.LIVEUI_ENTRY_TEST_OUTPUT||'/tmp/ulemi-html-opening';
+await fs.mkdir(output,{recursive:true});
+const openFailures=new Set();const bindings=new Map();let patchFailure=false,stateFailure=false;const apps=[],seen=[],snapshots=new Map(),errors=[],external=[];let createKind='html',responseMode='sse';
+function fixture(kind){const appId=kind==='html'?'dsh_entry_fixture':kind==='rich'?'visual_entry_fixture':'native_entry_fixture',name={html:'HTML Reading',native:'Native Notes',rich:'Rich Workspace'}[kind];const app={appId,name,description:'Existing content stays available after closing and reopening.',status:'ready',version:'1',preview:{accent:'#4b7560',chips:[],metrics:[],sampleRecords:[],presentation:{glyph:'E',collection:'Notes',tagline:'Saved notes',metric:'1',metricLabel:'RECORDS',rows:1,live:true},widget:{kind:'entities',items:[{id:'note',name:'Saved entry',detail:'Persistent content'}],stats:[],itemLabel:'Records'}},appPackage:{manifest:{appId,name,permissions:[]},ui:{meta:{}},actions:{actions:{}},assets:{icon:{svg:'<svg xmlns="http://www.w3.org/2000/svg"/>'}}},appData:{},runtimeState:{}};
+if(kind==='html')app.completeApp={id:appId};
+if(kind==='rich'){app.richWorkspace={id:appId};snapshots.set(appId,{appId,name,version:1,tree:{type:'Stack',children:[{type:'Text',text:'Rich workspace content'},{type:'Text',text:'Saved entry remains intact'},{type:'Checklist',recordId:'r1',checked:false,children:[]}]},records:[{id:'r1',text:'Saved check',checked:false}],interactionState:{},lastRequest:'Create a useful workspace'});}
+if(kind==='native')app.appPackage.ui.meta.a2ui={protocol:'a2ui',surfaceId:'main',initialData:{saved:'Native saved entry'},messages:[{createSurface:{surfaceId:'main'}},{updateComponents:{surfaceId:'main',components:[{id:'root',component:'Column',children:['saved']},{id:'saved',component:'Text',text:{path:'/saved'}}]}},{updateDataModel:{surfaceId:'main',value:{saved:'Native saved entry'}}}]};
+return app;}
+for(const kind of ['html','native','rich'])apps.push(fixture(kind));
+const server=http.createServer(async(req,res)=>{try{let route=new URL(req.url,'http://local').pathname.replace(/^\/liveui/,'')||'/';let raw='';for await(const c of req)raw+=c;const input=raw?JSON.parse(raw):undefined;seen.push({route,method:req.method,input});const json=(v,status=200)=>{res.writeHead(status,{'Content-Type':'application/json'});res.end(JSON.stringify(v));};
+if(/^\/agent\/apps\/[^/]+\/harness$/.test(route)){
+ const id=route.split('/')[3],app=apps.find(a=>a.appId===id);if(!app)return json({error:'Missing'},404);
+ const format=app.richWorkspace?'workspace':app.completeApp?'html':'native';
+ let state=bindings.get(id)||{appId:id,format,harness:'native',model:'native-model',token:'1',revision:1,busy:false,choices:['native','dsh','codex','qwen','kimi','zcode'].map(key=>({id:key,label:key,available:format!=='html'||key==='dsh',model:key+'-model',models:[key+'-model',key+'-alternate']}))};
+ if(format==='html')state={...state,harness:'dsh',model:'dsh-model'};
+ if(req.method==='PATCH'){if(patchFailure){patchFailure=false;return json({error:'Active task',code:'app_harness_busy'},409);}assert.equal(input.expectedToken,state.token);state={...state,harness:input.harness,model:input.model,token:String(Number(state.token)+1),revision:state.revision+1,changed:true};if(snapshots.has(id))snapshots.get(id).version++;bindings.set(id,state);}
+ return json(state);
+}
+if(route==='/agent/run'&&input.selectedAppId){assert.equal(input.selectedAppId,'native_entry_fixture');assert.equal(input.llm,undefined);assert.equal(input.harness,undefined);return json({type:'app_patched',appPackage:apps.find(a=>a.appId===input.selectedAppId).appPackage,trace:[]});}
+if(route==='/agent/settings')return json({user:{model:'fixture/DeepSeek-V4.1-Flash',models:['fixture/DeepSeek-V4.1-Flash']},server:{model:'fixture/DeepSeek-V4.1-Flash',models:['fixture/DeepSeek-V4.1-Flash'],hasApiKey:true},effective:{model:'fixture/DeepSeek-V4.1-Flash',models:['fixture/DeepSeek-V4.1-Flash'],keySource:'server'}});
+if(route==='/agent/models')return json({models:['fixture/DeepSeek-V4.1-Flash'],default:'fixture/DeepSeek-V4.1-Flash'});
+if(route==='/agent/runtime-settings')return json({harness:'dsh',choices:[{id:'native',label:'LiveUIAgent',available:true},{id:'dsh',label:'DeepSeek Harness',available:true}],model:{id:'fixture/DeepSeek-V4.1-Flash',configurable:true}});
+if(route==='/agent/personal')return json({layout:{},materialLayout:{},appearances:{},memories:[],apps:[],enabledShared:[],hidden:[]});
+if(route==='/agent/query-state')return json({canvasState:{canvasId:'home',nodes:[],edges:[],viewport:{x:0,y:0,zoom:1},inputDock:{position:'bottom'}},apps,summary:{text:'Fixture',apps:[]}});
+if(route==='/agent/chat-history')return json({messages:[]});
+if(route==='/agent/run'){const app=fixture(createKind);assert(!apps.some(a=>a.appId===app.appId),'No duplicate create');apps.push(app);const result={type:'app_created',appSummary:{appId:app.appId},appPackage:app.appPackage,trace:[]};if(responseMode==='json')return json(result);res.writeHead(200,{'Content-Type':'text/event-stream'});res.write('event: progress\ndata: '+JSON.stringify({step:'Finishing the app',elapsedMs:50})+'\n\n');return res.end('event: result\ndata: '+JSON.stringify(result)+'\n\n');}
+if(route==='/agent/remove-app'){const idx=apps.findIndex(a=>a.appId===input.appId);assert(idx>=0);const [app]=apps.splice(idx,1);return json({type:'app_removed',appId:app.appId,name:app.name});}
+if(route.startsWith('/agent/complete/apps/')&&openFailures.delete('html'))return json({error:'Temporary opening failure'},503);
+if(route.startsWith('/agent/complete/apps/'))return json({html:'<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><h1>HTML application content</h1><p>Saved reading entry</p><label>Note <input aria-label="Note"></label></body></html>',store:{notes:'original'}});
+if(route.startsWith('/agent/workspaces/')&&req.method==='GET'&&openFailures.delete('rich'))return json({error:'Temporary opening failure'},503);
+if(route.endsWith('/state')&&req.method==='PUT'&&stateFailure){stateFailure=false;return json({error:'Fixture save failed'},503);}
+if(route.endsWith('/generate')&&req.method==='POST')return json({id:'fixture-done'});
+if(route==='/agent/workspaces/jobs/fixture-done')return json({status:'done'});
+if(route.startsWith('/agent/workspaces/')){const id=route.split('/')[3];const snapshot=snapshots.get(id);if(req.method==='PUT'){assert.equal(input.expectedVersion,snapshot.version);snapshot.interactionState=input.interactionState;snapshot.version++;}return json(snapshot||{});}
+if(route.startsWith('/agent/'))return json({ok:true});
+const file=route==='/'?'/index.html':route;if(file.includes('..'))throw Error('Bad path');const data=await fs.readFile(path.join(root,file));res.writeHead(200,{'Content-Type':file.endsWith('.js')?'text/javascript':file.endsWith('.css')?'text/css':file.endsWith('.svg')?'image/svg+xml':'text/html'});res.end(data);
+}catch(error){res.writeHead(500);res.end(String(error.stack||error));}});
+await new Promise(r=>server.listen(0,'127.0.0.1',r));const origin=`http://127.0.0.1:${server.address().port}`,base=origin+'/liveui/';
+const browser=await chromium.launch({channel:'chrome',headless:true});
+const context=await browser.newContext({viewport:{width:390,height:844},userAgent:'Mozilla/5.0 UlemiMobile/1'}),page=await context.newPage();
+page.on('pageerror',e=>errors.push(e.message));
+await context.route('**/*',route=>{const url=route.request().url();return url.startsWith(origin)||url.startsWith('data:')||url.startsWith('blob:')?route.continue():route.abort();});
+try{
+ await page.addInitScript(()=>{window.__holdLoads=true;window.__heldFrames=[];const original=EventTarget.prototype.addEventListener;EventTarget.prototype.addEventListener=function(type,listener,options){if(type==='load'&&this instanceof HTMLIFrameElement){const target=this;return original.call(this,type,function(event){if(window.__holdLoads&&!window.__releaseLoad){window.__heldFrames.push(target);return;}return typeof listener==='function'?listener.call(this,event):listener.handleEvent(event);},options);}return original.call(this,type,listener,options);};window.__releaseCurrent=()=>{window.__releaseLoad=true;document.querySelector('iframe.complete-app-frame')?.dispatchEvent(new Event('load'));window.__releaseLoad=false;};});
+ await page.goto(base,{waitUntil:'domcontentloaded'});await page.locator('.gallery-open').first().waitFor();
+ const id='dsh_entry_fixture';const checks=[];
+ for(const width of[1280,390,320]){
+  await page.setViewportSize({width,height:844});await page.locator(`.liveui-gallery-card[data-app-id="${id}"] .gallery-open`).click();let sheet=page.locator(`.app-sheet[data-app-id="${id}"]`);
+  await sheet.locator('.complete-frame-loading').waitFor();await page.waitForFunction(()=>window.__heldFrames.includes(document.querySelector('iframe.complete-app-frame')));
+  assert.equal(await sheet.locator('iframe').isVisible(),false);assert.equal(await sheet.locator('.complete-app-edit').isVisible(),false);const beforeFrame=await sheet.locator('iframe').boundingBox();const boxes=await sheet.evaluate(el=>({header:el.querySelector('.sheet-header').getBoundingClientRect().toJSON(),loader:el.querySelector('.complete-frame-loading').getBoundingClientRect().toJSON(),sheet:el.getBoundingClientRect().toJSON()}));assert(boxes.loader.top>=boxes.header.bottom-1&&boxes.loader.bottom<=boxes.sheet.bottom+1);await page.screenshot({path:path.join(output,`loading-${width}.png`)});
+  await page.evaluate(()=>window.__releaseCurrent());await sheet.locator('iframe').waitFor();assert.equal(await sheet.locator('.complete-frame-loading').count(),0);const afterFrame=await sheet.locator('iframe').boundingBox();assert.equal(beforeFrame.height,afterFrame.height);await sheet.locator('textarea').fill('Keep my unfinished change');
+  await page.evaluate(()=>window.__oldFrame=document.querySelector('iframe.complete-app-frame'));await sheet.getByRole('button',{name:'Reopen',exact:true}).click();await sheet.locator('.complete-frame-loading').waitFor();await page.waitForFunction(()=>document.querySelector('iframe.complete-app-frame')!==window.__oldFrame&&window.__heldFrames.includes(document.querySelector('iframe.complete-app-frame')));
+  await page.evaluate(()=>{window.__releaseLoad=true;window.__oldFrame.dispatchEvent(new Event('load'));window.__releaseLoad=false;});assert(await sheet.locator('.complete-frame-loading').isVisible());await page.evaluate(()=>window.__releaseCurrent());await sheet.locator('iframe').waitFor();assert.equal(await sheet.locator('textarea').inputValue(),'Keep my unfinished change');await page.screenshot({path:path.join(output,`ready-${width}.png`)});
+  await sheet.locator('.sheet-close').click();await sheet.waitFor({state:'detached'});checks.push({width,overlay:true,lateOldLoadIgnored:true,draftPreserved:true});
+ }
+ // Initial GET failure stays recoverable without publishing or model calls.
+ openFailures.add('html');await page.locator(`.liveui-gallery-card[data-app-id="${id}"] .gallery-open`).click();const sheet=page.locator(`.app-sheet[data-app-id="${id}"]`);await sheet.getByText('Temporary opening failure',{exact:true}).last().waitFor();await sheet.getByRole('button',{name:'Retry',exact:true}).click();await sheet.locator('.complete-frame-loading').waitFor();await page.waitForFunction(()=>window.__heldFrames.includes(document.querySelector('iframe.complete-app-frame')));await page.evaluate(()=>window.__releaseCurrent());await sheet.locator('iframe').waitFor();
+ // Clock controls only a deterministic missing-load fixture; it is not production latency evidence.
+ await page.clock.install();await sheet.getByRole('button',{name:'Reopen',exact:true}).click();await sheet.locator('.complete-frame-loading').waitFor();await page.waitForFunction(()=>window.__heldFrames.includes(document.querySelector('iframe.complete-app-frame')));await page.clock.fastForward(30001);await sheet.getByText('The page did not finish opening. Try again.',{exact:true}).waitFor();const getsBefore=seen.filter(x=>x.route.includes('/complete/apps/')&&x.method==='GET').length;await sheet.getByRole('button',{name:'Retry',exact:true}).click();await page.waitForFunction(()=>window.__heldFrames.includes(document.querySelector('iframe.complete-app-frame')));await page.evaluate(()=>window.__releaseCurrent());await sheet.locator('iframe').waitFor();assert.equal(seen.filter(x=>x.route.includes('/complete/apps/')&&x.method==='GET').length,getsBefore+1);
+ await sheet.locator('.sheet-close').click();await sheet.waitFor({state:'detached'});await page.clock.fastForward(31000);assert.equal(await page.locator('.complete-frame-loading').count(),0);assert.deepEqual(errors,[]);assert.equal(seen.filter(x=>x.route.startsWith('/agent/complete/')&&x.method!=='GET').length,0);
+ await fs.writeFile(path.join(output,'verification.json'),JSON.stringify({passed:true,checks,fixture:'browser load event held until explicit release; timeout uses Playwright clock, not production timing',initialGetRetry:true,loadTimeoutRetry:true,lateLoadIgnored:true,unmountTimerCleanup:true,modelCalls:0,completeApiWrites:0,errors},null,2));console.log(JSON.stringify({passed:true,checks:checks.length}));
+}catch(error){await fs.writeFile(path.join(output,'failure.json'),JSON.stringify({error:error.stack,errors,seen},null,2));await page.screenshot({path:path.join(output,'failure.png')});throw error;}finally{await context.close();await browser.close();server.closeAllConnections();await new Promise(r=>server.close(r));}

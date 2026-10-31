@@ -58,3 +58,9 @@ html[data-ulemi-shell=true] body:not(.ulemi-app-open) .personal-space-button{rig
 .ulemi-app-opening-error button{border:1px solid #d8e0ec;border-radius:12px;background:#fff;color:#315d9c;padding:10px 18px;font:inherit;min-height:44px}
 .rich-workspace-host[data-empty=true] .rich-workspace-status{flex:1;display:flex;align-items:center;justify-content:center;gap:12px;padding:24px;overflow-wrap:anywhere}
 .rich-workspace-host[data-empty=true] .rich-workspace-request{display:none}
+
+.complete-app-host[data-loading=true]:not(.rich-workspace-host){position:relative}
+.complete-frame-loading{position:absolute;inset:0;z-index:1}
+
+.complete-app-host[data-frame-loading=true]>.complete-app-actions{display:flex!important;visibility:hidden}
+.complete-app-host[data-frame-loading=true]>.complete-app-edit{display:flex!important;visibility:hidden}
