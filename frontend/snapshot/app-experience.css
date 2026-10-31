@@ -1,0 +1,60 @@
+/* App windows share one viewport and one navigation bar. */
+:root{--ulemi-view-height:100dvh;--ulemi-view-top:0px}
+.ulemi-window-tools{display:flex;align-items:center;gap:4px;flex:0 0 auto}
+.ulemi-window-tools button,.ulemi-native-menu{border:0;border-radius:12px;background:#f1f3f6;color:#263248;min-height:40px;min-width:40px;padding:7px 10px;font:500 14px/1.2 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;cursor:pointer}
+.ulemi-window-tools button:focus-visible,.ulemi-native-menu:focus-visible{outline:3px solid #296be955;outline-offset:2px}
+.ulemi-native-menu{display:grid;place-items:center;font-size:22px;width:40px;padding:0}
+.ulemi-native-menu.home-menu{position:fixed;right:16px;top:max(14px,env(safe-area-inset-top));z-index:20;background:#fff;box-shadow:0 2px 12px #18233412}
+.concept-material.studio-shell .app-sheet.app-sheet{display:flex!important;flex-direction:column!important;overflow:hidden!important;isolation:isolate;background:#fff!important;filter:none!important;animation:none!important;clip-path:none!important}
+.concept-material.studio-shell .app-sheet.app-sheet .sheet-header{display:flex!important;flex:0 0 auto!important;min-height:56px!important;gap:10px!important;padding:8px 14px!important;background:#fff!important;border-bottom:1px solid #edf0f4!important;backdrop-filter:none!important;box-sizing:border-box;cursor:default}
+.concept-material.studio-shell .app-sheet.app-sheet .sheet-window-controls,.concept-material.studio-shell .app-sheet.app-sheet .sheet-title-block>span,.concept-material.studio-shell .app-sheet.app-sheet .sheet-title-block>p{display:none!important}
+.concept-material.studio-shell .app-sheet.app-sheet .sheet-title-block{display:block!important;min-width:0!important;flex:1!important}
+.concept-material.studio-shell .app-sheet.app-sheet .sheet-title-block h2{margin:0!important;color:#182334!important;font:600 18px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif!important;letter-spacing:-.02em!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.concept-material.studio-shell .app-sheet.app-sheet .sheet-close{display:grid!important;place-items:center;flex:0 0 40px!important;width:40px!important;height:40px!important;min-width:40px!important;min-height:40px!important;padding:0!important;margin:0!important;border:0!important;border-radius:12px!important;background:#f1f3f6!important;color:#445168!important;font:26px/1 system-ui!important}
+.concept-material.studio-shell .app-sheet.app-sheet>.a2ui-host,.concept-material.studio-shell .app-sheet.app-sheet>.dynamic-page{flex:1 1 auto!important;min-height:0!important;overflow:auto!important;overscroll-behavior:contain;scroll-padding-block:16px}
+.concept-material.studio-shell .app-sheet.app-sheet>.complete-app-host{flex:1 1 auto!important;min-height:0!important}
+.concept-material.studio-shell .app-sheet.app-sheet .sheet-progress,.concept-material.studio-shell .app-sheet.app-sheet .sheet-error{position:static!important;flex:0 0 auto;max-height:112px;overflow:auto;box-sizing:border-box;padding:9px 16px;font-size:14px;line-height:1.5;border-radius:0;box-shadow:none}
+.ulemi-app-loading{flex:1;display:flex;align-items:center;justify-content:center;gap:12px;margin:0;padding:24px;color:#647084;font:15px/1.5 system-ui;background:#fff}
+.ulemi-app-loading::before{content:'';width:22px;height:22px;border:2px solid #e5e9ef;border-top-color:#315d9c;border-radius:50%;animation:ulemi-spin .9s linear infinite;flex:0 0 auto}
+@keyframes ulemi-spin{to{transform:rotate(360deg)}}
+.rich-workspace-content:empty{display:none}.rich-workspace-host[data-loading=true] .rich-workspace-status{flex:1;display:flex;align-items:center;justify-content:center;color:#647084;font-size:15px;gap:12px}
+.rich-workspace-host[data-loading=true] .rich-workspace-status::before{content:'';width:22px;height:22px;border:2px solid #e5e9ef;border-top-color:#315d9c;border-radius:50%;animation:ulemi-spin .9s linear infinite}
+.rich-workspace-host[data-loading=true] .rich-workspace-request{visibility:hidden}
+.rich-workspace-status{min-height:0;padding:6px 12px;font-size:13px;line-height:1.45;overflow-wrap:anywhere}.rich-workspace-status:has(span:empty){display:none}
+.complete-app-actions{padding:6px 12px;min-height:30px;background:#fff;border-bottom:1px solid #edf0f4;color:#657187;font-size:13px}.complete-app-actions button{font-size:13px;min-height:36px;color:#44536b}.complete-app-actions small{font:inherit}
+.rich-workspace-request,.complete-app-edit,.ulemi-native-compose{display:flex;flex:0 0 auto;align-items:flex-end;gap:8px;margin:0;padding:10px 12px max(10px,env(safe-area-inset-bottom));border-top:1px solid #e9edf2;background:#fff;box-sizing:border-box}
+.rich-workspace-request textarea,.complete-app-edit textarea,.ulemi-native-compose textarea{display:block;flex:1;min-width:0;resize:none;box-sizing:border-box;min-height:44px;max-height:112px;border:1px solid #dbe1ea;border-radius:12px;padding:10px 12px;font:16px/1.4 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#182334;background:#f8f9fb}
+.rich-workspace-request button,.complete-app-edit button,.ulemi-native-compose button{flex:0 0 auto;min-height:44px;min-width:48px;max-width:112px;margin:0;padding:10px 14px;border:0;border-radius:12px;background:#245ad2;color:#fff;font:600 15px/1.3 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+.rich-workspace-request button:disabled,.complete-app-edit button:disabled,.ulemi-native-compose button:disabled{background:#e9edf3;color:#718097;opacity:1}
+.ulemi-native-feedback{flex:0 0 auto;margin:0;padding:8px 14px;max-height:112px;overflow:auto;overflow-wrap:anywhere;color:#526078;background:#f8fafc;font:14px/1.5 system-ui}.ulemi-native-feedback:empty{display:none}
+.ulemi-harness-dialog{box-sizing:border-box;width:min(420px,calc(100vw - 32px));max-height:calc(var(--ulemi-view-height) - 32px);overflow:auto;margin:auto;padding:22px;border:1px solid #e5e9f0;border-radius:22px;background:#fff;color:#172235;box-shadow:0 20px 80px #12233e30;font:16px/1.5 system-ui}
+.ulemi-harness-dialog::backdrop{background:#18233455;backdrop-filter:blur(5px)}
+.ulemi-harness-dialog header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}.ulemi-harness-dialog h2{font-size:20px;margin:0}.ulemi-harness-dialog header button{border:0;border-radius:50%;background:#f0f2f6;width:36px;height:36px;font-size:22px;color:#566277}
+.ulemi-harness-dialog label{display:grid;gap:6px;margin:16px 0;color:#46546b;font-size:14px}.ulemi-harness-dialog select{box-sizing:border-box;width:100%;min-height:46px;padding:8px 10px;border:1px solid #d4dce8;border-radius:10px;background:#fff;color:#172235;font-size:16px}
+.ulemi-harness-dialog p{margin:10px 0;font-size:14px;color:#667389;overflow-wrap:anywhere}.ulemi-harness-dialog [role=status]{color:#315785}.ulemi-harness-dialog [role=status].is-error{color:#a22c32}.ulemi-harness-dialog .ulemi-harness-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:20px}.ulemi-harness-dialog .ulemi-harness-actions button{padding:11px 16px;border:0;border-radius:12px;font:600 15px system-ui;background:#eef1f6;color:#35445e}.ulemi-harness-dialog .ulemi-harness-actions button.primary{background:#245ad2;color:white}.ulemi-harness-dialog button:disabled{opacity:.5}
+body.ulemi-app-open .settings-fab,body.ulemi-app-open .history-fab,body.ulemi-app-open .personal-fab{visibility:hidden;pointer-events:none}
+body.ulemi-app-open .liveuiagent-toasts{z-index:60;pointer-events:none;max-width:calc(100vw - 32px);top:72px;bottom:auto}.liveuiagent-toast-close{pointer-events:auto}
+@media(max-width:700px){
+ .concept-material.studio-shell .app-sheet.app-sheet,.concept-material.studio-shell .app-sheet.app-sheet.complete-sheet,.concept-material.studio-shell .app-sheet.app-sheet:not(.complete-sheet){position:fixed!important;inset:var(--ulemi-view-top) 0 auto 0!important;transform:none!important;width:100%!important;height:var(--ulemi-view-height)!important;min-height:0!important;max-height:var(--ulemi-view-height)!important;min-width:0!important;max-width:100%!important;border:0!important;border-radius:0!important;resize:none!important;box-shadow:none!important;padding:0!important;margin:0!important}
+ .concept-material.studio-shell .app-sheet.app-sheet[data-ulemi-background=true]{visibility:hidden!important;pointer-events:none!important}
+ .concept-material.studio-shell .app-sheet.app-sheet .sheet-header{min-height:56px!important;padding:6px max(10px,env(safe-area-inset-right)) 6px max(14px,env(safe-area-inset-left))!important;padding-top:max(6px,env(safe-area-inset-top))!important;gap:6px!important}
+ .concept-material.studio-shell .app-sheet.app-sheet .sheet-title-block h2{font-size:17px!important}
+ .concept-material.studio-shell .app-sheet.app-sheet:not(.complete-sheet) .a2ui-host{padding:16px!important}
+ body.ulemi-app-open .window-tabs,body.ulemi-app-open .history-panel{visibility:hidden;pointer-events:none}
+ .rich-workspace-content{padding:10px 10px 16px}.rich-workspace-request,.complete-app-edit,.ulemi-native-compose{padding:8px max(10px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left))}
+ .rich-workspace-request textarea,.complete-app-edit textarea,.ulemi-native-compose textarea{min-height:44px;font-size:16px;padding:10px}
+ .rich-workspace-request button,.complete-app-edit button{font-size:14px;padding:10px 12px}
+ body.ulemi-keyboard-open .rich-workspace-request,body.ulemi-keyboard-open .complete-app-edit,body.ulemi-keyboard-open .ulemi-native-compose{padding-bottom:8px}
+ body.ulemi-app-open .liveuiagent-toasts{top:calc(var(--ulemi-view-top) + 64px);right:12px;left:12px;width:auto}
+}
+@media(prefers-reduced-motion:reduce){.ulemi-app-loading::before,.rich-workspace-host[data-loading=true] .rich-workspace-status::before{animation:none}}
+body.ulemi-app-open .personal-space-button{visibility:hidden;pointer-events:none}
+html[data-ulemi-shell=true] body:not(.ulemi-app-open) .personal-space-button{right:64px}
+
+.concept-material.studio-shell .app-sheet.app-sheet:not(.personal-styled)>.a2ui-host{background:#fff!important}
+
+.complete-app-host[data-loading=true]:not(.rich-workspace-host)>.complete-app-actions,.complete-app-host[data-loading=true]:not(.rich-workspace-host)>.complete-app-edit{display:none}
+.ulemi-app-opening-error{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:24px;color:#6a5260;font:15px/1.5 system-ui;text-align:center;overflow-wrap:anywhere}
+.ulemi-app-opening-error button{border:1px solid #d8e0ec;border-radius:12px;background:#fff;color:#315d9c;padding:10px 18px;font:inherit;min-height:44px}
+.rich-workspace-host[data-empty=true] .rich-workspace-status{flex:1;display:flex;align-items:center;justify-content:center;gap:12px;padding:24px;overflow-wrap:anywhere}
+.rich-workspace-host[data-empty=true] .rich-workspace-request{display:none}

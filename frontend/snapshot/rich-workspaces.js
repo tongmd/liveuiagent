@@ -35,6 +35,7 @@
     const R = window.__liveuiagentReact, h = R.createElement;
     const id = app.appId, base = encodeURIComponent(id), pendingKey = 'liveui.workspace.job.' + id;
     const [data,setData] = R.useState(null), [status,setStatus] = R.useState(workspaceLocale(app) === 'zh-CN' ? '正在打开…' : english['正在打开…']);
+    const [loadError,setLoadError] = R.useState(false);
     const [draft,setDraft] = R.useState(''), [busy,setBusy] = R.useState(false), [unconfirmed,setUnconfirmed] = R.useState(false);
     const container = R.useRef(null), root = R.useRef(null), current = R.useRef(null), alive = R.useRef(true), writes = R.useRef(Promise.resolve()), task = R.useRef(null), draftRef = R.useRef('');
     const publish = snapshot => { current.current = snapshot; window.__liveuiWorkspaceSnapshots[id] = clone(snapshot); if(root.current) root.current.dataset.version = String(snapshot.version); };
@@ -43,7 +44,7 @@
     const show = text => { if(alive.current) setStatus(t(text)); };
     const getPending = () => { try { return sessionStorage.getItem(pendingKey); } catch { return null; } };
     const setPending = value => { try { value ? sessionStorage.setItem(pendingKey,value) : sessionStorage.removeItem(pendingKey); } catch {} };
-    const load = async () => { const snapshot = await api(base); if(!alive.current)return; publish(snapshot); setData(snapshot); show(''); return snapshot; };
+    const load = async () => { setLoadError(false); try {const snapshot = await api(base); if(!alive.current)return; publish(snapshot); setData(snapshot); show(''); return snapshot;} catch(error){if(alive.current)setLoadError(true);throw error;} };
     const saveState = update => {
       const write = writes.current.catch(() => {}).then(async () => {
         if(!alive.current) throw Error('应用已关闭，请重新打开确认');
@@ -95,6 +96,13 @@
     }, [id]);
     R.useEffect(() => {if(container.current)container.current.inert=busy;}, [busy]);
     R.useEffect(() => {
+      const registry=window.__ulemiBindingReloaders || (window.__ulemiBindingReloaders=new Map());
+      const reload=async ()=>{let failedSave=false;await writes.current.catch(()=>{failedSave=true;});const snapshot=await api(base);if(alive.current){publish(snapshot);if(failedSave){setData(snapshot);show(locale()==='zh-CN'?'上次保存未完成，已恢复已保存内容。':'The previous save failed. Saved content was restored.');}}};
+      registry.set(id,reload);
+      window.__ulemiReloadAppBinding=async appId=>registry.get(appId)?.();
+      return ()=>{if(registry.get(id)===reload)registry.delete(id);};
+    }, [id]);
+    R.useEffect(() => {
       if(!data || !container.current) return;
       const onError = event => show(event.detail?.message || '保存失败');
       const el = container.current; el.addEventListener('liveui:error',onError);
@@ -121,12 +129,12 @@
         await finish(job.id);
       } catch(error) {if(error.transport){if(alive.current)setUnconfirmed(true);show('请求状态未确认，继续查看原任务即可。');}else{task.current=null;setPending(null);if(alive.current)setBusy(false);show(error.message);}}
     };
-    return h('div',{ref:root,className:'complete-app-host rich-workspace-host','data-workspace-id':id,'data-version':data?.version ?? ''},
+    return h('div',{ref:root,className:'complete-app-host rich-workspace-host','data-workspace-id':id,'data-version':data?.version ?? '', 'data-loading':String(!data&&!loadError),'data-empty':String(!data)},
       h('div',{className:'rich-workspace-status'},h('span',{role:'status','aria-live':'polite'},status),
-        unconfirmed ? h('button',{type:'button',onClick:()=>finish(task.current)},t('继续查看')) : null),
+        !data&&loadError ? h('button',{type:'button',onClick:()=>load().catch(error=>show(error.message))},locale()==='zh-CN'?'重新打开':'Retry') : unconfirmed ? h('button',{type:'button',onClick:()=>finish(task.current)},t('继续查看')) : null),
       h('div',{ref:container,className:'rich-workspace-content','aria-label':app.name || t('应用工作区')}),
       h('form',{className:'rich-workspace-request',onSubmit:submit},
-        h('textarea',{'aria-label':t('调整这个应用'),placeholder:t('描述想怎样调整这个应用'),rows:2,maxLength:12000,value:draft,onChange:event=>{draftRef.current=event.target.value;setDraft(event.target.value);}}),
+        h('textarea',{'aria-label':t('调整这个应用'),placeholder:t('描述想怎样调整这个应用'),rows:1,maxLength:12000,value:draft,onChange:event=>{draftRef.current=event.target.value;setDraft(event.target.value);}}),
         h('button',{type:'submit',disabled:busy || !draft.trim()},t(busy?'生成中…':'生成'))));
   };
 })();
