@@ -103,6 +103,23 @@ public final class NativeTests extends Instrumentation {
                     } catch (Exception e) { throw new AssertionError(e); }
                 });
                 capture("android-local-assistant.png");
+                runOnMainSync(() -> { try {
+                    java.lang.reflect.Field f = LocalAssistantActivity.class.getDeclaredField("input"); f.setAccessible(true);
+                    android.widget.EditText input = (android.widget.EditText) f.get(a);
+                    input.requestFocus();
+                    ((android.view.inputmethod.InputMethodManager)a.getSystemService(Context.INPUT_METHOD_SERVICE)).showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT);
+                } catch(Exception e) { throw new AssertionError(e); } });
+                android.os.SystemClock.sleep(900);
+                runOnMainSync(() -> { try {
+                    java.lang.reflect.Field f = LocalAssistantActivity.class.getDeclaredField("input"); f.setAccessible(true);
+                    android.view.View input = (android.view.View)f.get(a);
+                    android.view.WindowInsets insets = input.getRootWindowInsets();
+                    require(insets.isVisible(android.view.WindowInsets.Type.ime()));
+                    android.graphics.Rect frame = new android.graphics.Rect(); input.getWindowVisibleDisplayFrame(frame);
+                    int[] at = new int[2]; input.getLocationOnScreen(at);
+                    require(at[1] + input.getHeight() <= frame.bottom);
+                } catch(Exception e) { throw new AssertionError(e); } });
+                capture("android-local-keyboard.png");
             } finally { runOnMainSync(a::finish); }
         });
         check("workspaceHasOneHeaderAndNoBrowserProgress", () -> {
@@ -159,6 +176,8 @@ public final class NativeTests extends Instrumentation {
         catch (Throwable e) { failed++; b.putString("stack", android.util.Log.getStackTraceString(e)); sendStatus(-2, b); }
     }
     private void capture(String name) throws Exception {
+        waitForIdleSync();
+        android.os.SystemClock.sleep(700);
         android.graphics.Bitmap bitmap = getUiAutomation().takeScreenshot();
         require(bitmap != null);
         try (java.io.FileOutputStream file = new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(), name))) {
