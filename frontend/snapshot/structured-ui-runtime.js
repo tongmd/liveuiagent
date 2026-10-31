@@ -192,7 +192,7 @@ function enhanceRichSelection(host, svg, raw, doc, options = {}, enqueueSave) {
     choose(restored, false);
   } else {
     const groups = [...svg.querySelectorAll('g[role="button"]')];
-    const lines = [...svg.querySelectorAll('line')];
+    const lines = [...svg.querySelectorAll('line:not([data-label-leader])')];
     const nodes = new Map(data.nodes.map(n => [n.id, n]));
     const list = doc.createElement('ul'); list.style.cssText = 'padding-left:20px;margin:8px 0 0;'; panel.append(list);
     data.nodes.forEach((node, index) => {
@@ -439,7 +439,24 @@ function createWorkspace(sdk, ui, options) {
         layoutVisual=(width,height)=>{
           const X=n=>38+n.x*Math.max(40,width-76),Y=n=>34+n.y*Math.max(40,height-105);
           for(const{edge,line,text}of edgeEntries){const a=nodes.get(edge.from),b=nodes.get(edge.to);for(const[k,v]of Object.entries({x1:X(a),y1:Y(a),x2:X(b),y2:Y(b)}))line.setAttribute(k,String(v));if(text){text.style.display=width<600?'none':'';text.setAttribute('x',String((X(a)+X(b))/2));text.setAttribute('y',String((Y(a)+Y(b))/2-7));}}
-          for(const{n,circle,text}of nodeEntries){const fontSize=width<320?14:16,lineHeight=fontSize+3,x=X(n),y=Y(n);text.setAttribute('font-size',String(fontSize));const nearest=Math.min(...data.nodes.filter(other=>other.id!==n.id).map(other=>Math.hypot(X(other)-x,Y(other)-y)));circle.setAttribute('r',String(Math.max(10,Math.min(20,nearest/2-3))));circle.setAttribute('cx',String(x));circle.setAttribute('cy',String(y));const crowded=data.nodes.some(other=>other.id!==n.id&&Math.abs(other.x-n.x)<.12&&Math.abs(other.y-n.y)<.22),parallel=data.nodes.some(other=>other.id!==n.id&&Math.abs(other.x-n.x)>.18&&Math.abs(other.y-n.y)<.08),side=crowded?(parallel?(x<width/2?-1:1):(x<width/2+1?1:-1)):0,labelX=x+side*28,anchor=side?(side>0?'start':'end'):n.x<.18?'start':n.x>.82?'end':'middle',maxWidth=Math.max(48,Math.min(150,anchor==='middle'?Math.min(labelX,width-labelX)*2-8:anchor==='start'?width-labelX-6:labelX-6)),lines=[];let line='',size=0;for(const ch of n.label){const advance=/[\u3400-\u9fff]/.test(ch)?fontSize:fontSize*.55; if(line&&size+advance>maxWidth){lines.push(line);line='';size=0;}line+=ch;size+=advance;}if(line)lines.push(line);text.replaceChildren();text.setAttribute('text-anchor',anchor);for(let i=0;i<lines.length;i++){const span=svgEl('tspan',{x:labelX,y:(side?y+fontSize*.32-(lines.length-1)*lineHeight/2:y+35)+i*lineHeight});span.textContent=lines[i];text.append(span);}}
+          for(const{n,circle,text}of nodeEntries){const fontSize=width<320?14:16,lineHeight=fontSize+3,x=X(n),y=Y(n);text.removeAttribute('transform');text.setAttribute('font-size',String(fontSize));const nearest=Math.min(...data.nodes.filter(other=>other.id!==n.id).map(other=>Math.hypot(X(other)-x,Y(other)-y)));circle.setAttribute('r',String(Math.max(6,Math.min(20,nearest/2-3))));circle.setAttribute('cx',String(x));circle.setAttribute('cy',String(y));const crowded=data.nodes.some(other=>other.id!==n.id&&Math.abs(other.x-n.x)<.12&&Math.abs(other.y-n.y)<.22),parallel=data.nodes.some(other=>other.id!==n.id&&Math.abs(other.x-n.x)>.18&&Math.abs(other.y-n.y)<.08),side=crowded?(parallel?(x<width/2?-1:1):(x<width/2+1?1:-1)):0,labelX=x+side*28,anchor=side?(side>0?'start':'end'):n.x<.18?'start':n.x>.82?'end':'middle',maxWidth=Math.max(48,Math.min(150,anchor==='middle'?Math.min(labelX,width-labelX)*2-8:anchor==='start'?width-labelX-6:labelX-6)),lines=[];let line='',size=0;for(const ch of n.label){const advance=/[\u3400-\u9fff]/.test(ch)?fontSize:fontSize*.55; if(line&&size+advance>maxWidth){lines.push(line);line='';size=0;}line+=ch;size+=advance;}if(line)lines.push(line);text.replaceChildren();text.setAttribute('text-anchor',anchor);for(let i=0;i<lines.length;i++){const span=svgEl('tspan',{x:labelX,y:(side?y+fontSize*.32-(lines.length-1)*lineHeight/2:y+35)+i*lineHeight});span.textContent=lines[i];text.append(span);}}
+          if(!svg.isConnected)return;
+          // Keep model-provided node coordinates; move only colliding labels.
+          // SVG text bounds are measured after wrapping, including CJK and long names.
+          const labels=nodeEntries.map(entry=>{const box=entry.text.getBBox();return {...entry,box,top:box.y};}).sort((a,b)=>a.top-b.top||a.box.x-b.box.x);
+          const overlapsX=(a,b)=>a.box.x<b.box.x+b.box.width+8&&b.box.x<a.box.x+a.box.width+8;
+          for(let i=0;i<labels.length;i++)for(let j=0;j<i;j++)if(overlapsX(labels[i],labels[j]))labels[i].top=Math.max(labels[i].top,labels[j].top+labels[j].box.height+7);
+          for(let i=labels.length-1;i>=0;i--){labels[i].top=Math.min(labels[i].top,height-8-labels[i].box.height);for(let j=i+1;j<labels.length;j++)if(overlapsX(labels[i],labels[j]))labels[i].top=Math.min(labels[i].top,labels[j].top-labels[i].box.height-7);}
+          const extra=Math.max(0,8-Math.min(8,...labels.map(item=>item.top)));
+          if(extra>1){svg.style.minHeight=Math.ceil(height+extra)+'px';}
+          for(const item of labels){const {text,box,top,circle}=item,dy=top-box.y; text.setAttribute('transform','translate(0 '+dy+')');
+            let leader=text.parentNode.querySelector('[data-label-leader]');
+            if(!leader){leader=svgEl('line',{'data-label-leader':'true',stroke:'#8090a3','stroke-width':1,'pointer-events':'none'});text.parentNode.insertBefore(leader,circle);}
+            leader.style.display=Math.abs(dy)>3?'':'none';
+            const x=Number(circle.getAttribute('cx')),y=Number(circle.getAttribute('cy'));
+            for(const[k,v]of Object.entries({x1:x,y1:y,x2:Math.max(box.x,Math.min(x,box.x+box.width)),y2:top+box.height/2}))leader.setAttribute(k,String(v));
+          }
+
         };
       }
       layoutVisual(640,360);
@@ -495,7 +512,7 @@ function createWorkspace(sdk, ui, options) {
 
   // The tree owns only its workspace root. Resizing preserves DOM nodes, focus and control state.
   function adaptiveLayout(root, entries, doc) {
-    let observer=null, removal=null, disposed=false;
+    let observer=null, removal=null, disposed=false, listening=false;
     const fonts={sans:'system-ui, -apple-system, sans-serif',serif:'Georgia, "Times New Roman", serif',mono:'ui-monospace, SFMono-Regular, monospace'};
     const contrast=(a,b)=>{const lum=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(n=>n<=.04045?n/12.92:((n+.055)/1.055)**2.4).reduce((s,n,i)=>s+n*[.2126,.7152,.0722][i],0);const x=lum(a),y=lum(b);return(Math.max(x,y)+.05)/(Math.min(x,y)+.05);};
     const put=(node,props)=>{for(const [key,value] of Object.entries(props))if(node.style[key]!==String(value))node.style[key]=String(value);};
@@ -558,17 +575,27 @@ function createWorkspace(sdk, ui, options) {
         if(visual){
           const visualWidth=visual.clientWidth||node.clientWidth||width;
           const target=merged.height??(merged.aspectRatio?visualWidth/merged.aspectRatio:null);
-          visual.style.height=target!==null?Math.max(180,Math.min(640,target,mobile?visualWidth*1.5:640))+'px':visual.tagName==='CANVAS'?'330px':'auto';
+          let visualHeight=target!==null?Math.max(180,Math.min(640,target,mobile?visualWidth*1.5:640)):visual.tagName==='CANVAS'?330:null;
+          // Default mobile scenes share the viewport with their title and controls.
+          // An explicit mobile size remains authoritative, within the existing bounds.
+          if(mobile&&type==='Scene3D'&&style.mobile?.height===undefined&&style.mobile?.aspectRatio===undefined){
+            const viewport=doc.defaultView?.visualViewport?.height||doc.defaultView?.innerHeight||844;
+            const content=root.closest('.rich-workspace-content,.a2ui-host');
+            const available=Math.min(viewport,content?.clientHeight||viewport);
+            visualHeight=Math.min(visualHeight,Math.max(180,Math.min(360,available*.5)));
+          }
+          visual.style.height=visualHeight!==null?visualHeight+'px':'auto';
           if(visual.tagName==='IMG'){visual.style.maxHeight=target!==null?'640px':'440px';visual.style.objectFit='contain';}
         }
       }
     }
     root.__liveuiLayoutMount=()=>{
       if(disposed)return;update();
+      if(!listening){doc.defaultView?.addEventListener('resize',update);doc.defaultView?.visualViewport?.addEventListener('resize',update);listening=true;}
       if(!observer&&typeof ResizeObserver==='function'){observer=new ResizeObserver(update);observer.observe(root.parentElement||root);}
       if(!removal&&typeof MutationObserver==='function'){removal=new MutationObserver(()=>{if(!root.isConnected)root.__liveuiLayoutDispose();});removal.observe(doc.documentElement,{childList:true,subtree:true});}
     };
-    root.__liveuiLayoutDispose=()=>{disposed=true;observer?.disconnect();removal?.disconnect();};
+    root.__liveuiLayoutDispose=()=>{disposed=true;observer?.disconnect();removal?.disconnect();doc.defaultView?.removeEventListener('resize',update);doc.defaultView?.visualViewport?.removeEventListener('resize',update);};
   }
 
   function build(tree, options = {}) {
