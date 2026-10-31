@@ -54,6 +54,7 @@ public final class NativeTests extends Instrumentation {
                     require(countInputs(decor) == 2);
                 } catch (Exception e) { throw new AssertionError(e); }
             });
+            capture("android-login.png");
             runOnMainSync(a::finish);
         });
         check("guideCanSkipAndReplayWithoutCreatingData", () -> {
@@ -101,6 +102,7 @@ public final class NativeTests extends Instrumentation {
 
                     } catch (Exception e) { throw new AssertionError(e); }
                 });
+                capture("android-local-assistant.png");
             } finally { runOnMainSync(a::finish); }
         });
         check("workspaceHasOneHeaderAndNoBrowserProgress", () -> {
@@ -155,6 +157,13 @@ public final class NativeTests extends Instrumentation {
         sendStatus(1, b);
         try { task.run(); sendStatus(0, b); }
         catch (Throwable e) { failed++; b.putString("stack", android.util.Log.getStackTraceString(e)); sendStatus(-2, b); }
+    }
+    private void capture(String name) throws Exception {
+        android.graphics.Bitmap bitmap = getUiAutomation().takeScreenshot();
+        require(bitmap != null);
+        try (java.io.FileOutputStream file = new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(), name))) {
+            require(bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, file));
+        } finally { bitmap.recycle(); }
     }
     private static Object get(Activity a, String name) throws Exception { java.lang.reflect.Field f=MainActivity.class.getDeclaredField(name); f.setAccessible(true); return f.get(a); }
     private static void set(Activity a, String name, Object value) throws Exception { java.lang.reflect.Field f=MainActivity.class.getDeclaredField(name); f.setAccessible(true); f.set(a,value); }

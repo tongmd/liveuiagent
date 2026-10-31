@@ -126,13 +126,8 @@ jobs:
             adb install apps/mobile/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb shell am instrument -w com.stonezhang.liveui.test/com.stonezhang.liveui.NativeTests | tee mobile-artifacts/android-native-tests.txt
             grep -F 'OK (8 tests)' mobile-artifacts/android-native-tests.txt
-            adb shell am force-stop com.stonezhang.liveui
-            adb shell am start -n com.stonezhang.liveui/.MainActivity
-            sleep 3
-            adb exec-out screencap -p > mobile-artifacts/android-login.png
-            adb shell am start -n com.stonezhang.liveui/.LocalAssistantActivity
-            sleep 2
-            adb exec-out screencap -p > mobile-artifacts/android-local-assistant.png
+            adb exec-out run-as com.stonezhang.liveui cat files/android-login.png > mobile-artifacts/android-login.png
+            adb exec-out run-as com.stonezhang.liveui cat files/android-local-assistant.png > mobile-artifacts/android-local-assistant.png
       - name: Collect Android device evidence
         if: always()
         uses: actions/upload-artifact@v4
