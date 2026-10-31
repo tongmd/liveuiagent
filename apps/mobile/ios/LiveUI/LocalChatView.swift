@@ -10,6 +10,52 @@ struct LocalChatView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 18) {
+                            modelControls
+                            if chat.messages.isEmpty {
+                                VStack(alignment: .leading, spacing: 12) {
+                                    Text("不登录，也能开始对话。多次对话会保存在这台手机上。")
+                                    Text("下载完成后，断网仍可使用。云端应用继续在原工作区使用。")
+                                }.foregroundStyle(.secondary).padding(.top, 20)
+                            }
+                            ForEach(chat.messages) { item in
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text(item.role == "user" ? "你" : "Ulemi").font(.caption).foregroundStyle(.secondary)
+                                    Text(item.text.isEmpty ? (chat.busy ? "正在思考…" : "未完成") : item.text).textSelection(.enabled)
+                                }.frame(maxWidth: .infinity, alignment: .leading).id(item.id)
+                            }
+                        }.padding(16)
+                    }
+                    .scrollDismissesKeyboard(.interactively)
+                    .onChange(of: chat.messages.count) { _ in if let id = chat.messages.last?.id { proxy.scrollTo(id, anchor: .bottom) } }
+                }
+                HStack(alignment: .bottom) {
+                    TextField("和手机模型聊聊", text: $input, axis: .vertical).lineLimit(1...5)
+                        .padding(12).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
+                    if chat.busy { Button("停止") { chat.stop() }.frame(minWidth: 48, minHeight: 44) }
+                    else {
+                        Button("发送") { let text = input; chat.send(text); if chat.busy { input = "" } }
+                            .disabled(!chat.ready || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .frame(minWidth: 48, minHeight: 44)
+                    }
+                }.padding(12)
+            }
+            .navigationTitle("本机对话").navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) { Button("返回") { chat.stop(); chat.pauseDownload(); dismiss() } }
+                ToolbarItem(placement: .navigationBarTrailing) { Button("新对话") { chat.clearChat() }.disabled(chat.busy) }
+            }
+            .confirmationDialog("删除手机里的模型文件？", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("删除模型", role: .destructive) { chat.removeDownload() }
+            } message: { Text("对话保留，之后可以重新下载。") }
+            .onChange(of: scenePhase) { phase in if phase != .active { chat.unload(); chat.pauseDownload() } }
+            .onDisappear { chat.stop(); chat.pauseDownload(); chat.unload() }
+        }
+    }
+    private var modelControls: some View {
+        VStack(alignment: .leading, spacing: 0) {
                 DisclosureGroup("手机模型", isExpanded: $showModels) {
                     VStack(alignment: .leading, spacing: 12) {
                         Picker("模型", selection: Binding(get: { chat.selectedID }, set: chat.select)) {
@@ -36,46 +82,7 @@ struct LocalChatView: View {
                 }.padding(16)
                 if !chat.state.isEmpty { Text(chat.state).font(.callout).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.bottom, 8) }
                 if let error = chat.error { Text(error).font(.callout).foregroundStyle(.red).padding(.horizontal, 16).padding(.bottom, 8).accessibilityIdentifier("local-error") }
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 18) {
-                            if chat.messages.isEmpty {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    Text("不登录，也能开始对话。多次对话会保存在这台手机上。")
-                                    Text("下载完成后，断网仍可使用。云端应用继续在原工作区使用。")
-                                }.foregroundStyle(.secondary).padding(.top, 20)
-                            }
-                            ForEach(chat.messages) { item in
-                                VStack(alignment: .leading, spacing: 6) {
-                                    Text(item.role == "user" ? "你" : "Ulemi").font(.caption).foregroundStyle(.secondary)
-                                    Text(item.text.isEmpty ? (chat.busy ? "正在思考…" : "未完成") : item.text).textSelection(.enabled)
-                                }.frame(maxWidth: .infinity, alignment: .leading).id(item.id)
-                            }
-                        }.padding(16)
-                    }
-                    .onChange(of: chat.messages.count) { _ in if let id = chat.messages.last?.id { proxy.scrollTo(id, anchor: .bottom) } }
-                }
-                HStack(alignment: .bottom) {
-                    TextField("和手机模型聊聊", text: $input, axis: .vertical).lineLimit(1...5)
-                        .padding(12).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-                    if chat.busy { Button("停止") { chat.stop() }.frame(minWidth: 48, minHeight: 44) }
-                    else {
-                        Button("发送") { let text = input; chat.send(text); if chat.busy { input = "" } }
-                            .disabled(!chat.ready || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .frame(minWidth: 48, minHeight: 44)
-                    }
-                }.padding(12)
-            }
-            .navigationTitle("本机对话").navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) { Button("返回") { chat.stop(); chat.pauseDownload(); dismiss() } }
-                ToolbarItem(placement: .navigationBarTrailing) { Button("新对话") { chat.clearChat() }.disabled(chat.busy) }
-            }
-            .confirmationDialog("删除手机里的模型文件？", isPresented: $confirmDelete, titleVisibility: .visible) {
-                Button("删除模型", role: .destructive) { chat.removeDownload() }
-            } message: { Text("对话保留，之后可以重新下载。") }
-            .onChange(of: scenePhase) { phase in if phase != .active { chat.unload(); chat.pauseDownload() } }
-            .onDisappear { chat.stop(); chat.pauseDownload(); chat.unload() }
         }
     }
+
 }
