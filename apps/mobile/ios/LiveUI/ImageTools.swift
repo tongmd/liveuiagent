@@ -110,7 +110,7 @@ struct ImageToolsView: View {
                         Button("Choose photo") { choosePhoto() }.buttonStyle(.borderedProminent)
                         Button("Open image file") { chooseFile() }.buttonStyle(.bordered)
                         Button("Take photo") { takePhoto() }.buttonStyle(.bordered)
-                    }.padding(32).foregroundStyle(.white)
+                    }.padding(32).foregroundStyle(.white).disabled(busy)
                 }
                 if busy { ProgressView("Opening image…").padding(20).background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16)) }
             }
@@ -134,7 +134,7 @@ struct ImageToolsView: View {
             // A full-screen camera covers this view without ending its session.
             if !camera && !photos && !files { request.cancel() }
         }
-        .sheet(isPresented: $photos) {
+        .sheet(isPresented: $photos, onDismiss: { _ = request.begin() }) {
             let ticket = selectionTicket
             SelectedPhotoPicker { result in
                 guard request.accepts(ticket) else { return }
@@ -143,7 +143,7 @@ struct ImageToolsView: View {
                 case .success(let selected): image = selected
                 case .failure(let error): message = error.localizedDescription
                 }
-            } cancelled: { photos = false }
+            } cancelled: { _ = request.begin(); photos = false }
         }
         .fullScreenCover(isPresented: $camera) {
             let ticket = selectionTicket
