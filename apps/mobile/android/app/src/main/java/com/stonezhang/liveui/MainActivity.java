@@ -18,7 +18,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.*;
 
 public final class MainActivity extends Activity {
-    private static final int PICK_FILE = 40, SAVE_FILE = 41;
+    private static final int PICK_FILE = 40, SAVE_FILE = 41, DEVICE_ACCESS = 12870;
+    private String pendingDeviceObservation, deviceObservationAccount;
+    private WebView deviceObservationWeb;
     private static final long MAX_DOWNLOAD = 32L * 1024 * 1024;
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private AppUpdater updater;
@@ -180,6 +182,8 @@ public final class MainActivity extends Activity {
         LinearLayout.LayoutParams lpLocal = new LinearLayout.LayoutParams(-1, dp(50)); lpLocal.topMargin = dp(12); box.addView(local, lpLocal);
         Button images = button("Open image", false); images.setOnClickListener(v -> startActivity(new Intent(this, ImageViewerActivity.class)));
         box.addView(images, new LinearLayout.LayoutParams(-1, dp(50)));
+        Button devices = button("Devices & sensors", false); devices.setOnClickListener(v -> startActivity(new Intent(this, DeviceAccessActivity.class)));
+        LinearLayout.LayoutParams lpDevices = new LinearLayout.LayoutParams(-1, dp(50)); lpDevices.topMargin = dp(10); box.addView(devices, lpDevices);
         reveal(box);
     }
     private void enterAccount() {
@@ -402,7 +406,7 @@ public final class MainActivity extends Activity {
     private void showMenu(View anchor) { showAccountMenu(); }
     private void showAccountMenu() {
         if (isFinishing() || isDestroyed()) return;
-        String[] items = {"Offline assistant", "Quick tour", "Reload workspace", "Open in browser", "Share Ulemi", "Sign out", "Check for updates", "Open image", "Permissions"};
+        String[] items = {"Offline assistant", "Quick tour", "Reload workspace", "Open in browser", "Share Ulemi", "Sign out", "Check for updates", "Open image", "Permissions", "Devices & sensors"};
         new AlertDialog.Builder(this).setTitle("Ulemi").setItems(items, (dialog, item) -> {
             switch (item) {
                 case 7: startActivity(new Intent(this, ImageViewerActivity.class)); break;
@@ -414,8 +418,52 @@ public final class MainActivity extends Activity {
                 case 4: startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, endpoint.toString()), "Share Ulemi")); break;
                 case 6: updater.manualCheck(); break;
                 case 5: new AlertDialog.Builder(this).setMessage("Signing out closes Ulemi. Your apps and content stay saved. Open Ulemi again to sign in.").setNegativeButton("Cancel", null).setPositiveButton("Sign out", (d, w) -> logout()).show(); break;
+                case 9: openDeviceAccess(); break;
             }
         }).setNegativeButton("Cancel", null).show();
+    }
+    private void openDeviceAccess() {
+        if (pendingDeviceObservation != null) {
+            new AlertDialog.Builder(this).setTitle("Device reading is ready").setMessage("Your reading has not been added to the workspace yet.")
+                .setPositiveButton("Add to draft", (d,w) -> deliverDeviceObservation())
+                .setNegativeButton("Take new reading", (d,w) -> { pendingDeviceObservation = null; openDeviceAccess(); }).show(); return;
+        }
+        boolean ready = authenticated && web != null && endpoint != null && ConnectionPolicy.sameOrigin(endpoint, web.getUrl());
+        deviceObservationAccount = username; deviceObservationWeb = web;
+        startActivityForResult(new Intent(this, DeviceAccessActivity.class).putExtra("workspaceAvailable", ready), DEVICE_ACCESS);
+    }
+    private void deliverDeviceObservation() {
+        if (pendingDeviceObservation == null) return;
+        if (!authenticated || web == null || web != deviceObservationWeb || !java.util.Objects.equals(username, deviceObservationAccount)
+                || endpoint == null || !ConnectionPolicy.sameOrigin(endpoint, web.getUrl())) {
+            deviceDeliveryError("Return to the signed-in workspace that requested this reading."); return;
+        }
+        final String capture = pendingDeviceObservation;
+        try {
+            String origin = endpoint.getScheme() + "://" + endpoint.getHost() + (endpoint.getPort() >= 0 && endpoint.getPort() != 443 ? ":" + endpoint.getPort() : "");
+            web.evaluateJavascript(DeviceObservation.composerScript(capture, origin), reply -> {
+                if (!capture.equals(pendingDeviceObservation)) return;
+                if ("\"already_added\"".equals(reply)) { pendingDeviceObservation = null; notice("Device reading is already in your draft."); }
+                else if ("\"staged\"".equals(reply)) ui.postDelayed(() -> acknowledgeDeviceObservation(capture, origin), 200);
+                else deviceDeliveryError("\"draft_too_long\"".equals(reply) ? "Your draft and reading exceed this message field's limit. Shorten the draft, then retry." : "The message composer is not ready. Your reading is kept for retry.");
+            });
+        } catch (Exception e) { deviceDeliveryError("This reading could not be added. It has been kept for retry."); }
+    }
+    private void acknowledgeDeviceObservation(String capture, String origin) {
+        if (!capture.equals(pendingDeviceObservation)) return;
+        if (!authenticated || web != deviceObservationWeb || !java.util.Objects.equals(username, deviceObservationAccount) || !ConnectionPolicy.sameOrigin(endpoint, web.getUrl())) {
+            deviceDeliveryError("Return to the signed-in workspace that requested this reading."); return;
+        }
+        try { web.evaluateJavascript(DeviceObservation.acknowledgementScript(capture, origin), reply -> {
+            if (!capture.equals(pendingDeviceObservation)) return;
+            if ("\"added\"".equals(reply)) { pendingDeviceObservation = null; notice("Device reading added to your draft. Send when ready."); }
+            else deviceDeliveryError("The draft did not keep the reading. Your capture is available for retry.");
+        }); } catch (Exception e) { deviceDeliveryError("Could not confirm the draft. Your reading is kept for retry."); }
+    }
+    private void deviceDeliveryError(String message) {
+        if (isFinishing() || isDestroyed()) return;
+        new AlertDialog.Builder(this).setTitle("Reading not added").setMessage(message)
+            .setPositiveButton("Retry", (d,w) -> deliverDeviceObservation()).setNegativeButton("Keep for later", null).show();
     }
     private void external(String value) {
         try {
@@ -430,6 +478,7 @@ public final class MainActivity extends Activity {
         synchronized (credentialLock) { ++connectionGeneration; if (clear) store.clear(); }
     }
     private void logout() {
+        pendingDeviceObservation = null; deviceObservationWeb = null; deviceObservationAccount = null;
         capabilities.cancel(); capture.cancel(); invalidateConnection(true); currentSession = null; authenticated = false; if (authBootstrap != null) authBootstrap.close(); password = "";
         if (upload != null) { upload.onReceiveValue(null); upload = null; }
         if (web != null) { web.stopLoading(); web.loadUrl("about:blank"); web.clearHistory(); web.clearCache(true); web.clearFormData(); if (web.getParent() instanceof ViewGroup) ((ViewGroup) web.getParent()).removeView(web); web.destroy(); web = null; }
@@ -519,6 +568,12 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == DEVICE_ACCESS && result == RESULT_OK && data != null) {
+            pendingDeviceObservation = data.getStringExtra("deviceObservation");
+            if (pendingDeviceObservation != null) deliverDeviceObservation();
+            else notice("No device reading was returned. Open Devices to try again.");
+            return;
+        }
         capture.result(request, result); capabilities.resume();
         if (request == PICK_FILE) {
             pickerActive = false;

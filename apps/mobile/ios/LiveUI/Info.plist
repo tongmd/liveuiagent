@@ -18,4 +18,9 @@
 <key>NSCameraUsageDescription</key><string>Use the camera when you take a photo or start camera capture in an Ulemi app.</string>
 <key>NSPhotoLibraryUsageDescription</key><string>Choose photos or videos when you attach them to an Ulemi app.</string>
 <key>NSMicrophoneUsageDescription</key><string>Use the microphone when you start audio or video recording in an Ulemi app.</string>
+<key>NSBluetoothAlwaysUsageDescription</key><string>Find nearby Bluetooth LE devices when you start a scan in Devices &amp; sensors.</string>
+<key>NSLocalNetworkUsageDescription</key><string>Find devices advertising HTTP or MQTT services on your local network when you choose Find devices.</string>
+<key>NSBonjourServices</key><array><string>_http._tcp</string><string>_mqtt._tcp</string></array>
+<key>NSMotionUsageDescription</key><string>Show live motion, pressure and relative altitude readings when you start sensors.</string>
+<key>NSLocationWhenInUseUsageDescription</key><string>Read your current location when requested. You can add the observed location to your current workspace instruction.</string>
 </dict></plist>

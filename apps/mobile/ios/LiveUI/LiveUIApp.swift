@@ -169,6 +169,7 @@ struct RootView: View {
     @State private var showGuide = false
     @State private var confirmLogout = false
     @State private var localChat = false
+    @State private var devices = false
 
     var body: some View {
         ZStack {
@@ -194,6 +195,7 @@ struct RootView: View {
                         ToolbarItem(placement: .navigationBarTrailing) {
                             Menu {
                                 Text(browser.connection?.username ?? "")
+                                Button { devices = true } label: { Label("Devices & sensors", systemImage: "sensor") }
                                 Button { browser.imageTools = true } label: { Label("View images", systemImage: "photo") }
                                 Button("Permissions") { MediaAccess.openSettings() }
                                 Button { localChat = true } label: { Label("On-device chat", systemImage: "iphone") }
@@ -246,6 +248,7 @@ struct RootView: View {
                   primaryButton: .default(Text("Open Settings"), action: MediaAccess.openSettings),
                   secondaryButton: .cancel(Text("Not now")))
         }
+        .sheet(isPresented: $devices) { DeviceAccessView(workspaceSink: browser.deviceWorkspaceSink()) }
         .sheet(item: $browser.share) { item in ShareSheet(url: item.url) }
         .fullScreenCover(isPresented: $showGuide) {
             OnboardingView {
@@ -254,6 +257,7 @@ struct RootView: View {
             }
         }
         .confirmationDialog("Ulemi", isPresented: $browser.showNativeMenu, titleVisibility: .visible) {
+            Button("Devices & sensors") { devices = true }
             Button("View images") { browser.imageTools = true }
             Button("Permissions") { MediaAccess.openSettings() }
             Button("Back") { browser.goBack() }
@@ -268,7 +272,7 @@ struct RootView: View {
             Button("Sign out", role: .destructive) { browser.disconnect() }
         } message: { Text("Your apps are saved. Sign in again to pick up where you left off.") }
         .onChange(of: browser.connection) { connection in
-            if connection == nil { showGuide = false }
+            if connection == nil { showGuide = false; devices = false }
             else if !starting && OnboardingPolicy.shouldPresent(signedIn: browser.authenticated, completed: completedGuide) { showGuide = true }
         }
         .onChange(of: browser.authenticated) { signedIn in
@@ -290,6 +294,11 @@ struct RootView: View {
         if ProcessInfo.processInfo.arguments.contains("--preview-local-assistant") {
             showGuide = false
             localChat = true
+        }
+        if ProcessInfo.processInfo.arguments.contains("--preview-devices") {
+            showGuide = false
+            localChat = false
+            devices = true
         }
         #endif
     }
@@ -331,6 +340,7 @@ struct ConnectionView: View {
     @State private var loginTask: Task<Void, Never>?
     @State private var attempt = LoginAttempt()
     @State private var localChat = false
+    @State private var devices = false
     @FocusState private var focusedField: Field?
     private enum Field { case username, password }
 
@@ -369,6 +379,7 @@ struct ConnectionView: View {
                     }.buttonStyle(PrimaryButtonStyle())
                         .disabled(busy || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
                         .accessibilityIdentifier("login-submit")
+                    Button("Devices & sensors") { devices = true }.frame(minHeight: 44)
                     Button("View images") { browser.imageTools = true }.frame(minHeight: 44)
                     Button("Continue on this device") { localChat = true }.buttonStyle(SecondaryButtonStyle())
                     if busy { Button("Cancel") { cancelLogin() }.frame(minHeight: 44) }
@@ -383,6 +394,7 @@ struct ConnectionView: View {
         .scrollDismissesKeyboard(.interactively)
         .background(AppStyle.background)
         .sheet(isPresented: $localChat) { LocalChatView() }
+        .sheet(isPresented: $devices) { DeviceAccessView() }
         .onDisappear { cancelLogin() }
     }
 

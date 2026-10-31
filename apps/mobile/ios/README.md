@@ -87,3 +87,28 @@ permission refusal offers Settings and a clear retry path. External and opaque
 frames do not inherit workspace permission. Existing web file-upload controls
 continue to use the system picker; images selected there follow that application's
 upload behavior. The menu also exposes the system permissions page.
+
+### Devices and sensors
+
+The native **Devices & sensors** screen is available before sign-in and from the
+account menu. Each capability starts only after its button is pressed. Bluetooth
+LE discovery and Bonjour (`_http._tcp`, `_mqtt._tcp`) browsing stop after 15 seconds.
+Motion readings stop after 60 seconds; a single location request expires after 20
+seconds and accepts only a recent valid fix. Leaving the screen or backgrounding
+Ulemi stops all work and clears readings. Permission denial provides a Settings
+entry. Unsupported hardware is reported without fabricated values.
+
+This screen discovers devices and reads local phone sensors. It does not pair,
+open device connections, send MQTT messages, issue robot commands, or expose a
+native device bridge to generated web pages. An authenticated workspace can receive
+an explicit **Use in workspace** snapshot of actual observations, including source,
+time, numeric values and units, through its existing instruction field. This preserves
+the current draft and App context and never sends the instruction automatically.
+The transfer confirms the field accepted the text before reporting completion. Device-specific authentication,
+command contracts and an emergency stop still need implementation and physical
+hardware testing before robot control. No background Bluetooth/location modes,
+multicast entitlement or location-always permission are requested.
+
+For a simulator screenshot, launch a Debug build with `--preview-devices`. This
+opens the screen only; it does not start any scan or sensor request. Real Bluetooth,
+network permission prompts and sensor values require supported physical hardware.
