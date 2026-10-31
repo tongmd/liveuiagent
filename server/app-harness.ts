@@ -119,5 +119,10 @@ export function createAppHarness(db:Database.Database, options:{
     // the selected app's executor. Use this app's selector to change its model.
     return (id?modelFor(options.userOf(req),id):undefined)??body.llm?.model??req.header('x-liveuiagent-llm-model')??'';
   }
-  return {install,view,change,during,busy,modelFor,requestModel};
+  function assertConnection<T extends {model?:string}|undefined>(req:express.Request,connection:T):T {
+    const id=String(req.body?.appId||req.body?.selectedAppId||''),pinned=id?modelFor(options.userOf(req),id):undefined;
+    if(pinned&&connection?.model!==pinned)throw runtimeError('此应用所选模型暂不可用，请在 Agent 设置中重新选择','app_model_unavailable',409);
+    return connection;
+  }
+  return {install,view,change,during,busy,modelFor,requestModel,assertConnection};
 }

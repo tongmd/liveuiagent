@@ -142,3 +142,12 @@ test('selected executor and model survive a real database close and reopen',asyn
   assert.equal(runtime.forRequest({body:{}} as any,'visual_shared'),'kimi');assert.equal(manager.requestModel({body:{appId:'visual_shared',llm:{model:'gpt-6-astra'}},header:()=>''} as any),models.kimi);
  }finally{reopened.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
+
+test('a removed pinned model cannot silently fall back to another model in the same harness family',async t=>{
+ const x=await fixture(t);await x.change('dsh','native_existing');
+ const req={headers:{'x-owner':'alice'},body:{appId:'native_existing'}} as any;
+ assert.throws(()=>x.manager.assertConnection(req,{model:'DeepSeek-Other'}),{code:'app_model_unavailable',status:409});
+ assert.throws(()=>x.manager.assertConnection(req,undefined),{code:'app_model_unavailable'});
+ const actual={model:models.dsh};assert.equal(x.manager.assertConnection(req,actual),actual);
+ assert.equal(x.manager.assertConnection({...req,body:{}} as any,{model:'DeepSeek-Other'}).model,'DeepSeek-Other');
+});

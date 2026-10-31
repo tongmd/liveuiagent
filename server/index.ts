@@ -180,7 +180,7 @@ function llmConfigFromRequest(req: express.Request): LlmRuntimeConfig | undefine
     apiBase: String(explicit.apiBase ?? req.header('x-liveuiagent-llm-base') ?? ''),
     model: String(appHarness.requestModel(req)),
   };
-  return harnessIntegration.connect(harness,{
+  return appHarness.assertConnection(req,harnessIntegration.connect(harness,{
     ...harnessSelection(req),appId:String(body.appId||body.selectedAppId||'')||undefined,delivery:body.delivery,
     personalContext:JSON.stringify(personal.context(requestUser(req),String(body.appId||body.selectedAppId||'global'))),requested,
     resolve(selected){
@@ -188,7 +188,7 @@ function llmConfigFromRequest(req: express.Request): LlmRuntimeConfig | undefine
       for(const warning of resolved.warnings)console.warn(`[llm] ${requestUser(req)||'shared'}: ${warning}`);
       return resolved.llm;
     },
-  });
+  }));
 }
 
 // nginx basic auth 用户名(proxy_set_header X-LiveUIAgent-User $remote_user)。
@@ -245,7 +245,7 @@ async function respondWithProgress(
   const startedAt = Date.now();
   const llm = llmConfigFromRequest(req);
   const owner = requestUser(req);
-  const execute=()=>appHarness.during(req,req.body?.appId||req.body?.selectedAppId,async()=>{await personal.prepare(req,llm);const result=await exec(llm);return result&&typeof result==='object'?{...result,execution:{harness:runtimeSettings.forRequest(req,req.body?.appId||req.body?.selectedAppId),delivery:'native',model:llm?.model||llmSettingsView(db,owner).effective.model},contextualMemory:personal.requestStatus(req)}:result;});
+  const execute=()=>appHarness.during(req,req.body?.appId||req.body?.selectedAppId,async()=>{await personal.prepare(req,llm);const result=await exec(llm);return result&&typeof result==='object'?{...result,execution:{harness:taskHarness,delivery:'native',model:llm?.model||llmSettingsView(db,owner).effective.model},contextualMemory:personal.requestStatus(req)}:result;});
   const taskHarness = runtimeSettings.forRequest(req,req.body?.appId||req.body?.selectedAppId);
   const taskPrompt = typeof req.body?.prompt==='string' ? req.body.prompt : req.body?.actionId ? JSON.stringify({appId:req.body.appId,actionId:req.body.actionId,input:req.body.eventPayload}) : '';
   const taskRowId = taskLabel ? recordTaskStart(owner, taskLabel, taskPrompt) : 0;
@@ -302,6 +302,7 @@ app.post('/agent/run', async (req, res, next) => {
     const body = requireBody(req);
     const prompt = requireText(body.prompt, 'prompt required');
     console.log(`[run] start "${redactSecrets(prompt).slice(0, 60)}"`);
+    const runHarness=runtimeSettings.forRequest(req,body.selectedAppId);
     await respondWithProgress(req, res, next, 'run', async (llm) => {
       const result = await agentGateway.run({
       prompt,
@@ -318,8 +319,8 @@ app.post('/agent/run', async (req, res, next) => {
       llm,
     });
       if (result.type === 'app_created' && result.appSummary?.appId) {
-        nativeHarnessBindings.save(requestUser(req),result.appSummary.appId,runtimeSettings.forRequest(req));
-        try { await personal.inheritAppearance(requestUser(req),result.appSummary.appId,prompt,llm); }
+        nativeHarnessBindings.save(requestUser(req),result.appSummary.appId,runHarness);
+        try { await appHarness.during(req,result.appSummary.appId,()=>personal.inheritAppearance(requestUser(req),result.appSummary.appId,prompt,llm)); }
         catch { console.warn('[personal] New app created; appearance adaptation failed, saved preferences retained.'); }
       }
       return result;
