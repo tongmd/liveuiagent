@@ -1,5 +1,6 @@
 import SwiftUI
 import WebKit
+import AVFoundation
 
 @MainActor
 struct BrowserView: UIViewRepresentable {
@@ -186,6 +187,45 @@ struct BrowserView: UIViewRepresentable {
             if let url = navigationAction.request.url, isLocalDocument(url) { webView.load(navigationAction.request) }
             else if let url = navigationAction.request.url, ["https", "http"].contains(url.scheme ?? "") { UIApplication.shared.open(url) }
             return nil
+        }
+        func webView(_ webView: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+                     initiatedByFrame frame: WKFrameInfo, type: WKMediaCaptureType,
+                     decisionHandler: @escaping (WKPermissionDecision) -> Void) {
+            func isCurrent() -> Bool {
+                MediaPermissionPolicy.allows(connection: connection, originScheme: origin.protocol,
+                    originHost: origin.host, originPort: origin.port, frameURL: frame.request.url,
+                    authenticated: model.authenticated,
+                    current: model.connection == connection && model.webView === webView
+                        && webView.url.map(connection.contains) == true)
+            }
+            guard isCurrent() else {
+                if model.connection == connection, model.webView === webView {
+                    model.message = "Camera and microphone require the signed-in workspace. External or isolated pages cannot use its permissions."
+                }
+                decisionHandler(.deny); return
+            }
+            let ticket = navigationTicket
+            Task { @MainActor in
+                var granted: Bool
+                switch type {
+                case .camera: granted = await MediaAccess.request(.video)
+                case .microphone: granted = await MediaAccess.request(.audio)
+                case .cameraAndMicrophone:
+                    let camera = await MediaAccess.request(.video)
+                    let microphone = camera ? await MediaAccess.request(.audio) : false
+                    granted = camera && microphone
+                @unknown default: granted = false
+                }
+                // Permission may return after logout or navigation. Never grant to
+                // a replacement document or resurrect a disconnected session.
+                guard isCurrent(), ticket == navigationTicket else { decisionHandler(.deny); return }
+                if granted {
+                    decisionHandler(.prompt)
+                } else {
+                    model.mediaPermissionIssue = .init(message: "Camera or microphone access is off. Allow the requested access in Settings, then try the action again.")
+                    decisionHandler(.deny)
+                }
+            }
         }
         private func present(_ controller: UIAlertController, fallback: () -> Void) {
             guard let root = model.webView?.window?.rootViewController else { fallback(); return }
