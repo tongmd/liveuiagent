@@ -1,6 +1,7 @@
 import XCTest
 import UIKit
 import SwiftUI
+import WebKit
 @testable import LiveUI
 
 final class ImageToolsTests: XCTestCase {
@@ -98,5 +99,59 @@ final class ImageToolsTests: XCTestCase {
         scroll.setNeedsLayout(); scroll.layoutIfNeeded()
         XCTAssertEqual(image.frame, scroll.bounds)
         window.isHidden = true
+    }
+}
+
+// This exercises actual WebKit FileReader and image decoding in a consuming page.
+// DataTransfer selects a synthetic fixture; it does not claim system-picker UI
+// automation or model vision. Production retains WebKit's standard file picker.
+@MainActor
+final class ImageConsumptionTests: XCTestCase {
+    final class LoadedPage: NSObject, WKNavigationDelegate {
+        var completed: (() -> Void)?
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { completed?() }
+    }
+    func testWebAppReceivesSelectedImageBytesAndDecodesPreview() async throws {
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let fixture = UIGraphicsImageRenderer(size: CGSize(width: 32, height: 24), format: format).image { ctx in
+            UIColor.orange.setFill(); ctx.fill(CGRect(x: 0, y: 0, width: 32, height: 24))
+        }
+        let data = try XCTUnwrap(fixture.pngData())
+        let loaded = expectation(description: "Local image-consuming page loaded")
+        let delegate = LoadedPage(); delegate.completed = { loaded.fulfill() }
+        let web = WKWebView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        web.navigationDelegate = delegate
+        defer { web.stopLoading(); web.navigationDelegate = nil }
+        web.loadHTMLString("""
+        <!doctype html><html><body><label>Choose image<input id="photo" type="file" accept="image/*"></label><img id="preview" alt="Selected image"><script>
+        window.consumed = new Promise((resolve,reject) => {
+          document.getElementById('photo').addEventListener('change', async event => {
+            try {
+              const file = event.target.files[0];
+              const reader = new FileReader();
+              const value = await new Promise((done,fail) => {reader.onload=()=>done(reader.result);reader.onerror=fail;reader.readAsDataURL(file)});
+              const preview = document.getElementById('preview'); preview.src = value; await preview.decode();
+              resolve({name:file.name,size:file.size,type:file.type,data:value,width:preview.naturalWidth,height:preview.naturalHeight});
+            } catch (error) {reject(error)}
+          });
+        });
+        </script></body></html>
+        """, baseURL: URL(string: "https://image-fixture.invalid/"))
+        await fulfillment(of: [loaded], timeout: 20)
+        let result = try await web.callAsyncJavaScript("""
+        const bytes = Uint8Array.from(atob(payload), char => char.charCodeAt(0));
+        const file = new File([bytes], 'fixture.png', {type:'image/png'});
+        const transfer = new DataTransfer(); transfer.items.add(file);
+        const input = document.getElementById('photo'); input.files = transfer.files;
+        input.dispatchEvent(new Event('change', {bubbles:true}));
+        return await window.consumed;
+        """, arguments: ["payload": data.base64EncodedString()], in: nil, contentWorld: .page)
+        let value = try XCTUnwrap(result as? [String: Any])
+        XCTAssertEqual(value["name"] as? String, "fixture.png")
+        XCTAssertEqual(value["size"] as? Int, data.count)
+        XCTAssertEqual(value["type"] as? String, "image/png")
+        XCTAssertEqual(value["data"] as? String, "data:image/png;base64," + data.base64EncodedString())
+        XCTAssertEqual(value["width"] as? Int, 32)
+        XCTAssertEqual(value["height"] as? Int, 24)
     }
 }
