@@ -107,10 +107,10 @@ final class MediaChecks {
             for (boolean sandbox : new boolean[]{false,true}) {
                 java.util.concurrent.CountDownLatch loaded = new java.util.concurrent.CountDownLatch(1);
                 java.util.concurrent.CountDownLatch chooser = new java.util.concurrent.CountDownLatch(1);
-                String script = "const f=document.getElementById('photo');f.onchange=async()=>{try{const file=f.files[0];const data=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(file)});const im=new Image();im.src=data;await im.decode();const c=document.createElement('canvas');c.width=im.width;c.height=im.height;c.getContext('2d').drawImage(im,0,0);parent.postMessage({width:im.width,height:im.height,size:file.size,pixels:[...c.getContext('2d').getImageData(0,0,1,1).data]},'*')}catch(e){parent.postMessage({error:String(e)},'*')}};";
+                String script = "const f=document.getElementById('photo');f.onchange=async()=>{try{const file=f.files[0];const data=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(file)});const im=new Image();im.src=data;await im.decode();const c=document.createElement('canvas');c.width=im.width;c.height=im.height;c.getContext('2d').drawImage(im,0,0);parent.postMessage({width:im.width,height:im.height,size:file.size,pixels:[...c.getContext('2d').getImageData(0,0,1,1).data]},'*')}catch(e){parent.postMessage({error:String(e)},'*')}};requestAnimationFrame(()=>requestAnimationFrame(()=>parent.postMessage({fixtureReady:true},'*')));";
                 String css = "<meta name=viewport content=\"width=device-width,initial-scale=1\"><style>html,body{margin:0;padding:0}input{position:absolute;left:16px;top:16px;width:250px;height:64px;font-size:20px}iframe{width:100%;height:160px;border:0}</style>";
                 String inner = css + "<input id='photo' type='file' accept='image/*'><script>" + script + "</script>";
-                String html = "<html>" + css + "<body><script>window.addEventListener('message',e=>window.uploadResult=e.data)</script>" + (sandbox ? "<iframe sandbox='allow-scripts' srcdoc=\"" + inner.replace("&","&amp;").replace("\"","&quot;") + "\"></iframe>" : inner) + "</body></html>";
+                String html = "<html>" + css + "<body><script>window.addEventListener('message',e=>{if(e.data.fixtureReady)window.fixtureReady=true;else window.uploadResult=e.data})</script>" + (sandbox ? "<iframe sandbox='allow-scripts' srcdoc=\"" + inner.replace("&","&amp;").replace("\"","&quot;") + "\"></iframe>" : inner) + "</body></html>";
                 onMain(test, () -> {
                     if(browser[0]!=null)browser[0].destroy();
                     android.webkit.WebView web=new android.webkit.WebView(activity);browser[0]=web;activity.setContentView(web);
@@ -120,6 +120,22 @@ final class MediaChecks {
                     web.loadDataWithBaseURL("https://image-fixture.invalid/",html,"text/html","UTF-8",null);
                 });
                 require(loaded.await(15,java.util.concurrent.TimeUnit.SECONDS));
+                boolean ready = false;
+                for(int attempt=0;attempt<50&&!ready;attempt++){
+                    java.util.concurrent.CountDownLatch read=new java.util.concurrent.CountDownLatch(1);java.util.concurrent.atomic.AtomicReference<String> value=new java.util.concurrent.atomic.AtomicReference<>();
+                    onMain(test, () -> browser[0].evaluateJavascript("window.fixtureReady===true",v->{value.set(v);read.countDown();}));require(read.await(3,java.util.concurrent.TimeUnit.SECONDS));ready="true".equals(value.get());if(!ready)SystemClock.sleep(100);
+                }
+                require(ready);
+                java.util.concurrent.CountDownLatch painted=new java.util.concurrent.CountDownLatch(1);
+                onMain(test, () -> {
+                    android.webkit.WebView web=browser[0];require(web.isShown()&&web.getWidth()>0&&web.getHeight()>0);web.requestFocus();
+                    web.postVisualStateCallback(1,new android.webkit.WebView.VisualStateCallback(){@Override public void onComplete(long id){
+                        android.view.ViewTreeObserver.OnDrawListener[] draw={null};
+                        draw[0]=()->web.post(()->{if(web.getViewTreeObserver().isAlive())web.getViewTreeObserver().removeOnDrawListener(draw[0]);painted.countDown();});
+                        web.getViewTreeObserver().addOnDrawListener(draw[0]);web.invalidate();
+                    }});
+                });
+                require(painted.await(10,java.util.concurrent.TimeUnit.SECONDS));
                 test.waitForIdleSync();
                 Bitmap screen=test.getUiAutomation().takeScreenshot();
                 if(screen!=null){try(FileOutputStream out=new FileOutputStream(new File(context.getFilesDir(),sandbox?"upload-sandbox-before.png":"upload-top-before.png"))){screen.compress(Bitmap.CompressFormat.PNG,100,out);}screen.recycle();}
