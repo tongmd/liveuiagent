@@ -215,6 +215,12 @@ struct RootView: View {
         guard starting else { return }
         withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { starting = false }
         showGuide = OnboardingPolicy.shouldPresent(signedIn: browser.authenticated, completed: completedGuide)
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--preview-local-assistant") {
+            showGuide = false
+            localChat = true
+        }
+        #endif
     }
 
     private func workspace(_ connection: Connection) -> some View {
