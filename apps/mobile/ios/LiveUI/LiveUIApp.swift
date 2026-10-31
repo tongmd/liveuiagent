@@ -316,10 +316,11 @@ struct RootView: View {
                         Button("Try again") { browser.reload() }.buttonStyle(PrimaryButtonStyle())
                         Button("Back to sign in") { browser.disconnect() }.buttonStyle(SecondaryButtonStyle())
                     } else {
-                        BrandMotion(size: 120, active: !showGuide && !localChat)
-                        VStack(spacing: 9) {
-                            Text("Ulemi").font(.system(size: 25, weight: .semibold, design: .rounded)).tracking(-0.7)
-                            Text("Opening your workspace…").font(.system(size: 14)).foregroundStyle(.secondary)
+                        VStack(spacing: 16) {
+                            BrandMotion(size: 90, active: !showGuide && !localChat)
+                            Text("Opening workspace")
+                                .font(.system(size: 13, design: .monospaced))
+                                .foregroundStyle(.secondary)
                         }
                     }
                 }.padding(28).frame(maxWidth: 360)

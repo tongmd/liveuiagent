@@ -114,9 +114,8 @@ public final class MainActivity extends Activity {
         root = makeRoot();
         LinearLayout center = new LinearLayout(this); center.setOrientation(LinearLayout.VERTICAL); center.setGravity(Gravity.CENTER);
         root.addView(center, new LinearLayout.LayoutParams(-1, -1));
-        center.addView(new BrandMotionView(this), new LinearLayout.LayoutParams(dp(160), dp(160)));
-        TextView name = text("Ulemi", 27, NativeStyle.INK); name.setPadding(0, dp(18), 0, dp(10)); name.setGravity(Gravity.CENTER); center.addView(name, new LinearLayout.LayoutParams(-1, -2));
-        TextView t = text("Opening your space", 15, 0xff767671); t.setGravity(Gravity.CENTER); center.addView(t, new LinearLayout.LayoutParams(-1, -2));
+        center.addView(new BrandMotionView(this), new LinearLayout.LayoutParams(dp(112), dp(112)));
+        TextView t = text("Opening workspace", 13, 0xff646464); t.setTypeface(android.graphics.Typeface.MONOSPACE); t.setPadding(0, dp(16), 0, 0); t.setGravity(Gravity.CENTER); center.addView(t, new LinearLayout.LayoutParams(-1, -2));
 
     }
     private ImageView icon(int size) {
@@ -273,9 +272,8 @@ public final class MainActivity extends Activity {
         workspace = new FrameLayout(this); root.addView(workspace, new LinearLayout.LayoutParams(-1, 0, 1));
         web = new WebView(this); web.setBackgroundColor(Color.WHITE); workspace.addView(web, new FrameLayout.LayoutParams(-1, -1));
         handoff = new LinearLayout(this); handoff.setOrientation(LinearLayout.VERTICAL); handoff.setGravity(Gravity.CENTER); handoff.setPadding(dp(28), dp(28), dp(28), dp(28)); handoff.setBackgroundColor(NativeStyle.PAPER);
-        handoffMotion = new BrandMotionView(this); handoff.addView(handoffMotion, new LinearLayout.LayoutParams(dp(160), dp(160)));
-        TextView brand = text("Ulemi", 27, NativeStyle.INK); brand.setGravity(Gravity.CENTER); brand.setPadding(0, dp(18), 0, dp(10)); handoff.addView(brand);
-        handoffText = text("Opening your space", 15, 0xff767671); handoffText.setGravity(Gravity.CENTER); handoffText.setLineSpacing(dp(4), 1); handoffText.setPadding(0, 0, 0, dp(26)); handoffText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); handoff.addView(handoffText);
+        handoffMotion = new BrandMotionView(this); handoff.addView(handoffMotion, new LinearLayout.LayoutParams(dp(112), dp(112)));
+        handoffText = text("Opening workspace", 13, 0xff646464); handoffText.setTypeface(android.graphics.Typeface.MONOSPACE); handoffText.setGravity(Gravity.CENTER); handoffText.setLineSpacing(dp(4), 1); handoffText.setPadding(0, dp(16), 0, dp(16)); handoffText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); handoff.addView(handoffText);
         retryLoad = button("Try again", true); retryLoad.setVisibility(View.GONE); retryLoad.setOnClickListener(v -> reloadWorkspace()); handoff.addView(retryLoad, new LinearLayout.LayoutParams(dp(180), dp(52)));
         handoff.setClickable(true); handoff.setFocusable(true);
         workspace.addView(handoff, new FrameLayout.LayoutParams(-1, -1)); loadFailed = false;
@@ -400,7 +398,7 @@ public final class MainActivity extends Activity {
         retryLoad.setOnClickListener(v -> { if (expired) logout(); else reloadWorkspace(); });
     }
     private void reloadWorkspace() {
-        loadFailed = false; workspaceAttempt++; nativeBar.setVisibility(View.GONE); handoffMotion.setActive(true); handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE); handoffText.setText("Opening your space"); retryLoad.setVisibility(View.GONE);
+        loadFailed = false; workspaceAttempt++; nativeBar.setVisibility(View.GONE); handoffMotion.setActive(true); handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE); handoffText.setText("Opening workspace"); retryLoad.setVisibility(View.GONE);
         web.loadUrl(endpoint.toString());
     }
     private void showMenu(View anchor) { showAccountMenu(); }
