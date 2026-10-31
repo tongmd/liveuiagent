@@ -140,14 +140,20 @@ jobs:
             adb shell settings put global animator_duration_scale 1
             adb shell settings put global transition_animation_scale 1
             adb shell settings put global window_animation_scale 1
-            adb shell screenrecord --time-limit 150 /sdcard/ulemi-motion.mp4 &
-            ULEMI_RECORD_PID=$!
             adb shell am instrument -w com.stonezhang.liveui.test/com.stonezhang.liveui.NativeTests | tee mobile-artifacts/android-motion-tests.txt
-            adb shell pkill -INT screenrecord || true
-            wait "$ULEMI_RECORD_PID" || true
+            adb shell screenrecord --time-limit 24 /sdcard/ulemi-motion.mp4 &
+            ULEMI_RECORD_PID=$!
+            sleep 1
+            adb shell am instrument -w -e motionPreview true com.stonezhang.liveui.test/com.stonezhang.liveui.NativeTests | tee mobile-artifacts/android-motion-preview.txt
+            wait "$ULEMI_RECORD_PID"
             adb pull /sdcard/ulemi-motion.mp4 mobile-artifacts/android-motion.mp4
+            ffprobe -v error -show_entries format=duration mobile-artifacts/android-motion.mp4
             adb exec-out run-as com.stonezhang.liveui cat files/android-motion-1.png > mobile-artifacts/android-motion-1.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/android-motion-2.png > mobile-artifacts/android-motion-2.png || true
+            for ULEMI_FRAME in android-preview-loader.png android-preview-login.png android-preview-guide.png android-preview-offline.png; do
+              adb exec-out run-as com.stonezhang.liveui cat "files/$ULEMI_FRAME" > "mobile-artifacts/$ULEMI_FRAME"
+            done
+            grep -F 'MOTION PREVIEW OK' mobile-artifacts/android-motion-preview.txt
             grep -F 'OK (10 tests)' mobile-artifacts/android-motion-tests.txt
       - name: Collect Android device evidence
         if: always()
