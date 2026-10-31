@@ -146,8 +146,8 @@ jobs:
             adb shell pkill -INT screenrecord || true
             wait "$ULEMI_RECORD_PID" || true
             adb pull /sdcard/ulemi-motion.mp4 mobile-artifacts/android-motion.mp4
-            adb exec-out run-as com.stonezhang.liveui cat files/android-loader-phase1.png > mobile-artifacts/android-loader-phase1.png || true
-            adb exec-out run-as com.stonezhang.liveui cat files/android-loader-phase2.png > mobile-artifacts/android-loader-phase2.png || true
+            adb exec-out run-as com.stonezhang.liveui cat files/android-motion-1.png > mobile-artifacts/android-motion-1.png || true
+            adb exec-out run-as com.stonezhang.liveui cat files/android-motion-2.png > mobile-artifacts/android-motion-2.png || true
             grep -F 'OK (10 tests)' mobile-artifacts/android-motion-tests.txt
       - name: Collect Android device evidence
         if: always()
