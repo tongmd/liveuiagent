@@ -44,9 +44,15 @@ jobs:
         run: |
           xcrun simctl bootstatus "$LIVEUI_SIMULATOR" -b
           xcrun simctl install "$LIVEUI_SIMULATOR" "$RUNNER_TEMP/liveui-simulator/Build/Products/Debug-iphonesimulator/LiveUI.app"
-          xcrun simctl launch "$LIVEUI_SIMULATOR" com.stonezhang.liveui
-          sleep 3
           mkdir -p mobile-artifacts
+          xcrun simctl io "$LIVEUI_SIMULATOR" recordVideo --codec=h264 mobile-artifacts/ios-launch.mp4 &
+          ULEMI_RECORD_PID=$!
+          sleep 1
+          xcrun simctl launch "$LIVEUI_SIMULATOR" com.stonezhang.liveui
+          sleep 4
+          kill -INT "$ULEMI_RECORD_PID"
+          wait "$ULEMI_RECORD_PID" || true
+          test -s mobile-artifacts/ios-launch.mp4
           xcrun simctl io "$LIVEUI_SIMULATOR" screenshot mobile-artifacts/ios-login.png
           xcrun simctl terminate "$LIVEUI_SIMULATOR" com.stonezhang.liveui
           xcrun simctl launch "$LIVEUI_SIMULATOR" com.stonezhang.liveui --preview-local-assistant
