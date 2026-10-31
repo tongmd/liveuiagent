@@ -227,6 +227,11 @@ public final class NativeTests extends Instrumentation {
             android.os.SystemClock.sleep(3000); capture("android-preview-guide.png");
             runOnMainSync(() -> { try { android.app.Dialog d=(android.app.Dialog)get(screen,"guide");d.dismiss(); } catch(Exception e) { throw new AssertionError(e); } });
             local = startActivitySync(new android.content.Intent(getTargetContext(), LocalAssistantActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            final Activity localScreen = local;
+            runOnMainSync(() -> { try {
+                java.lang.reflect.Field field=LocalAssistantActivity.class.getDeclaredField("input");field.setAccessible(true);
+                ((android.widget.EditText)field.get(localScreen)).setText("");
+            } catch(Exception e) { throw new AssertionError(e); } });
             android.os.SystemClock.sleep(3000); capture("android-preview-local.png");
             result.putString("stream", "MOTION PREVIEW OK\n");
         } catch(Throwable e) { result.putString("stream", "MOTION PREVIEW FAILED: " + android.util.Log.getStackTraceString(e)); }
