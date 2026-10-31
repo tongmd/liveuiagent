@@ -42,7 +42,7 @@ public final class MainActivity extends Activity {
     private final Handler ui = new Handler(Looper.getMainLooper());
     private TextView status;
     private View nativeBar;
-    private ProgressBar handoffSpinner;
+    private BrandMotionView handoffMotion;
     private Button connect;
     private URI endpoint;
     private String username = "", password = "";
@@ -77,10 +77,10 @@ public final class MainActivity extends Activity {
         root = makeRoot();
         LinearLayout center = new LinearLayout(this); center.setOrientation(LinearLayout.VERTICAL); center.setGravity(Gravity.CENTER);
         root.addView(center, new LinearLayout.LayoutParams(-1, -1));
-        ImageView mark = icon(88); center.addView(mark, new LinearLayout.LayoutParams(dp(88), dp(88)));
-        TextView word = text("Ulemi", 27, Color.BLACK); word.setPadding(0, dp(18), 0, 0); center.addView(word);
+        BrandMotionView mark = new BrandMotionView(this); center.addView(mark, new LinearLayout.LayoutParams(dp(160), dp(160)));
+        TextView word = text("Ulemi", 28, NativeStyle.INK); word.setPadding(0, dp(18), 0, 0); word.setGravity(Gravity.CENTER); center.addView(word, new LinearLayout.LayoutParams(-1, -2));
         reveal(center); center.setOnClickListener(v -> restoreAccount());
-        ui.postDelayed(this::restoreAccount, animate() ? 420 : 0);
+        ui.postDelayed(this::restoreAccount, animate() ? 280 : 0);
     }
     private void restoreAccount() {
         if (isFinishing() || isDestroyed() || launchHandled) return;
@@ -101,14 +101,16 @@ public final class MainActivity extends Activity {
             // A legacy custom endpoint cannot silently receive credentials in this fixed-origin app.
             if (saved != null) store.clear();
             showLogin(null);
-        } catch (Exception ignored) { store.clear(); showLogin("请重新登录，继续使用你的应用"); }
+        } catch (Exception ignored) { store.clear(); showLogin("Sign in again to continue."); }
     }
     private void showRestoring() {
         root = makeRoot();
         LinearLayout center = new LinearLayout(this); center.setOrientation(LinearLayout.VERTICAL); center.setGravity(Gravity.CENTER);
-        root.addView(center, new LinearLayout.LayoutParams(-1, -1)); center.addView(icon(64), new LinearLayout.LayoutParams(dp(64), dp(64)));
-        TextView t = text("正在打开你的空间…", 17, 0xff555555); t.setPadding(0, dp(24), 0, 0); center.addView(t);
-        ProgressBar progress = new ProgressBar(this); LinearLayout.LayoutParams pp = new LinearLayout.LayoutParams(dp(24), dp(24)); pp.topMargin = dp(20); center.addView(progress, pp);
+        root.addView(center, new LinearLayout.LayoutParams(-1, -1));
+        center.addView(new BrandMotionView(this), new LinearLayout.LayoutParams(dp(160), dp(160)));
+        TextView name = text("Ulemi", 27, NativeStyle.INK); name.setPadding(0, dp(18), 0, dp(10)); name.setGravity(Gravity.CENTER); center.addView(name, new LinearLayout.LayoutParams(-1, -2));
+        TextView t = text("Opening your space", 15, 0xff767671); t.setGravity(Gravity.CENTER); center.addView(t, new LinearLayout.LayoutParams(-1, -2));
+
     }
     private ImageView icon(int size) {
         ImageView icon = new ImageView(this); icon.setImageResource(R.drawable.liveui_icon); icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
@@ -121,12 +123,11 @@ public final class MainActivity extends Activity {
         android.graphics.drawable.GradientDrawable d = new android.graphics.drawable.GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(radius)); return d;
     }
     private Button button(String value, boolean primary) {
-        Button b = new Button(this); b.setText(value); b.setAllCaps(false); b.setTextSize(16); b.setTextColor(primary ? Color.WHITE : Color.BLACK);
-        b.setBackground(rounded(primary ? 0xff181818 : 0xfff3f3f3, 16)); b.setMinHeight(dp(48)); return b;
+        return NativeStyle.button(this, value, primary);
     }
     private int dp(int v) { return Math.round(v * getResources().getDisplayMetrics().density); }
     private LinearLayout makeRoot() {
-        LinearLayout r = new LinearLayout(this); r.setOrientation(LinearLayout.VERTICAL); r.setBackgroundColor(Color.WHITE);
+        LinearLayout r = new LinearLayout(this); r.setOrientation(LinearLayout.VERTICAL); r.setBackgroundColor(NativeStyle.PAPER);
         r.setOnApplyWindowInsetsListener((view, insets) -> {
             if (Build.VERSION.SDK_INT >= 30) {
                 android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.displayCutout());
@@ -145,7 +146,7 @@ public final class MainActivity extends Activity {
     }
     private EditText input(LinearLayout box, String hint, int type) {
         EditText e = new EditText(this); e.setSingleLine(true); e.setTextSize(17); e.setHint(hint); e.setContentDescription(hint); e.setInputType(type);
-        e.setTextColor(Color.BLACK); e.setHintTextColor(0xff777777); e.setPadding(dp(16), 0, dp(16), 0); e.setBackground(rounded(0xfff3f3f3, 14));
+        e.setTextColor(Color.BLACK); e.setHintTextColor(0xff777777); e.setPadding(dp(16), 0, dp(16), 0); e.setBackground(rounded(0xffffffff, 18));
         e.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
         LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(56)); lp.bottomMargin = dp(10); box.addView(e, lp); return e;
     }
@@ -156,21 +157,21 @@ public final class MainActivity extends Activity {
         LinearLayout box = new LinearLayout(this); box.setOrientation(LinearLayout.VERTICAL);
         outer.addView(box, new LinearLayout.LayoutParams(Math.min(getResources().getDisplayMetrics().widthPixels - dp(48), dp(420)), -2));
         LinearLayout header = new LinearLayout(this); header.setOrientation(LinearLayout.VERTICAL); loginHeader = header; box.addView(header);
-        header.addView(icon(56), new LinearLayout.LayoutParams(dp(56), dp(56)));
-        TextView brand = text("Ulemi", 30, Color.BLACK); brand.setPadding(0, dp(10), 0, dp(8)); header.addView(brand);
-        TextView welcome = text("登录，开始创造你的应用", 19, 0xff222222); welcome.setPadding(0, 0, 0, dp(20)); header.addView(welcome);
-        userInput = input(box, "账号", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL); userInput.setText(username);
+        header.addView(icon(58), new LinearLayout.LayoutParams(dp(58), dp(58)));
+        TextView brand = text("Ulemi", 36, NativeStyle.INK); brand.setPadding(0, dp(10), 0, dp(8)); header.addView(brand);
+        TextView welcome = text("Your ideas, made yours.", 18, 0xff777771); welcome.setPadding(0, 0, 0, dp(20)); header.addView(welcome);
+        userInput = input(box, "Username", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_NORMAL); userInput.setText(username);
         userInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_NEXT);
-        passwordInput = input(box, "密码", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        passwordInput = input(box, "Password", InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         passwordInput.setImeOptions(android.view.inputmethod.EditorInfo.IME_ACTION_DONE);
         passwordInput.setOnEditorActionListener((v, action, event) -> { if (action == android.view.inputmethod.EditorInfo.IME_ACTION_DONE && connect.isEnabled()) { connect(); return true; } return false; });
-        CheckBox visible = new CheckBox(this); visible.setText("显示密码"); visible.setTextColor(0xff555555); visible.setTextSize(14);
+        CheckBox visible = new CheckBox(this); visible.setText("Show password"); visible.setTextColor(0xff555555); visible.setTextSize(14);
         visible.setOnCheckedChangeListener((v, checked) -> { passwordInput.setTransformationMethod(checked ? null : android.text.method.PasswordTransformationMethod.getInstance()); passwordInput.setSelection(passwordInput.length()); });
         box.addView(visible, new LinearLayout.LayoutParams(-1, dp(48)));
-        connect = button("登录", true); connect.setOnClickListener(v -> connect()); LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(54)); bp.topMargin = dp(8); box.addView(connect, bp);
+        connect = button("Sign in", true); connect.setOnClickListener(v -> connect()); LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(54)); bp.topMargin = dp(8); box.addView(connect, bp);
         status = text(message == null ? "" : message, 14, 0xffad3333); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); status.setPadding(0, dp(14), 0, 0); box.addView(status); status.setVisibility(message == null || message.isEmpty() ? View.GONE : View.VISIBLE);
-        Button waitlist = button("还没有账号？加入候补名单", false); loginWaitlist = waitlist; waitlist.setTextSize(14); waitlist.setOnClickListener(v -> external("https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")); LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, dp(50)); wp.topMargin = dp(12); box.addView(waitlist, wp);
-        Button local = button("离线助手 · Gemma 4", false); local.setOnClickListener(v -> startActivity(new Intent(this, LocalAssistantActivity.class)));
+        Button waitlist = button("Join the waitlist", false); loginWaitlist = waitlist; waitlist.setTextSize(14); waitlist.setOnClickListener(v -> external("https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")); LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, dp(50)); wp.topMargin = dp(12); box.addView(waitlist, wp);
+        Button local = button("Offline assistant", false); local.setOnClickListener(v -> startActivity(new Intent(this, LocalAssistantActivity.class)));
         LinearLayout.LayoutParams lpLocal = new LinearLayout.LayoutParams(-1, dp(50)); lpLocal.topMargin = dp(12); box.addView(local, lpLocal);
         reveal(box);
     }
@@ -186,24 +187,24 @@ public final class MainActivity extends Activity {
         if (guide.getWindow() != null) { guide.getWindow().setStatusBarColor(Color.WHITE); guide.getWindow().setNavigationBarColor(Color.WHITE); guide.getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR); }
     }
     private void renderGuide(int step) {
-        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setBackgroundColor(Color.WHITE);
+        ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setBackgroundColor(NativeStyle.PAPER);
         LinearLayout page = new LinearLayout(this); page.setOrientation(LinearLayout.VERTICAL); page.setPadding(dp(26), dp(18), dp(26), dp(24)); scroll.addView(page);
         LinearLayout top = new LinearLayout(this); top.setGravity(Gravity.CENTER_VERTICAL); top.addView(icon(36), new LinearLayout.LayoutParams(dp(36), dp(36)));
         Space space = new Space(this); top.addView(space, new LinearLayout.LayoutParams(0, 1, 1));
-        Button skip = button("跳过", false); skip.setContentDescription("跳过引导"); skip.setOnClickListener(v -> finishGuide()); top.addView(skip, new LinearLayout.LayoutParams(dp(80), dp(48))); page.addView(top);
+        Button skip = button("Skip", false); skip.setContentDescription("Skip introduction"); skip.setOnClickListener(v -> finishGuide()); top.addView(skip, new LinearLayout.LayoutParams(dp(80), dp(48))); page.addView(top);
         Space upper = new Space(this); page.addView(upper, new LinearLayout.LayoutParams(1, dp(24), 1));
-        String[] titles = {"说出你需要什么", "边使用，边完善", "回来，接着使用"};
-        String[] copy = {"在底部输入需求，Ulemi 会为你创建应用。", "继续告诉它想改什么。功能和界面可以随你的需求调整。", "创建好的应用都在你的空间里。点开它，就能继续使用。"};
+        String[] titles = {"Start with an idea.", "Make it your own.", "Pick up where you left off."};
+        String[] copy = {"Tell Ulemi what you need. It creates an app for you.", "Keep the conversation going. Shape the features and interface as you use them.", "Your apps stay in your space, ready whenever you are."};
         TextView title = text(titles[step], 28, Color.BLACK); title.setTypeface(null, android.graphics.Typeface.BOLD); page.addView(title);
         TextView body = text(copy[step], 17, 0xff555555); body.setLineSpacing(dp(5), 1); body.setPadding(0, dp(16), 0, dp(28)); page.addView(body);
         LinearLayout illustration = new LinearLayout(this); illustration.setOrientation(LinearLayout.VERTICAL); illustration.setPadding(dp(20), dp(22), dp(20), dp(22)); illustration.setBackground(rounded(0xfff5f5f5, 22));
-        String[][] examples = {{"我想做一个阅读清单", "说清用途，就可以开始"}, {"把读完的书放在一起", "在原应用里继续修改"}, {"我的应用", "点开应用，接着上次的内容"}};
+        String[][] examples = {{"Make me a reading list", "An idea is all you need"}, {"Group the books I have finished", "Keep shaping the same app"}, {"Your apps", "Open an app and carry on"}};
         for (int i = 0; i < 2; i++) { TextView line = text(examples[step][i], i == 0 ? 19 : 15, i == 0 ? Color.BLACK : 0xff777777); line.setPadding(0, i == 0 ? 0 : dp(14), 0, 0); illustration.addView(line); }
-        illustration.setContentDescription("使用方法示意"); page.addView(illustration, new LinearLayout.LayoutParams(-1, -2));
+        illustration.setContentDescription("Example of using Ulemi"); page.addView(illustration, new LinearLayout.LayoutParams(-1, -2));
         Space lower = new Space(this); page.addView(lower, new LinearLayout.LayoutParams(1, dp(30), 1));
-        LinearLayout dots = new LinearLayout(this); dots.setGravity(Gravity.CENTER); dots.setContentDescription("第 " + (step + 1) + " 步，共 3 步");
+        LinearLayout dots = new LinearLayout(this); dots.setGravity(Gravity.CENTER); dots.setContentDescription("Step " + (step + 1) + " of 3");
         for (int i = 0; i < 3; i++) { View dot = new View(this); dot.setBackground(rounded(i == step ? Color.BLACK : 0xffdddddd, 4)); LinearLayout.LayoutParams dl = new LinearLayout.LayoutParams(dp(i == step ? 22 : 7), dp(7)); dl.setMargins(dp(4), 0, dp(4), dp(22)); dots.addView(dot, dl); } page.addView(dots);
-        Button next = button(step == 2 ? "开始使用" : "继续", true); next.setOnClickListener(v -> { if (step == 2) finishGuide(); else renderGuide(step + 1); }); page.addView(next, new LinearLayout.LayoutParams(-1, dp(54)));
+        Button next = button(step == 2 ? "Let's begin" : "Continue", true); next.setOnClickListener(v -> { if (step == 2) finishGuide(); else renderGuide(step + 1); }); page.addView(next, new LinearLayout.LayoutParams(-1, dp(54)));
         guide.setContentView(scroll); reveal(page);
     }
     private void finishGuide() {
@@ -216,31 +217,31 @@ public final class MainActivity extends Activity {
         final String u = userInput.getText().toString().trim(), p = passwordInput.getText().toString();
         try {
             candidate = ConnectionPolicy.parse(ConnectionPolicy.DEFAULT_URL);
-            if (u.isEmpty() || p.isEmpty() || u.contains(":") || u.contains("\n") || u.contains("\r")) throw new IllegalArgumentException("请输入有效的用户名和密码");
+            if (u.isEmpty() || p.isEmpty() || u.contains(":") || u.contains("\n") || u.contains("\r")) throw new IllegalArgumentException("Enter a valid username and password.");
         } catch (Exception e) { status.setText(e.getMessage()); status.setVisibility(View.VISIBLE); return; }
         final int generation; synchronized (credentialLock) { generation = ++connectionGeneration; }
-        connect.setEnabled(false); connect.setText("正在登录…"); status.setText(""); status.setVisibility(View.GONE);
+        connect.setEnabled(false); connect.setText("Signing in…"); status.setText(""); status.setVisibility(View.GONE);
         android.view.inputmethod.InputMethodManager keyboard = (android.view.inputmethod.InputMethodManager) getSystemService(INPUT_METHOD_SERVICE); keyboard.hideSoftInputFromWindow(passwordInput.getWindowToken(), 0);
         network.execute(() -> {
             String error = null;
             try {
                 HttpsURLConnection probe = connection(candidate.toString());
                 int code = probe.getResponseCode(); String challenge = probe.getHeaderField("WWW-Authenticate"); probe.disconnect();
-                if (code != 401 || !ConnectionPolicy.validBasicChallenge(challenge)) throw new IOException("暂时无法登录，请稍后重试");
+                if (code != 401 || !ConnectionPolicy.validBasicChallenge(challenge)) throw new IOException("Sign-in is unavailable. Please try again.");
                 HttpsURLConnection check = connection(candidate.toString()); check.setRequestProperty("Authorization", authorization(u, p));
                 code = check.getResponseCode(); check.disconnect();
-                if (code == 401 || code == 403) throw new IOException("账号或密码不正确，请重新输入");
-                if (code != 200) throw new IOException("暂时无法登录，请稍后重试");
+                if (code == 401 || code == 403) throw new IOException("Incorrect username or password. Please try again.");
+                if (code != 200) throw new IOException("Sign-in is unavailable. Please try again.");
                 synchronized (credentialLock) {
                     if (generation != connectionGeneration) return;
                     store.save(candidate.toString(), u, p);
                 }
-            } catch (javax.net.ssl.SSLException e) { error = "暂时无法安全登录，请稍后重试"; }
-            catch (Exception e) { error = e instanceof IOException && ("账号或密码不正确，请重新输入".equals(e.getMessage()) || "暂时无法登录，请稍后重试".equals(e.getMessage())) ? e.getMessage() : "网络暂时不可用，请检查网络后重试"; }
+            } catch (javax.net.ssl.SSLException e) { error = "A secure sign-in could not be established. Please try again."; }
+            catch (Exception e) { error = e instanceof IOException && ("Incorrect username or password. Please try again.".equals(e.getMessage()) || "Sign-in is unavailable. Please try again.".equals(e.getMessage())) ? e.getMessage() : "Check your connection and try again."; }
             String finalError = error;
             runOnUiThread(() -> {
                 if (isFinishing() || generation != connectionGeneration) return;
-                connect.setEnabled(true); connect.setText("登录");
+                connect.setEnabled(true); connect.setText("Sign in");
                 if (finalError != null) { if (restoring) showLogin(finalError); else { status.setText(finalError); status.setVisibility(View.VISIBLE); } return; }
                 endpoint = candidate; username = u; password = p; currentSession = new Session(candidate, u, p); authenticated = true; restoring = false; enterAccount();
             });
@@ -253,19 +254,18 @@ public final class MainActivity extends Activity {
     private String authorization(String u, String p) { return "Basic " + android.util.Base64.encodeToString((u + ":" + p).getBytes(StandardCharsets.UTF_8), android.util.Base64.NO_WRAP); }
     private void openWorkspace() {
         root = makeRoot();
-        LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL); bar.setPadding(dp(12), 0, dp(4), 0);
-        TextView title = new TextView(this); title.setText(R.string.app_name); title.setTextSize(18); title.setTextColor(Color.BLACK); bar.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
-        Button menu = new Button(this); menu.setText("⋮"); menu.setTextSize(22); menu.setContentDescription("菜单"); menu.setOnClickListener(this::showMenu); bar.addView(menu, new LinearLayout.LayoutParams(dp(52), -1));
-        nativeBar = bar;
-        root.addView(bar, new LinearLayout.LayoutParams(-1, dp(48)));
+        LinearLayout bar = new LinearLayout(this); bar.setGravity(Gravity.CENTER_VERTICAL); bar.setPadding(dp(20), dp(4), dp(16), dp(4));
+        TextView title = new TextView(this); title.setText(R.string.app_name); title.setTextSize(18); title.setTextColor(NativeStyle.INK); title.setGravity(Gravity.CENTER_VERTICAL); bar.addView(title, new LinearLayout.LayoutParams(0, -1, 1));
+        Button menu = button("···", false); menu.setTextSize(22); menu.setPadding(0, 0, 0, 0); menu.setContentDescription("Account menu"); menu.setOnClickListener(this::showMenu); bar.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        nativeBar = bar; nativeBar.setVisibility(View.GONE);
+        root.addView(bar, new LinearLayout.LayoutParams(-1, dp(56)));
         workspace = new FrameLayout(this); root.addView(workspace, new LinearLayout.LayoutParams(-1, 0, 1));
         web = new WebView(this); web.setBackgroundColor(Color.WHITE); workspace.addView(web, new FrameLayout.LayoutParams(-1, -1));
-        handoff = new LinearLayout(this); handoff.setOrientation(LinearLayout.VERTICAL); handoff.setGravity(Gravity.CENTER); handoff.setPadding(dp(28), dp(28), dp(28), dp(28)); handoff.setBackgroundColor(Color.WHITE);
-        handoff.addView(icon(56), new LinearLayout.LayoutParams(dp(56), dp(56)));
-        handoffText = text("正在打开你的空间…", 17, 0xff555555); handoffText.setGravity(Gravity.CENTER); handoffText.setPadding(0, dp(22), 0, dp(24)); handoff.addView(handoffText);
-        retryLoad = button("重试", true); retryLoad.setVisibility(View.GONE); retryLoad.setOnClickListener(v -> reloadWorkspace()); handoff.addView(retryLoad, new LinearLayout.LayoutParams(dp(180), dp(52)));
-        handoffSpinner = new ProgressBar(this); handoffSpinner.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(0xff222222));
-        handoff.addView(handoffSpinner, 2, new LinearLayout.LayoutParams(dp(24), dp(24)));
+        handoff = new LinearLayout(this); handoff.setOrientation(LinearLayout.VERTICAL); handoff.setGravity(Gravity.CENTER); handoff.setPadding(dp(28), dp(28), dp(28), dp(28)); handoff.setBackgroundColor(NativeStyle.PAPER);
+        handoffMotion = new BrandMotionView(this); handoff.addView(handoffMotion, new LinearLayout.LayoutParams(dp(160), dp(160)));
+        TextView brand = text("Ulemi", 27, NativeStyle.INK); brand.setGravity(Gravity.CENTER); brand.setPadding(0, dp(18), 0, dp(10)); handoff.addView(brand);
+        handoffText = text("Opening your space", 15, 0xff767671); handoffText.setGravity(Gravity.CENTER); handoffText.setLineSpacing(dp(4), 1); handoffText.setPadding(0, 0, 0, dp(26)); handoffText.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); handoff.addView(handoffText);
+        retryLoad = button("Try again", true); retryLoad.setVisibility(View.GONE); retryLoad.setOnClickListener(v -> reloadWorkspace()); handoff.addView(retryLoad, new LinearLayout.LayoutParams(dp(180), dp(52)));
         handoff.setClickable(true); handoff.setFocusable(true);
         workspace.addView(handoff, new FrameLayout.LayoutParams(-1, -1)); loadFailed = false;
         WebSettings settings = web.getSettings(); settings.setUserAgentString(settings.getUserAgentString() + " UlemiMobile/1"); settings.setJavaScriptEnabled(true); settings.setDomStorageEnabled(true); settings.setDatabaseEnabled(true);
@@ -290,10 +290,10 @@ public final class MainActivity extends Activity {
             }
             @Override public void onPageCommitVisible(WebView view, String url) { if (authBootstrap != null) authBootstrap.close(); if (!loadFailed) awaitWorkspace(workspaceAttempt, 0); }
 
-            @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) { handler.cancel(); workspaceError("暂时无法安全打开，请稍后重试", false); }
-            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) { if (request.isForMainFrame()) workspaceError("暂时无法打开，请检查网络后重试", false); }
+            @Override public void onReceivedSslError(WebView view, SslErrorHandler handler, SslError error) { handler.cancel(); workspaceError("A secure connection could not be established.", false); }
+            @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) { if (request.isForMainFrame()) workspaceError("Check your connection and try again.", false); }
             @Override public void onReceivedHttpError(WebView view, WebResourceRequest request, WebResourceResponse response) {
-                if (request.isForMainFrame()) { boolean expired = response.getStatusCode() == 401 || response.getStatusCode() == 403; workspaceError(expired ? "登录已过期，请重新登录" : "暂时无法打开，请稍后重试", expired); }
+                if (request.isForMainFrame()) { boolean expired = response.getStatusCode() == 401 || response.getStatusCode() == 403; workspaceError(expired ? "Your session has expired. Please sign in again." : "Your space is unavailable. Please try again.", expired); }
             }
         });
         web.setWebChromeClient(new WebChromeClient() {
@@ -302,7 +302,7 @@ public final class MainActivity extends Activity {
                 Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
                 String[] types = params.getAcceptTypes(); if (types != null && types.length > 0 && !types[0].isEmpty()) pick.putExtra(Intent.EXTRA_MIME_TYPES, types);
                 pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE);
-                try { startActivityForResult(pick, PICK_FILE); } catch (ActivityNotFoundException e) { upload.onReceiveValue(null); upload = null; notice("没有可用的文件选择器"); }
+                try { startActivityForResult(pick, PICK_FILE); } catch (ActivityNotFoundException e) { upload.onReceiveValue(null); upload = null; notice("No file picker is available."); }
                 return true;
             }
             @Override public boolean onJsPrompt(WebView view, String url, String message, String value, JsPromptResult result) {
@@ -326,7 +326,7 @@ public final class MainActivity extends Activity {
                     try (FileOutputStream output = new FileOutputStream(ready)) { output.write(bytes); }
                     pendingDownload = ready;
                     chooseDownloadDestination(blobFilename, payload.optString("mime", "application/octet-stream"));
-                } catch (Exception e) { blobNonce = null; downloadBusy = false; notice("此临时文件无法在 App 内导出，请在系统浏览器中导出"); }
+                } catch (Exception e) { blobNonce = null; downloadBusy = false; notice("Export this temporary file in your browser."); }
                 return true;
             }
             @Override public void onPermissionRequest(PermissionRequest request) { request.deny(); }
@@ -350,47 +350,48 @@ public final class MainActivity extends Activity {
             boolean shown = false;
             try { JSONObject state = new JSONObject(ready); shown = state.optBoolean("ready"); if (shown) nativeBar.setVisibility(state.optBoolean("menu") ? View.GONE : View.VISIBLE); } catch (Exception ignored) { }
             if (shown) revealWorkspace();
-            else if (count >= 60) workspaceError("打开时间有点长，请重试", false);
+            else if (count >= 60) workspaceError("This is taking longer than expected.", false);
             else ui.postDelayed(() -> awaitWorkspace(attempt, count + 1), 250);
         });
     }
     private void revealWorkspace() {
         if (handoff.getVisibility() != View.VISIBLE) return;
+        handoffMotion.setActive(false);
         if (!animate()) { handoff.setVisibility(View.GONE); return; }
         handoff.animate().alpha(0).setDuration(220).withEndAction(() -> handoff.setVisibility(View.GONE)).start();
     }
     private void workspaceError(String message, boolean expired) {
-        loadFailed = true; nativeBar.setVisibility(View.VISIBLE); handoffSpinner.setVisibility(View.GONE); handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE);
-        handoffText.setText(message); retryLoad.setVisibility(View.VISIBLE); retryLoad.setText(expired ? "重新登录" : "重试");
+        loadFailed = true; nativeBar.setVisibility(View.VISIBLE); handoffMotion.setActive(false); handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE);
+        handoffText.setText(message); retryLoad.setVisibility(View.VISIBLE); retryLoad.setText(expired ? "Sign in again" : "Try again");
         retryLoad.setOnClickListener(v -> { if (expired) logout(); else reloadWorkspace(); });
     }
     private void reloadWorkspace() {
-        loadFailed = false; workspaceAttempt++; handoffSpinner.setVisibility(View.VISIBLE); handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE); handoffText.setText("正在打开你的空间…"); retryLoad.setVisibility(View.GONE);
+        loadFailed = false; workspaceAttempt++; nativeBar.setVisibility(View.GONE); handoffMotion.setActive(true); handoff.animate().cancel(); handoff.setAlpha(1); handoff.setVisibility(View.VISIBLE); handoffText.setText("Opening your space"); retryLoad.setVisibility(View.GONE);
         web.loadUrl(endpoint.toString());
     }
     private void showMenu(View anchor) { showAccountMenu(); }
     private void showAccountMenu() {
         if (isFinishing() || isDestroyed()) return;
-        String[] items = {"离线助手 · Gemma 4", "使用引导", "重新载入", "在浏览器打开", "分享 Ulemi", "退出登录", "Check for updates"};
+        String[] items = {"Offline assistant", "Quick tour", "Reload workspace", "Open in browser", "Share Ulemi", "Sign out", "Check for updates"};
         new AlertDialog.Builder(this).setTitle("Ulemi").setItems(items, (dialog, item) -> {
             switch (item) {
                 case 0: startActivity(new Intent(this, LocalAssistantActivity.class)); break;
                 case 1: showGuide(); break;
                 case 2: reloadWorkspace(); break;
                 case 3: external(endpoint.toString()); break;
-                case 4: startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, endpoint.toString()), "分享 Ulemi")); break;
+                case 4: startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, endpoint.toString()), "Share Ulemi")); break;
                 case 6: updater.manualCheck(); break;
-                case 5: new AlertDialog.Builder(this).setMessage("退出后会关闭 Ulemi。你的应用和内容会保留，重新打开即可登录。").setNegativeButton("取消", null).setPositiveButton("退出", (d, w) -> logout()).show(); break;
+                case 5: new AlertDialog.Builder(this).setMessage("Signing out closes Ulemi. Your apps and content stay saved. Open Ulemi again to sign in.").setNegativeButton("Cancel", null).setPositiveButton("Sign out", (d, w) -> logout()).show(); break;
             }
-        }).setNegativeButton("取消", null).show();
+        }).setNegativeButton("Cancel", null).show();
     }
     private void external(String value) {
         try {
             Uri uri = Uri.parse(value); String scheme = uri.getScheme();
-            if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme) && !"mailto".equalsIgnoreCase(scheme)) { notice("不支持打开此链接"); return; }
-            if (uri.getUserInfo() != null) { notice("链接包含登录信息，未打开"); return; }
+            if (!"https".equalsIgnoreCase(scheme) && !"http".equalsIgnoreCase(scheme) && !"mailto".equalsIgnoreCase(scheme)) { notice("This link is not supported."); return; }
+            if (uri.getUserInfo() != null) { notice("This link contains account information and was not opened."); return; }
             startActivity(new Intent(Intent.ACTION_VIEW, uri));
-        } catch (Exception e) { notice("没有可用的应用打开此链接"); }
+        } catch (Exception e) { notice("No app is available to open this link."); }
     }
     private void notice(String text) { if (!isFinishing()) Toast.makeText(this, text, Toast.LENGTH_LONG).show(); }
     private void invalidateConnection(boolean clear) {
@@ -425,13 +426,13 @@ public final class MainActivity extends Activity {
                     .putExtra(Intent.EXTRA_TITLE, ConnectionPolicy.safeFilename(filename));
             startActivityForResult(save, SAVE_FILE);
         } catch (ActivityNotFoundException e) {
-            if (pendingDownload != null) pendingDownload.delete(); pendingDownload = null; downloadBusy = false; notice("没有可用的文件保存应用");
+            if (pendingDownload != null) pendingDownload.delete(); pendingDownload = null; downloadBusy = false; notice("No file-saving app is available.");
         }
     }
     private void exportBlob(String url, String disposition, String mime) {
         // Only top-origin blobs can be fetched. Sandboxed opaque iframe blobs stay inaccessible.
         if (!url.startsWith("blob:") || !ConnectionPolicy.sameOrigin(endpoint, url.substring(5)) || !ConnectionPolicy.sameOrigin(endpoint, web.getUrl())) {
-            notice("此应用的临时文件需在系统浏览器中导出"); return;
+            notice("Export this temporary file in your browser."); return;
         }
         downloadBusy = true; blobNonce = java.util.UUID.randomUUID().toString();
         blobFilename = ConnectionPolicy.safeFilename(URLUtil.guessFileName(url, disposition, mime));
@@ -440,17 +441,17 @@ public final class MainActivity extends Activity {
         web.evaluateJavascript(script, null);
         String expected = blobNonce;
         new Handler(Looper.getMainLooper()).postDelayed(() -> {
-            if (expected.equals(blobNonce)) { blobNonce = null; downloadBusy = false; notice("导出未完成，请在系统浏览器中重试"); }
+            if (expected.equals(blobNonce)) { blobNonce = null; downloadBusy = false; notice("Export did not finish. Please try in your browser."); }
         }, 15000);
     }
     private void download(String url, String disposition, String mime) {
-        if (downloadBusy || pendingDownload != null) { notice("请先完成当前文件保存"); return; }
+        if (downloadBusy || pendingDownload != null) { notice("Finish saving the current file first."); return; }
         if (url.startsWith("blob:")) { exportBlob(url, disposition, mime); return; }
         if (!ConnectionPolicy.sameOrigin(endpoint, url)) { external(url); return; }
         downloadBusy = true;
         String filename = ConnectionPolicy.safeFilename(URLUtil.guessFileName(url, disposition, mime));
         int generation = connectionGeneration;
-        notice("正在准备文件…");
+        notice("Preparing your file…");
         network.execute(() -> {
             File temp = null;
             try {
@@ -458,19 +459,19 @@ public final class MainActivity extends Activity {
                 String current = url;
                 HttpsURLConnection c = null;
                 for (int attempt = 0; attempt < 4; attempt++) {
-                    if (!ConnectionPolicy.sameOrigin(endpoint, current)) throw new IOException("下载跳转到了其他服务，已停止");
+                    if (!ConnectionPolicy.sameOrigin(endpoint, current)) throw new IOException("Download stopped after a redirect to another service.");
                     c = connection(current); c.setRequestProperty("Authorization", authorization(username, password));
                     String cookies = CookieManager.getInstance().getCookie(current); if (cookies != null) c.setRequestProperty("Cookie", cookies);
                     int code = c.getResponseCode();
-                    if (code >= 300 && code < 400) { String next = c.getHeaderField("Location"); c.disconnect(); if (next == null) throw new IOException("下载地址无效"); current = URI.create(current).resolve(next).toString(); continue; }
-                    if (code != 200) throw new IOException("下载失败，HTTP " + code);
+                    if (code >= 300 && code < 400) { String next = c.getHeaderField("Location"); c.disconnect(); if (next == null) throw new IOException("The download address is invalid."); current = URI.create(current).resolve(next).toString(); continue; }
+                    if (code != 200) throw new IOException("Download failed. HTTP " + code);
                     break;
                 }
-                if (c == null || c.getResponseCode() != 200) throw new IOException("下载跳转过多");
-                if (c.getContentLengthLong() > MAX_DOWNLOAD) throw new IOException("文件超过 32 MB，请在浏览器下载");
+                if (c == null || c.getResponseCode() != 200) throw new IOException("Too many download redirects.");
+                if (c.getContentLengthLong() > MAX_DOWNLOAD) throw new IOException("For files over 32 MB, download in your browser.");
                 try (InputStream in = c.getInputStream(); OutputStream out = new FileOutputStream(temp)) {
                     byte[] buffer = new byte[32768]; long total = 0; int n;
-                    while ((n = in.read(buffer)) != -1) { total += n; if (total > MAX_DOWNLOAD || generation != connectionGeneration) throw new IOException("下载已停止"); out.write(buffer, 0, n); }
+                    while ((n = in.read(buffer)) != -1) { total += n; if (total > MAX_DOWNLOAD || generation != connectionGeneration) throw new IOException("Download stopped."); out.write(buffer, 0, n); }
                 } finally { c.disconnect(); }
                 File ready = temp;
                 runOnUiThread(() -> {
@@ -480,7 +481,7 @@ public final class MainActivity extends Activity {
                 });
             } catch (Exception e) {
                 if (temp != null) temp.delete();
-                runOnUiThread(() -> { downloadBusy = false; notice("文件下载未完成，请重试或在浏览器中下载"); });
+                runOnUiThread(() -> { downloadBusy = false; notice("Download did not finish. Try again or use your browser."); });
             }
         });
     }
@@ -503,7 +504,7 @@ public final class MainActivity extends Activity {
                     if (ConnectionPolicy.isContentUpload(data.getData().toString())) values = new Uri[]{data.getData()};
                     else valid = false;
                 }
-                if (!valid) { values = null; notice("请选择文件应用提供的文件，一次最多 32 个"); }
+                if (!valid) { values = null; notice("Choose up to 32 files from the file picker."); }
             }
             upload.onReceiveValue(values); upload = null;
         }
@@ -513,8 +514,8 @@ public final class MainActivity extends Activity {
                 Uri uri = data.getData(); network.execute(() -> {
                     try (InputStream in = new FileInputStream(file); OutputStream out = getContentResolver().openOutputStream(uri)) {
                         if (out == null) throw new IOException(); byte[] b = new byte[32768]; int n; while ((n = in.read(b)) != -1) out.write(b, 0, n);
-                        runOnUiThread(() -> notice("文件已保存"));
-                    } catch (Exception e) { runOnUiThread(() -> notice("文件未保存，请重新下载")); }
+                        runOnUiThread(() -> notice("File saved."));
+                    } catch (Exception e) { runOnUiThread(() -> notice("The file was not saved. Please download again.")); }
                     finally { file.delete(); }
                 });
             } else file.delete();

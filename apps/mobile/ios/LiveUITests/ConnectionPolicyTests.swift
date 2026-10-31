@@ -64,10 +64,10 @@ final class OnboardingPolicyTests: XCTestCase {
         }
     }
     func testFriendlyErrorsDistinguishCredentialsFromNetwork() {
-        XCTAssertEqual(LoginFeedback.message(for: AppLoginFailure.credentials), "账号或密码不正确，请检查后重试。")
-        XCTAssertEqual(LoginFeedback.message(for: URLError(.notConnectedToInternet)), "网络连接不顺畅，请检查网络后重试。")
-        XCTAssertEqual(LoginFeedback.message(for: URLError(.timedOut)), "网络连接不顺畅，请检查网络后重试。")
-        XCTAssertEqual(LoginFeedback.message(for: NSError(domain: "private-backend-url", code: 503)), "暂时无法登录，请稍后重试。")
+        XCTAssertEqual(LoginFeedback.message(for: AppLoginFailure.credentials), "Check your username and password, then try again.")
+        XCTAssertEqual(LoginFeedback.message(for: URLError(.notConnectedToInternet)), "Check your connection and try again.")
+        XCTAssertEqual(LoginFeedback.message(for: URLError(.timedOut)), "Check your connection and try again.")
+        XCTAssertEqual(LoginFeedback.message(for: NSError(domain: "private-backend-url", code: 503)), "Unable to sign in right now. Please try again.")
     }
 }
 

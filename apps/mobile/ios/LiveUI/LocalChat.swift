@@ -46,7 +46,12 @@ final class LocalChat: ObservableObject {
                 let data = try Data(contentsOf: chat)
                 messages = try JSONDecoder().decode([LocalChatMessage].self, from: data)
             }
-        } catch { self.storageReadable = false; self.error = "无法读取本机保存的对话。原文件未覆盖。" }
+        } catch { self.storageReadable = false; self.error = "Your saved conversation could not be read. The original file is unchanged." }
+    }
+    static func feedback(_ error: Error, fallback: String) -> String {
+        // Our errors have reviewed English copy. Never expose localized OS/SDK details.
+        if let local = error as? LocalModelError { return local.errorDescription ?? fallback }
+        return fallback
     }
     func select(_ id: String) {
         guard !downloading, !busy else { return }
@@ -56,9 +61,9 @@ final class LocalChat: ObservableObject {
         guard !downloading, !busy else { return }
         do {
             let capacity = try directory.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage ?? 0
-            guard capacity >= model.bytes + 1_073_741_824 else { throw LocalModelError.message("空间不足，请先留出至少 \(model.sizeLabel) 加 1 GB 可用空间。") }
-            guard ProcessInfo.processInfo.physicalMemory >= model.minimumRAM else { throw LocalModelError.message("此设备内存不足，请选择较小的 E2B。") }
-            autoLoad = true; error = nil; downloading = true; progress = 0; state = "正在下载，完成后自动配置…"
+            guard capacity >= model.bytes + 1_073_741_824 else { throw LocalModelError.message("Free up at least \(model.sizeLabel) plus 1 GB before downloading.") }
+            guard ProcessInfo.processInfo.physicalMemory >= model.minimumRAM else { throw LocalModelError.message("This device needs a smaller model. Choose E2B.") }
+            autoLoad = true; error = nil; downloading = true; progress = 0; state = "Downloading. Setup will begin automatically."
             let ticket = UUID(); generation = ticket
             let transfer = ModelDownload(model: model, destination: file, cellular: cellular, progress: { [weak self] value in
                 Task { @MainActor in guard let self, self.generation == ticket else { return }; self.progress = value }
@@ -68,12 +73,12 @@ final class LocalChat: ObservableObject {
                     self.downloading = false; self.downloader = nil
                     switch result {
                     case .success: self.progress = 1; if self.autoLoad { self.load() }
-                    case .failure(let error): self.error = error.localizedDescription; self.state = ""
+                    case .failure(let error): self.error = Self.feedback(error, fallback: "Download failed. Check your connection and try again."); self.state = ""
                     }
                 }
             })
             downloader = transfer; transfer.start()
-        } catch { self.error = error.localizedDescription }
+        } catch { self.error = Self.feedback(error, fallback: "The model could not be prepared. Please try again.") }
     }
     func pauseDownload() { autoLoad = false; downloader?.pause() }
     func removeDownload() {
@@ -81,17 +86,17 @@ final class LocalChat: ObservableObject {
         unload()
         do {
             for url in [file, file.appendingPathExtension("resume")] where FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
-            state = "模型已删除，对话仍保留。"; error = nil
-        } catch { self.error = "未能删除模型，请重试。" }
+            state = "Model removed. Your conversations are saved."; error = nil
+        } catch { self.error = "The model could not be removed. Please try again." }
     }
     func load() {
         guard !busy, !downloading else { return }
         #if targetEnvironment(simulator)
-        error = "模拟器不运行手机模型。请在 iPhone 16 或更新机型上使用。"
+        error = "Run local models on an iPhone 16 or later. The simulator is not supported."
         return
         #else
-        guard ProcessInfo.processInfo.physicalMemory >= model.minimumRAM else { error = "内存不足，请选择 E2B。"; return }
-        pendingUnload = false; busy = true; ready = false; error = nil; state = "正在检查和载入模型…"
+        guard ProcessInfo.processInfo.physicalMemory >= model.minimumRAM else { error = "Not enough memory. Choose E2B."; return }
+        pendingUnload = false; busy = true; ready = false; error = nil; state = "Preparing your model…"
         let selected = model; let location = file
         request = Task {
             do {
@@ -109,8 +114,8 @@ final class LocalChat: ObservableObject {
                     try await instance.initialize(); backend = "CPU"
                 }
                 try Task.checkCancellation()
-                engine = instance; ready = true; state = "\(selected.title) · \(backend) · 离线可用"
-            } catch { self.error = error.localizedDescription; engine = nil; state = "" }
+                engine = instance; ready = true; state = "\(selected.title) · \(backend) · Ready offline"
+            } catch { self.error = Self.feedback(error, fallback: "The model could not be loaded. Try again or choose E2B."); engine = nil; state = "" }
             busy = false; request = nil
             if pendingUnload { unload() }
         }
@@ -119,8 +124,8 @@ final class LocalChat: ObservableObject {
     func send(_ input: String) {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard ready, !busy, let engine, !text.isEmpty else { return }
-        guard storageReadable else { error = "旧对话无法读取。请先点新对话保存旧文件备份，再开始。"; return }
-        guard text.utf8.count <= 1200 else { error = "请把这条消息缩短到 约 400 个汉字以内。"; return }
+        guard storageReadable else { error = "This conversation could not be read. Choose New chat to back it up and start again."; return }
+        guard text.utf8.count <= 1200 else { error = "Please shorten this message to 1,200 bytes or less."; return }
         busy = true; error = nil
         var history: [Message] = []; var count = 0
         // Only replay complete successful turns. A cancelled/failed answer is never model history.
@@ -139,17 +144,17 @@ final class LocalChat: ObservableObject {
         save()
         request = Task {
             do {
-                let chat = try await engine.createConversation(with: ConversationConfig(systemMessage: Message("你是 Ulemi。根据用户语言提供清楚、具体的回答。你在手机离线运行，无法访问网络或用户的云端应用。"), initialMessages: history, thinkingConfig: ThinkingConfig(enableThinking: false, thinkingTokenBudget: 0)))
+                let chat = try await engine.createConversation(with: ConversationConfig(systemMessage: Message("You are Ulemi. Reply clearly and concretely in the user’s language. You run offline on their phone and cannot access the internet or their cloud apps."), initialMessages: history, thinkingConfig: ThinkingConfig(enableThinking: false, thinkingTokenBudget: 0)))
                 conversation = chat
                 if Task.isCancelled { try? chat.cancel(); throw CancellationError() }
                 for try await chunk in chat.sendMessageStream(Message(text), maxOutputTokens: 512) {
                     try Task.checkCancellation()
                     if let index = messages.firstIndex(where: { $0.id == reply.id }) { messages[index].text += chunk.toString }
                 }
-                if messages.last?.text.isEmpty == true { throw LocalModelError.message("模型没有返回文字，请重试。") }
+                if messages.last?.text.isEmpty == true { throw LocalModelError.message("The model returned no text. Please try again.") }
                 if let index = messages.firstIndex(where: { $0.id == reply.id }) { messages[index].complete = true }
             } catch {
-                self.error = Task.isCancelled ? "已停止生成。" : "生成未完成：\(error.localizedDescription)"
+                self.error = Task.isCancelled ? "Generation stopped." : Self.feedback(error, fallback: "Generation did not finish. Please try again.")
             }
             conversation = nil; busy = false; request = nil; save()
             if pendingUnload { unload() }
@@ -167,13 +172,13 @@ final class LocalChat: ObservableObject {
         if !storageReadable {
             let original = directory.appendingPathComponent("chat.json")
             do { try FileManager.default.moveItem(at: original, to: directory.appendingPathComponent("chat-unreadable-\(UUID().uuidString).json")); storageReadable = true }
-            catch { self.error = "旧对话未能备份，未清空。"; return }
+            catch { self.error = "Your conversation could not be backed up. It has not been cleared."; return }
         }
         messages = []; save()
     }
     func save() {
         guard storageReadable else { return }
         do { try JSONEncoder().encode(messages).write(to: directory.appendingPathComponent("chat.json"), options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication]) }
-        catch { self.error = "这次对话未能保存，请勿关闭页面。" }
+        catch { self.error = "This conversation could not be saved. Keep this screen open." }
     }
 }

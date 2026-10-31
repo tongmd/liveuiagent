@@ -8,6 +8,8 @@ The mobile projects use the selected black U icon. The visible app name is Ulemi
 
 A brief black U animation leads into account sign-in. The first successful login offers three short, skippable steps: describe what you need, refine an application through conversation, and reopen it later. Returning users go straight to their workspace after authentication. The account menu can reopen the guide.
 
+The native interface uses English throughout sign-in, the guide, loading, account menus, and on-device chat controls. A compact animated U connects launch and loading, then fades into the workspace when it is ready. The hosted workspace and user-created content retain their own language.
+
 The interface respects reduced-motion settings and keeps login errors next to the form. Invalid credentials and unavailable connectivity have different recovery messages. Loading and retry screens do not resubmit application requests. Signing out removes local credentials and browser session data, while the account's applications remain on the service.
 
 ## On-device assistant

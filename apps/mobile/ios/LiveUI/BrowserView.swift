@@ -53,7 +53,7 @@ struct BrowserView: UIViewRepresentable {
                 if challenge.previousFailureCount > 0, connection.accepts(host: space.host, port: space.port,
                     protocolName: space.protocol, realm: space.realm, method: space.authenticationMethod, failures: 0),
                    model.connection == connection, model.webView === activeWebView {
-                    model.disconnect(message: "登录已失效，请重新登录。")
+                    model.disconnect(message: "Your session has expired. Please sign in again.")
                 }
             }
         }
@@ -87,7 +87,7 @@ struct BrowserView: UIViewRepresentable {
             decisionHandler(.cancel)
             if action.navigationType == .linkActivated, ["https", "http", "mailto", "tel"].contains(url.scheme ?? "") {
                 UIApplication.shared.open(url)
-            } else { model.message = "无法打开这个页面，请返回后重试。" }
+            } else { model.message = "This page could not be opened. Go back and try again." }
         }
         func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
                      decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
@@ -95,10 +95,10 @@ struct BrowserView: UIViewRepresentable {
                 decisionHandler(.cancel)
                 guard model.connection == connection, model.webView === webView else { return }
                 if http.statusCode == 401 || http.statusCode == 403 {
-                    model.disconnect(message: "登录已失效，请重新登录。")
+                    model.disconnect(message: "Your session has expired. Please sign in again.")
                 } else {
                     model.loading = false
-                    model.workspaceError = "暂时无法打开你的应用，请稍后重试。"
+                    model.workspaceError = "Your workspace could not be opened. Please try again."
                 }
                 return
             }
@@ -126,7 +126,7 @@ struct BrowserView: UIViewRepresentable {
                     self.model.hasNativeMenu = state["menu"] == true
                     self.model.loading = false; self.model.workspaceReady = true; self.model.authenticated = true
                 } else if attempt >= 60 {
-                    self.model.loading = false; self.model.workspaceError = "打开时间有点长，请重试。"
+                    self.model.loading = false; self.model.workspaceError = "This is taking longer than expected. Please try again."
                 } else {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { [weak self, weak webView] in
                         if let webView { self?.awaitWorkspace(webView, ticket: ticket, attempt: attempt + 1) }
@@ -139,11 +139,11 @@ struct BrowserView: UIViewRepresentable {
         private func failed(_ error: Error, _ webView: WKWebView) {
             guard model.connection == connection, model.webView === webView, (error as NSError).code != NSURLErrorCancelled else { return }
             model.loading = false
-            model.workspaceError = "网络连接中断，请检查网络后重试。"
+            model.workspaceError = "Connection lost. Check your network and try again."
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             guard model.connection == connection, model.webView === webView else { return }
-            model.loading = false; model.workspaceError = "页面暂时无法继续，请重新载入。"
+            model.loading = false; model.workspaceError = "This page stopped responding. Please reload."
         }
         func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self; model.activeDownloads[ObjectIdentifier(download)] = download }
         func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self; model.activeDownloads[ObjectIdentifier(download)] = download }
@@ -151,7 +151,7 @@ struct BrowserView: UIViewRepresentable {
                       completionHandler: @escaping (URL?) -> Void) {
             guard response.expectedContentLength <= 32 * 1024 * 1024 else {
                 model.activeDownloads.removeValue(forKey: ObjectIdentifier(download))
-                model.message = "文件超过 32 MB，请在浏览器中下载。"
+                model.message = "This file is over 32 MB. Download it in your browser."
                 completionHandler(nil)
                 return
             }
@@ -163,7 +163,7 @@ struct BrowserView: UIViewRepresentable {
                 let target = directory.appendingPathComponent(name.isEmpty || name == "." || name == ".." ? "download" : name)
                 model.downloads[ObjectIdentifier(download)] = target
                 completionHandler(target)
-            } catch { model.message = "无法保存文件。"; completionHandler(nil) }
+            } catch { model.message = "The file could not be saved."; completionHandler(nil) }
         }
         func downloadDidFinish(_ download: WKDownload) {
             model.activeDownloads.removeValue(forKey: ObjectIdentifier(download))
@@ -174,7 +174,7 @@ struct BrowserView: UIViewRepresentable {
             model.activeDownloads.removeValue(forKey: ObjectIdentifier(download))
             guard model.connection == connection else { return }
             if let url = model.downloads.removeValue(forKey: ObjectIdentifier(download)) { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
-            model.message = "下载未完成，请重试。"
+            model.message = "The download did not finish. Please try again."
         }
         func download(_ download: WKDownload, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
                       decisionHandler: @escaping (WKDownload.RedirectPolicy) -> Void) {
@@ -196,14 +196,14 @@ struct BrowserView: UIViewRepresentable {
         func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String,
                      initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
             let alert = UIAlertController(title: "Ulemi", message: message, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "好", style: .default) { _ in completionHandler() })
+            alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler() })
             present(alert, fallback: completionHandler)
         }
         func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
                      initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
             let alert = UIAlertController(title: "Ulemi", message: message, preferredStyle: .alert)
-            alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completionHandler(false) })
-            alert.addAction(UIAlertAction(title: "确定", style: .default) { _ in completionHandler(true) })
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in completionHandler(false) })
+            alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler(true) })
             present(alert) { completionHandler(false) }
         }
         func webView(_ webView: WKWebView, runJavaScriptTextInputPanelWithPrompt prompt: String, defaultText: String?,
@@ -217,8 +217,8 @@ struct BrowserView: UIViewRepresentable {
             }
             let alert = UIAlertController(title: "Ulemi", message: prompt, preferredStyle: .alert)
             alert.addTextField { $0.text = defaultText }
-            alert.addAction(UIAlertAction(title: "取消", style: .cancel) { _ in completionHandler(nil) })
-            alert.addAction(UIAlertAction(title: "确定", style: .default) { _ in completionHandler(alert.textFields?.first?.text) })
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in completionHandler(nil) })
+            alert.addAction(UIAlertAction(title: "OK", style: .default) { _ in completionHandler(alert.textFields?.first?.text) })
             present(alert) { completionHandler(nil) }
         }
     }

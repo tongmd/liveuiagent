@@ -29,13 +29,13 @@ struct LocalModel: Identifiable, Equatable {
     }
     static func verify(_ url: URL, bytes: Int64, sha256: String) throws {
         let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize
-        guard size == Int(bytes) else { throw LocalModelError.message("下载文件不完整，请重新下载。") }
+        guard size == Int(bytes) else { throw LocalModelError.message("The download is incomplete. Please download it again.") }
         let handle = try FileHandle(forReadingFrom: url)
         defer { try? handle.close() }
         var digest = SHA256()
         while let chunk = try handle.read(upToCount: 1_048_576), !chunk.isEmpty { digest.update(data: chunk) }
         guard digest.finalize().map({ String(format: "%02x", $0) }).joined() == sha256 else {
-            throw LocalModelError.message("文件校验失败，未安装这个模型。请重新下载。")
+            throw LocalModelError.message("The file could not be verified. It was not installed. Please download it again.")
         }
     }
 }
@@ -96,7 +96,7 @@ final class ModelDownload: NSObject, URLSessionDownloadDelegate, @unchecked Send
         guard !finished, !paused else { stateLock.unlock(); return }
         paused = true; stateLock.unlock()
         task?.cancel { [self] data in
-            finish(.failure(LocalModelError.message("下载已暂停，可继续下载。")), resumeData: data)
+            finish(.failure(LocalModelError.message("Download paused. You can resume it anytime.")), resumeData: data)
         }
     }
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
@@ -110,7 +110,7 @@ final class ModelDownload: NSObject, URLSessionDownloadDelegate, @unchecked Send
         do {
             guard let response = downloadTask.response as? HTTPURLResponse,
                   LocalModel.validResponse(status: response.statusCode, expected: model.bytes, advertised: response.expectedContentLength, contentRange: response.value(forHTTPHeaderField: "Content-Range")) else {
-                throw LocalModelError.message("官方模型下载未成功，请检查网络后重试。")
+                throw LocalModelError.message("The model could not be downloaded. Check your connection and try again.")
             }
             guard !isPaused else { return }
             try LocalModel.verify(location, bytes: model.bytes, sha256: model.sha256)
@@ -131,7 +131,7 @@ final class ModelDownload: NSObject, URLSessionDownloadDelegate, @unchecked Send
         if let error, !installed, !isPaused {
             let nsError = error as NSError
             let data = nsError.userInfo[NSURLSessionDownloadTaskResumeData] as? Data
-            finish(.failure(LocalModelError.message("下载中断，可继续下载。若无法继续，请清除未完成下载后重试。")), resumeData: data)
+            finish(.failure(LocalModelError.message("Download interrupted. Resume it, or clear the unfinished download and try again.")), resumeData: data)
         }
     }
 }

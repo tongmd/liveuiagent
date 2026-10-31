@@ -44,9 +44,15 @@ jobs:
         run: |
           xcrun simctl bootstatus "$LIVEUI_SIMULATOR" -b
           xcrun simctl install "$LIVEUI_SIMULATOR" "$RUNNER_TEMP/liveui-simulator/Build/Products/Debug-iphonesimulator/LiveUI.app"
-          xcrun simctl launch "$LIVEUI_SIMULATOR" com.stonezhang.liveui
-          sleep 3
           mkdir -p mobile-artifacts
+          xcrun simctl io "$LIVEUI_SIMULATOR" recordVideo --codec=h264 mobile-artifacts/ios-launch.mp4 &
+          ULEMI_RECORD_PID=$!
+          sleep 1
+          xcrun simctl launch "$LIVEUI_SIMULATOR" com.stonezhang.liveui
+          sleep 4
+          kill -INT "$ULEMI_RECORD_PID"
+          wait "$ULEMI_RECORD_PID" || true
+          test -s mobile-artifacts/ios-launch.mp4
           xcrun simctl io "$LIVEUI_SIMULATOR" screenshot mobile-artifacts/ios-login.png
           xcrun simctl terminate "$LIVEUI_SIMULATOR" com.stonezhang.liveui
           xcrun simctl launch "$LIVEUI_SIMULATOR" com.stonezhang.liveui --preview-local-assistant
@@ -130,7 +136,25 @@ jobs:
             adb exec-out run-as com.stonezhang.liveui cat files/android-login.png > mobile-artifacts/android-login.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/android-local-assistant.png > mobile-artifacts/android-local-assistant.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/android-local-keyboard.png > mobile-artifacts/android-local-keyboard.png || true
-            grep -F 'OK (8 tests)' mobile-artifacts/android-native-tests.txt
+            grep -F 'OK (10 tests)' mobile-artifacts/android-native-tests.txt
+            adb shell settings put global animator_duration_scale 1
+            adb shell settings put global transition_animation_scale 1
+            adb shell settings put global window_animation_scale 1
+            adb shell am instrument -w com.stonezhang.liveui.test/com.stonezhang.liveui.NativeTests | tee mobile-artifacts/android-motion-tests.txt
+            adb shell screenrecord --time-limit 24 /sdcard/ulemi-motion.mp4 &
+            ULEMI_RECORD_PID=$!
+            sleep 1
+            adb shell am instrument -w -e motionPreview true com.stonezhang.liveui.test/com.stonezhang.liveui.NativeTests | tee mobile-artifacts/android-motion-preview.txt
+            wait "$ULEMI_RECORD_PID"
+            adb pull /sdcard/ulemi-motion.mp4 mobile-artifacts/android-motion.mp4
+            ffprobe -v error -show_entries format=duration mobile-artifacts/android-motion.mp4
+            adb exec-out run-as com.stonezhang.liveui cat files/android-motion-1.png > mobile-artifacts/android-motion-1.png || true
+            adb exec-out run-as com.stonezhang.liveui cat files/android-motion-2.png > mobile-artifacts/android-motion-2.png || true
+            for ULEMI_FRAME in android-preview-loading.png android-preview-login.png android-preview-guide.png android-preview-local.png; do
+              adb exec-out run-as com.stonezhang.liveui cat "files/$ULEMI_FRAME" > "mobile-artifacts/$ULEMI_FRAME"
+            done
+            grep -F 'MOTION PREVIEW OK' mobile-artifacts/android-motion-preview.txt
+            grep -F 'OK (10 tests)' mobile-artifacts/android-motion-tests.txt
       - name: Collect Android device evidence
         if: always()
         uses: actions/upload-artifact@v4

@@ -15,16 +15,19 @@ struct LocalChatView: View {
                         LazyVStack(alignment: .leading, spacing: 18) {
                             modelControls
                             if chat.messages.isEmpty {
-                                VStack(alignment: .leading, spacing: 12) {
-                                    Text("不登录，也能开始对话。多次对话会保存在这台手机上。")
-                                    Text("下载完成后，断网仍可使用。云端应用继续在原工作区使用。")
-                                }.foregroundStyle(.secondary).padding(.top, 20)
+                                VStack(alignment: .leading, spacing: 14) {
+                                    BrandMark(size: 34).padding(.bottom, 10)
+                                    Text("Space to think.").font(.system(size: 28, weight: .semibold)).foregroundStyle(AppStyle.ink)
+                                    Text("No account needed.")
+                                    Text("Download a model once, then chat offline. Your conversations stay on this iPhone.")
+                                }.foregroundStyle(.secondary).padding(.vertical, 24)
                             }
                             ForEach(chat.messages) { item in
                                 VStack(alignment: .leading, spacing: 6) {
-                                    Text(item.role == "user" ? "你" : "Ulemi").font(.caption).foregroundStyle(.secondary)
-                                    Text(item.text.isEmpty ? (chat.busy ? "正在思考…" : "未完成") : item.text).textSelection(.enabled)
-                                }.frame(maxWidth: .infinity, alignment: .leading).id(item.id)
+                                    Text(item.role == "user" ? "You" : "Ulemi").font(.caption).foregroundStyle(.secondary)
+                                    Text(item.text.isEmpty ? (chat.busy ? "Thinking…" : "Incomplete") : item.text).textSelection(.enabled)
+                                }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(item.role == "user" ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 20)).id(item.id)
                             }
                         }.padding(16)
                     }
@@ -32,57 +35,60 @@ struct LocalChatView: View {
                     .onChange(of: chat.messages.count) { _ in if let id = chat.messages.last?.id { proxy.scrollTo(id, anchor: .bottom) } }
                 }
                 HStack(alignment: .bottom) {
-                    TextField("和手机模型聊聊", text: $input, axis: .vertical).lineLimit(1...5)
-                        .padding(12).background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14))
-                    if chat.busy { Button("停止") { chat.stop() }.frame(minWidth: 48, minHeight: 44) }
+                    TextField("Ask anything…", text: $input, axis: .vertical).lineLimit(1...5)
+                        .padding(12).background(Color.white, in: RoundedRectangle(cornerRadius: 14))
+                    if chat.busy { Button { chat.stop() } label: { Image(systemName: "stop.fill").frame(width: 46, height: 46) }.foregroundStyle(.white).background(AppStyle.ink, in: Circle()).accessibilityLabel("Stop generation") }
                     else {
-                        Button("发送") { let text = input; chat.send(text); if chat.busy { input = "" } }
+                        Button { let text = input; chat.send(text); if chat.busy { input = "" } } label: {
+                            Image(systemName: "arrow.up").font(.system(size: 18, weight: .semibold)).frame(width: 46, height: 46)
+                        }.foregroundStyle(.white).background(AppStyle.ink.opacity(chat.ready && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? 1 : 0.25), in: Circle())
                             .disabled(!chat.ready || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .frame(minWidth: 48, minHeight: 44)
+                            .accessibilityLabel("Send")
                     }
-                }.padding(12)
-            }
-            .navigationTitle("本机对话").navigationBarTitleDisplayMode(.inline)
+                }.padding(16).background(AppStyle.background)
+            }.background(AppStyle.background).tint(AppStyle.ink)
+            .navigationTitle("On-device chat").navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) { Button("返回") { chat.stop(); chat.pauseDownload(); dismiss() } }
-                ToolbarItem(placement: .navigationBarTrailing) { Button("新对话") { chat.clearChat() }.disabled(chat.busy) }
+                ToolbarItem(placement: .navigationBarLeading) { Button("Back") { chat.stop(); chat.pauseDownload(); dismiss() } }
+                ToolbarItem(placement: .navigationBarTrailing) { Button("New chat") { chat.clearChat() }.disabled(chat.busy) }
             }
-            .confirmationDialog("删除手机里的模型文件？", isPresented: $confirmDelete, titleVisibility: .visible) {
-                Button("删除模型", role: .destructive) { chat.removeDownload() }
-            } message: { Text("对话保留，之后可以重新下载。") }
+            .confirmationDialog("Remove this model?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("Remove model", role: .destructive) { chat.removeDownload() }
+            } message: { Text("Your conversations will stay. You can download the model again.") }
             .onChange(of: scenePhase) { phase in if phase != .active { chat.unload(); chat.pauseDownload() } }
             .onDisappear { chat.stop(); chat.pauseDownload(); chat.unload() }
-        }
+        }.tint(AppStyle.ink)
     }
     private var modelControls: some View {
         VStack(alignment: .leading, spacing: 0) {
-                DisclosureGroup("手机模型", isExpanded: $showModels) {
+                DisclosureGroup("On-device model", isExpanded: $showModels) {
                     VStack(alignment: .leading, spacing: 12) {
-                        Picker("模型", selection: Binding(get: { chat.selectedID }, set: chat.select)) {
+                        Picker("Model", selection: Binding(get: { chat.selectedID }, set: chat.select)) {
                             ForEach(LocalModel.all) { model in Text("\(model.title) · \(model.sizeLabel)").tag(model.id) }
                         }.disabled(chat.busy || chat.downloading)
-                        Text("E4B 更注重回答质量，E2B 占用更少。模型保存在手机，离线对话不会发送到服务器。")
+                        Text("E4B offers more capacity. E2B uses less memory. Chats run on your iPhone and are not sent to a server.")
                             .font(.callout).foregroundStyle(.secondary)
                         if chat.downloading {
                             ProgressView(value: chat.progress)
-                            Button("暂停下载") { chat.pauseDownload() }
+                            Button("Pause download") { chat.pauseDownload() }.buttonStyle(SecondaryButtonStyle())
                         } else if chat.installed {
                             HStack {
-                                if !chat.ready { Button("载入模型") { chat.load() }.disabled(chat.busy) }
-                                Button("删除模型", role: .destructive) { confirmDelete = true }.disabled(chat.busy)
+                                if !chat.ready { Button("Load model") { chat.load() }.buttonStyle(SecondaryButtonStyle()).disabled(chat.busy) }
+                                Button("Remove model", role: .destructive) { confirmDelete = true }.disabled(chat.busy)
                             }
                         } else {
-                            Toggle("允许蜂窝网络下载", isOn: $chat.cellular)
-                            Button("下载并配置 \(chat.model.sizeLabel)") { chat.download() }.disabled(chat.busy)
-                            Button("清除未完成下载", role: .destructive) { chat.removeDownload() }.disabled(chat.busy)
+                            Toggle("Use cellular data", isOn: $chat.cellular)
+                            Button("Download \(chat.model.sizeLabel)") { chat.download() }.buttonStyle(PrimaryButtonStyle()).disabled(chat.busy)
+                            Button("Clear unfinished download", role: .destructive) { chat.removeDownload() }.disabled(chat.busy)
                         }
-                        Link("Google 官方模型与下载说明", destination: URL(string: "https://developers.google.com/edge/litert-lm/models/gemma-4")!)
-                        Link("查看本次下载来源", destination: chat.model.source)
+                        Link("Model information", destination: URL(string: "https://developers.google.com/edge/litert-lm/models/gemma-4")!)
+                        Link("Download source", destination: chat.model.source)
                     }.padding(.vertical, 10)
                 }.padding(16)
                 if !chat.state.isEmpty { Text(chat.state).font(.callout).foregroundStyle(.secondary).padding(.horizontal, 16).padding(.bottom, 8) }
                 if let error = chat.error { Text(error).font(.callout).foregroundStyle(.red).padding(.horizontal, 16).padding(.bottom, 8).accessibilityIdentifier("local-error") }
-        }
+        }.padding(.vertical, 4).background(.white, in: RoundedRectangle(cornerRadius: 22))
+            .overlay(RoundedRectangle(cornerRadius: 22).stroke(AppStyle.ink.opacity(0.06), lineWidth: 1))
     }
 
 }
