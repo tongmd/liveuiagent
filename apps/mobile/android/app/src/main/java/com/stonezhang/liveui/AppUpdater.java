@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 /** Automatic release checks and verified, OS-managed updates. Never touches user or model data. */
 final class AppUpdater {
     static final String PREFS = "ulemi_updates", CHANNEL = "ulemi_updates", ACTION = "com.stonezhang.liveui.UPDATE_RESULT";
-    static final int JOB = 1283, NOTICE = 1283;
+    static final int JOB = 1283, INSTALL_JOB = 1284, NOTICE = 1283;
     private static final long INTERVAL = 12L * 60 * 60 * 1000, REMIND = 24L * 60 * 60 * 1000;
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
     private static final AtomicBoolean RUNNING = new AtomicBoolean(false);
@@ -47,6 +47,35 @@ final class AppUpdater {
         NotificationManager nm = c.getSystemService(NotificationManager.class);
         if (nm != null) nm.createNotificationChannel(new NotificationChannel(CHANNEL, "App updates", NotificationManager.IMPORTANCE_DEFAULT));
     }
+    static void scheduleReady(Context c) {
+        UpdateRelease r = stored(c);
+        if (r == null || !apk(c, r).isFile()) return;
+        try { if (r.versionCode <= installedVersion(c)) { clearOld(c); return; } } catch (Exception unavailable) { return; }
+        JobScheduler jobs = c.getSystemService(JobScheduler.class);
+        if (jobs != null && jobs.getPendingJob(INSTALL_JOB) == null) {
+            // The already verified APK is local. Installation must not depend on Wi-Fi
+            // or the metadata check interval. Android still controls execution timing.
+            jobs.schedule(new JobInfo.Builder(INSTALL_JOB, new ComponentName(c, UpdateJobService.class))
+                .setMinimumLatency(60_000).setRequiresStorageNotLow(true).setPersisted(true)
+                .setBackoffCriteria(15L * 60 * 1000, JobInfo.BACKOFF_POLICY_EXPONENTIAL).build());
+        }
+    }
+    static void installReadyInBackground(Context context, CheckControl control, java.util.function.Consumer<Boolean> finished) {
+        Context c = context.getApplicationContext();
+        if (!RUNNING.compareAndSet(false, true)) { onUi(() -> finished.accept(true)); return; }
+        IO.execute(() -> {
+            boolean retry = false;
+            try { control.verify(); retry = resumeReady(c, control); }
+            catch (Exception failure) { retry = !control.stopped; }
+            finally { RUNNING.set(false); final boolean again = retry; onUi(() -> finished.accept(again)); }
+        });
+    }
+    private static boolean resumeReady(Context c, CheckControl control) throws Exception {
+        UpdateRelease r = stored(c); if (r == null) return false;
+        if (r.versionCode <= installedVersion(c)) { clearOld(c); return false; }
+        if (!apk(c, r).isFile()) { invalidateCached(c, r); return false; }
+        return tryAutomatic(c, r, control);
+    }
     void resume() {
         resumed = true; foreground = new WeakReference<>(this); schedule(activity);
         long permissionAt = prefs(activity).getLong("permission_requested_at", 0);
@@ -64,7 +93,7 @@ final class AppUpdater {
             if (!ready(false, false)) check(false, false, null);
         }, 1800);
     }
-    void pause() { resumed = false; if (foreground.get() == this) foreground.clear(); if (dialog != null) { dialog.dismiss(); dialog = null; showing = false; } }
+    void pause() { resumed = false; if (foreground.get() == this) foreground.clear(); if (dialog != null) { dialog.dismiss(); dialog = null; showing = false; } scheduleReady(activity.getApplicationContext()); }
     void manualCheck() { message("Checking for updates…"); check(true, false, null); }
     private boolean available() { return resumed && !activity.isFinishing() && !activity.isDestroyed(); }
     private void message(String s) { if (available()) Toast.makeText(activity, s, Toast.LENGTH_LONG).show(); }
@@ -78,6 +107,10 @@ final class AppUpdater {
         IO.execute(() -> {
             try {
                 control.verify();
+                if (!manual && stored(c) != null) {
+                    boolean retryReady = resumeReady(c, control);
+                    if (stored(c) != null) { if (retryReady) scheduleReady(c); return; }
+                }
                 long now = System.currentTimeMillis(), last = prefs(c).getLong("last_check", 0);
                 if (!manual && now >= last && now - last < INTERVAL) return;
                 UpdateRelease r = fetchRelease(control);
@@ -94,8 +127,8 @@ final class AppUpdater {
                 }
                 control.verify(); download(c, r, cellular, control); control.verify();
                 prefs(c).edit().putString("ready", r.json().toString()).putString("available", "").putString("error", "").apply();
-                if (active() == null) tryAutomatic(c, r);
-                else onUi(() -> { AppUpdater u = active(); if (u != null) u.ready(manual, false); else notifyReady(c); });
+                if (active() == null) { if (tryAutomatic(c, r, control)) scheduleReady(c); }
+                else { scheduleReady(c); onUi(() -> { AppUpdater u = active(); if (u != null) u.ready(manual, false); else notifyReady(c); }); }
             } catch (Exception e) {
                 if (control.stopped) return;
                 prefs(c).edit().putString("error", "Could not check or download the update. Try again later.").apply();
@@ -165,18 +198,22 @@ final class AppUpdater {
     private static boolean automaticInstallBlocked() {
         return isProcessVisible() || active() != null || LocalAssistantActivity.isUpdateBlocked();
     }
-    private static void tryAutomatic(Context c, UpdateRelease r) {
+    private static boolean tryAutomatic(Context c, UpdateRelease r, CheckControl control) {
         int savedSession = prefs(c).getInt("session_id", -1);
         PackageInstaller.SessionInfo existing = c.getPackageManager().getPackageInstaller().getSessionInfo(savedSession);
-        if (existing != null && existing.isSealed()) { notifyReady(c); return; }
+        if (existing != null && existing.isSealed()) { notifyReady(c); return false; }
         // A crash before commit can leave a saved "committed" label but an unsealed
         // session. installVerified reconciles the actual OS state, not that label.
-        if (Build.VERSION.SDK_INT >= 31 && c.getPackageManager().canRequestPackageInstalls() && !LocalAssistantActivity.isUpdateBlocked()) {
-            if (automaticInstallBlocked()) { notifyReady(c); return; }
+        if (Build.VERSION.SDK_INT >= 31 && c.getPackageManager().canRequestPackageInstalls()) {
+            if (automaticInstallBlocked()) { notifyReady(c); return true; }
             try { verifyApk(c, apk(c, r), r); }
-            catch (Exception invalid) { invalidateCached(c, r); return; }
-            try { installVerified(c, apk(c, r), r, true); } catch (Exception e) { notifyReady(c); }
-        } else notifyReady(c);
+            catch (Exception invalid) { invalidateCached(c, r); return false; }
+            try {
+                control.verify(); installVerified(c, apk(c, r), r, true, control);
+                PackageInstaller.SessionInfo pending = c.getPackageManager().getPackageInstaller().getSessionInfo(prefs(c).getInt("session_id", -1));
+                return pending == null || !pending.isSealed();
+            } catch (Exception e) { notifyReady(c); return true; }
+        } else { notifyReady(c); return false; }
     }
     static boolean invalidateCached(Context c, UpdateRelease r) {
         int id = prefs(c).getInt("session_id", -1);
@@ -193,7 +230,7 @@ final class AppUpdater {
             NotificationManager nm = c.getSystemService(NotificationManager.class); if (nm == null || !nm.areNotificationsEnabled()) return;
             PendingIntent pi = PendingIntent.getActivity(c, NOTICE, new Intent(c, MainActivity.class).putExtra("ulemi_update_open", true).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP), PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
             nm.notify(NOTICE, new Notification.Builder(c, CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download_done).setContentTitle("Ulemi update ready")
-                .setContentText("Open Ulemi to finish updating.").setContentIntent(pi).setAutoCancel(true).build());
+                .setContentText("Open Ulemi to finish updating.").setContentIntent(pi).setAutoCancel(true).setOnlyAlertOnce(true).build());
         } catch (SecurityException ignored) { /* Notifications may be disabled; the foreground prompt remains available. */ }
     }
     private static HttpsURLConnection connect(String value, boolean apk, CheckControl control) throws Exception {
@@ -250,9 +287,10 @@ final class AppUpdater {
         byte[][] aa = new byte[a.length][], bb = new byte[b.length][]; for (int i = 0; i < a.length; i++) aa[i] = a[i].toByteArray(); for (int i = 0; i < b.length; i++) bb[i] = b[i].toByteArray();
         if (!UpdatePolicy.sameSigners(aa, bb)) throw new SecurityException("Update signing certificate mismatch");
     }
-    static void installVerified(Context c, File file, UpdateRelease r) throws Exception { installVerified(c, file, r, false); }
-    private static synchronized void installVerified(Context c, File file, UpdateRelease r, boolean automatic) throws Exception {
+    static void installVerified(Context c, File file, UpdateRelease r) throws Exception { installVerified(c, file, r, false, null); }
+    private static synchronized void installVerified(Context c, File file, UpdateRelease r, boolean automatic, CheckControl control) throws Exception {
         verifyApk(c, file, r);
+        if (control != null) control.verify();
         if (automatic && automaticInstallBlocked()) { notifyReady(c); return; }
         if (!c.getPackageManager().canRequestPackageInstalls()) throw new SecurityException("Installation permission required");
         PackageInstaller installer = c.getPackageManager().getPackageInstaller();
@@ -273,7 +311,7 @@ final class AppUpdater {
             try (InputStream in = new FileInputStream(file); OutputStream out = session.openWrite("base.apk", 0, r.size)) { byte[] b = new byte[65536]; int n; while ((n = in.read(b)) != -1) out.write(b, 0, n); session.fsync(out); }
             // Recheck after copying: a native screen may have become visible while the
             // APK was being verified or staged. Uncommitted staging is safe to abandon.
-            if (automatic && automaticInstallBlocked()) { deferred = true; notifyReady(c); return; }
+            if ((control != null && control.stopped) || (automatic && automaticInstallBlocked())) { deferred = true; notifyReady(c); return; }
             prefs(c).edit().putInt("session_id", id).putString("session_token", token).putLong("expected_version", r.versionCode).putString("install_status", "committed").commit();
             Intent result = new Intent(c, UpdateInstallReceiver.class).setAction(ACTION).putExtra("ulemi_session_token", token);
             int flags = PendingIntent.FLAG_UPDATE_CURRENT; if (Build.VERSION.SDK_INT >= 31) flags |= PendingIntent.FLAG_MUTABLE;
