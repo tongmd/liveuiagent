@@ -5,14 +5,17 @@ import WebKit
 @MainActor
 struct LiveUIApp: App {
     @StateObject private var browser = BrowserModel()
-    var body: some Scene { WindowGroup { RootView().environmentObject(browser) } }
+    var body: some Scene { WindowGroup { RootView().environmentObject(browser).preferredColorScheme(.light) } }
 }
 
 @MainActor
 final class BrowserModel: ObservableObject {
-    @Published var connection = CredentialStore.load()
+    @Published var connection = CredentialStore.loadForApp()
     @Published var message: String?
-    @Published var loading = false
+    @Published var loading = true
+    @Published var workspaceReady = false
+    @Published var authenticated = false
+    @Published var workspaceError: String?
     @Published var canGoBack = false
     @Published var share: SharedFile?
     @Published var clearing = false
@@ -35,19 +38,29 @@ final class BrowserModel: ObservableObject {
             if result as? Bool != true, webView.canGoBack { webView.goBack() }
         }
     }
+    func reload() {
+        workspaceError = nil
+        loading = true
+        webView?.reload()
+    }
     func cancelDownloads() {
         activeDownloads.values.forEach { $0.cancel { _ in } }
         activeDownloads.removeAll()
         downloads.removeAll()
         try? FileManager.default.removeItem(at: FileManager.default.temporaryDirectory.appendingPathComponent("LiveUI-Downloads"))
     }
-    func disconnect() {
+    func disconnect(message: String? = nil) {
         clearing = true
         webView?.stopLoading()
         cancelDownloads()
         share = nil
         connection = nil
+        authenticated = false
         webView = nil
+        workspaceReady = false
+        workspaceError = nil
+        loading = true
+        self.message = message
         CredentialStore.remove()
         URLCredentialStorage.shared.allCredentials.forEach { space, credentials in
             credentials.values.forEach { URLCredentialStorage.shared.remove($0, for: space) }
@@ -58,104 +71,316 @@ final class BrowserModel: ObservableObject {
         }
     }
     func accept(_ candidate: Connection) throws {
+        guard candidate.isAppConnection else { throw LoginVerifier.LoginError.invalidAddress }
         try CredentialStore.save(candidate)
+        workspaceReady = false
+        workspaceError = nil
+        loading = true
         connection = candidate
+        authenticated = true
         message = nil
+    }
+}
+
+private enum AppStyle {
+    static let background = Color(red: 0.98, green: 0.98, blue: 0.97)
+    static let ink = Color(red: 0.08, green: 0.08, blue: 0.08)
+}
+
+private struct BrandMark: View {
+    var size: CGFloat = 64
+    var body: some View {
+        Image("BrandMark").resizable().scaledToFit().frame(width: size, height: size)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct PrimaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.headline).frame(maxWidth: .infinity).padding(.vertical, 17)
+            .foregroundStyle(.white).background(AppStyle.ink.opacity(enabled ? 1 : 0.35))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.98 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: configuration.isPressed)
     }
 }
 
 @MainActor
 struct RootView: View {
-    @State private var showSettings = false
     @EnvironmentObject private var browser: BrowserModel
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @AppStorage("liveui.onboarding.completed.v1") private var completedGuide = false
+    @State private var starting = true
+    @State private var revealed = false
+    @State private var showGuide = false
+    @State private var confirmLogout = false
+
     var body: some View {
-        NavigationStack {
-            Group {
-                if browser.clearing { ProgressView("正在退出…") }
-                else if let connection = browser.connection {
-                    BrowserView(connection: connection, model: browser)
-                        .id(connection.address + connection.username)
-                } else { ConnectionView() }
-            }
-            .navigationTitle("liveUI")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                if browser.connection != nil {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button { browser.goBack() } label: { Image(systemName: "chevron.left") }
-                            .accessibilityLabel("返回")
+        ZStack {
+            AppStyle.background.ignoresSafeArea()
+            NavigationStack {
+                Group {
+                    if browser.clearing {
+                        ProgressView("正在退出…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else if let connection = browser.connection {
+                        workspace(connection)
+                    } else { ConnectionView() }
+                }
+                .background(AppStyle.background)
+                .navigationTitle(browser.connection == nil ? "" : "liveUI")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar(browser.connection == nil ? .hidden : .visible, for: .navigationBar)
+                .toolbar {
+                    if browser.connection != nil {
+                        ToolbarItem(placement: .navigationBarLeading) {
+                            Button { browser.goBack() } label: { Image(systemName: "chevron.left") }
+                                .accessibilityLabel("返回")
+                        }
+                        ToolbarItem(placement: .navigationBarTrailing) {
+                            Menu {
+                                Text(browser.connection?.username ?? "")
+                                Button { showGuide = true } label: { Label("使用指引", systemImage: "sparkles") }
+                                Button { browser.reload() } label: { Label("重新载入", systemImage: "arrow.clockwise") }
+                                if !browser.activeDownloads.isEmpty {
+                                    Button("取消下载", role: .destructive) { browser.cancelDownloads() }
+                                }
+                                Button(role: .destructive) { confirmLogout = true } label: {
+                                    Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+                                }
+                            } label: { Image(systemName: "person.crop.circle") }
+                            .accessibilityLabel("账号")
+                        }
                     }
-                    ToolbarItemGroup(placement: .navigationBarTrailing) {
-                        if browser.loading { ProgressView() }
-                        Button { browser.webView?.reload() } label: { Image(systemName: "arrow.clockwise") }
-                            .accessibilityLabel("重新载入")
-                        Menu {
-                            Text(browser.connection?.url?.host ?? "")
-                            if !browser.activeDownloads.isEmpty { Button("取消下载", role: .destructive) { browser.cancelDownloads() } }
-                            Button { showSettings = true } label: { Label("连接设置", systemImage: "gearshape") }
-                            Button(role: .destructive) { browser.disconnect() } label: { Label("退出", systemImage: "rectangle.portrait.and.arrow.right") }
-                        } label: { Image(systemName: "ellipsis.circle") }
+                }
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    if browser.connection != nil, let message = browser.message {
+                        HStack {
+                            Text(message).font(.callout)
+                            Spacer()
+                            Button("关闭") { browser.message = nil }.frame(minWidth: 44, minHeight: 44)
+                        }.padding(.horizontal, 16).background(.regularMaterial)
                     }
                 }
             }
-            .safeAreaInset(edge: .bottom, spacing: 0) {
-                if let message = browser.message {
-                    HStack { Text(message).font(.footnote); Spacer(); Button("关闭") { browser.message = nil } }
-                        .padding(12).background(.regularMaterial)
+            .opacity(starting ? 0 : 1)
+            .accessibilityHidden(starting)
+            if starting {
+                VStack(spacing: 20) {
+                    BrandMark(size: 82)
+                    Text("liveUI").font(.system(size: 28, weight: .semibold))
                 }
-            }
-            .sheet(item: $browser.share) { item in ShareSheet(url: item.url) }
-            .sheet(isPresented: $showSettings) {
-                NavigationStack {
-                    Form {
-                        LabeledContent("服务", value: browser.connection?.address ?? "")
-                        LabeledContent("账号", value: browser.connection?.username ?? "")
-                        Button("退出并更换连接", role: .destructive) { showSettings = false; browser.disconnect() }
-                    }.navigationTitle("连接设置")
-                        .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { showSettings = false } } }
-                }
+                .scaleEffect(revealed || reduceMotion ? 1 : 0.94)
+                .opacity(revealed || reduceMotion ? 1 : 0)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(AppStyle.background)
+                .accessibilityElement(children: .combine)
+                .transition(.opacity)
+                .onTapGesture { finishLaunch() }
+                .accessibilityAddTraits(.isButton)
+                .accessibilityHint("轻点继续")
             }
         }
+        .tint(AppStyle.ink)
+        .sheet(item: $browser.share) { item in ShareSheet(url: item.url) }
+        .fullScreenCover(isPresented: $showGuide) {
+            OnboardingView {
+                completedGuide = true
+                showGuide = false
+            }
+        }
+        .confirmationDialog("退出当前账号？", isPresented: $confirmLogout, titleVisibility: .visible) {
+            Button("退出登录", role: .destructive) { browser.disconnect() }
+        } message: { Text("已保存的应用会保留，下次登录后可以继续使用。") }
+        .onChange(of: browser.connection) { connection in
+            if connection == nil { showGuide = false }
+            else if !starting && OnboardingPolicy.shouldPresent(signedIn: browser.authenticated, completed: completedGuide) { showGuide = true }
+        }
+        .onChange(of: browser.authenticated) { signedIn in
+            if !starting && OnboardingPolicy.shouldPresent(signedIn: signedIn, completed: completedGuide) { showGuide = true }
+        }
+        .task {
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.36)) { revealed = true }
+            try? await Task.sleep(nanoseconds: OnboardingPolicy.launchDelay(reduceMotion: reduceMotion))
+            guard !Task.isCancelled else { return }
+            finishLaunch()
+        }
+    }
+
+    private func finishLaunch() {
+        guard starting else { return }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.22)) { starting = false }
+        showGuide = OnboardingPolicy.shouldPresent(signedIn: browser.authenticated, completed: completedGuide)
+    }
+
+    private func workspace(_ connection: Connection) -> some View {
+        ZStack {
+            BrowserView(connection: connection, model: browser).id(connection.address + connection.username)
+                .opacity(browser.workspaceReady && browser.workspaceError == nil ? 1 : 0)
+                .accessibilityHidden(!browser.workspaceReady || browser.workspaceError != nil)
+            if !browser.workspaceReady || browser.workspaceError != nil {
+                VStack(spacing: 24) {
+                    BrandMark(size: 58)
+                    if let error = browser.workspaceError {
+                        Text(error).font(.body).multilineTextAlignment(.center)
+                        Button("重试") { browser.reload() }.buttonStyle(PrimaryButtonStyle())
+                        Button("返回登录") { browser.disconnect() }.frame(minHeight: 44)
+                    } else {
+                        ProgressView().tint(AppStyle.ink)
+                        Text("正在打开你的应用…").font(.body)
+                    }
+                }.padding(28).frame(maxWidth: 360)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(AppStyle.background)
+            }
+        }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.22), value: browser.workspaceReady)
     }
 }
 
 @MainActor
 struct ConnectionView: View {
     @EnvironmentObject private var browser: BrowserModel
-    @State private var address = Connection.defaultAddress
     @State private var username = ""
     @State private var password = ""
     @State private var busy = false
     @State private var error: String?
+    @State private var loginTask: Task<Void, Never>?
+    @State private var attempt = LoginAttempt()
+    @FocusState private var focusedField: Field?
+    private enum Field { case username, password }
+
     var body: some View {
-        Form {
-            Section {
-                TextField("用户名", text: $username).textContentType(.username)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                SecureField("密码", text: $password).textContentType(.password)
-                DisclosureGroup("服务器") {
-                    TextField("https://…", text: $address).keyboardType(.URL).textContentType(.URL)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 28) {
+                VStack(alignment: .leading, spacing: 20) {
+                    BrandMark(size: 66)
+                    Text("欢迎来到 liveUI").font(.largeTitle.weight(.semibold))
+                    Text("从一个想法开始，做出自己的应用。")
+                        .font(.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }.padding(.bottom, 8)
+                VStack(alignment: .leading, spacing: 14) {
+                    TextField("账号", text: $username).textContentType(.username)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
-                }
-            } header: { Text("连接 liveUI") }
-            Section {
-                Button {
-                    busy = true; error = nil
-                    let candidate = Connection(address: address.trimmingCharacters(in: .whitespacesAndNewlines),
-                                               username: username, password: password, realm: "LiveUIAgent")
-                    Task {
-                        do {
-                            try await LoginVerifier(connection: candidate).verify()
-                            try browser.accept(candidate)
-                            password = ""
-                        } catch { self.error = "未能连接。请检查 HTTPS 地址、账号、密码，然后重试。" }
-                        busy = false
+                        .focused($focusedField, equals: .username).submitLabel(.next)
+                        .onSubmit { focusedField = .password }
+                        .accessibilityIdentifier("login-account")
+                        .padding(17).background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    SecureField("密码", text: $password).textContentType(.password)
+                        .focused($focusedField, equals: .password).submitLabel(.go)
+                        .onSubmit { signIn() }
+                        .accessibilityIdentifier("login-password")
+                        .padding(17).background(.white, in: RoundedRectangle(cornerRadius: 16))
+                    if let message = error ?? browser.message {
+                        Text(message).font(.callout).foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("login-error")
                     }
-                } label: { HStack { Text("连接"); if busy { Spacer(); ProgressView() } } }
-                .disabled(busy || username.isEmpty || password.isEmpty || Connection.validURL(address) == nil)
-                if let error { Text(error).foregroundStyle(.red) }
-            } footer: { Text("使用现有 liveUI 账号。连接成功后，密码保存在本机钥匙串。") }
-        }.disabled(busy)
+                }.disabled(busy)
+                VStack(spacing: 12) {
+                    Button { signIn() } label: {
+                        HStack(spacing: 10) {
+                            if busy { ProgressView().tint(.white) }
+                            Text(busy ? "正在登录…" : "登录")
+                        }
+                    }.buttonStyle(PrimaryButtonStyle())
+                        .disabled(busy || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
+                        .accessibilityIdentifier("login-submit")
+                    if busy { Button("取消") { cancelLogin() }.frame(minHeight: 44) }
+                    else {
+                        Link("还没有账号？加入候补名单", destination: URL(string: "https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")!)
+                            .font(.callout).frame(minHeight: 44)
+                    }
+                }
+            }.padding(.horizontal, 28).padding(.top, 48).padding(.bottom, 28)
+                .frame(maxWidth: 440).frame(maxWidth: .infinity)
+        }
+        .scrollDismissesKeyboard(.interactively)
+        .background(AppStyle.background)
+        .onDisappear { cancelLogin() }
+    }
+
+    private func cancelLogin() {
+        attempt.cancel()
+        loginTask?.cancel()
+        loginTask = nil
+        busy = false
+    }
+    private func signIn() {
+        guard !busy, !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !password.isEmpty else { return }
+        focusedField = nil
+        busy = true; error = nil; browser.message = nil
+        let ticket = attempt.begin()
+        let candidate = Connection(address: Connection.defaultAddress,
+                                   username: username.trimmingCharacters(in: .whitespacesAndNewlines),
+                                   password: password, realm: "LiveUIAgent")
+        loginTask = Task {
+            do {
+                try await LoginVerifier(connection: candidate).verify()
+                try Task.checkCancellation()
+                guard attempt.isCurrent(ticket) else { return }
+                try browser.accept(candidate)
+                password = ""
+            } catch {
+                guard !Task.isCancelled, attempt.isCurrent(ticket) else { return }
+                if error is CredentialStore.StoreError {
+                    self.error = "暂时无法安全保存登录信息，请解锁设备后重试。"
+                } else { self.error = LoginFeedback.message(for: error) }
+            }
+            guard attempt.isCurrent(ticket) else { return }
+            busy = false
+            loginTask = nil
+        }
+    }
+}
+
+@MainActor
+struct OnboardingView: View {
+    let finish: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var page = 0
+    private let pages: [(icon: String, title: String, body: String)] = [
+        ("text.bubble", "说说你想做什么", "在底部输入你的想法，例如整理待办、规划行程，或比较一组数据。"),
+        ("slider.horizontal.3", "边用边调整", "打开应用后，继续告诉 liveUI 你的想法。你可以调整内容、功能和布局。"),
+        ("square.grid.2x2", "随时回来继续", "关闭应用会回到列表。下次打开时，继续使用已保存的内容。")
+    ]
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text("liveUI").font(.headline)
+                Spacer()
+                Button("跳过") { finish() }.frame(minWidth: 44, minHeight: 44)
+                    .accessibilityIdentifier("guide-skip")
+            }.padding(.horizontal, 24)
+            TabView(selection: $page) {
+                ForEach(pages.indices, id: \.self) { index in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 28) {
+                            Image(systemName: pages[index].icon).font(.system(size: 70, weight: .light))
+                                .accessibilityHidden(true).frame(height: 120)
+                            Text(pages[index].title).font(.largeTitle.weight(.semibold))
+                            Text(pages[index].body).font(.title3).foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }.padding(.horizontal, 28).padding(.top, 40).padding(.bottom, 24)
+                            .frame(maxWidth: 440).frame(maxWidth: .infinity)
+                    }.tag(index)
+                }
+            }.tabViewStyle(.page(indexDisplayMode: .never))
+            VStack(spacing: 22) {
+                HStack(spacing: 8) {
+                    ForEach(pages.indices, id: \.self) { index in
+                        Capsule().fill(index == page ? AppStyle.ink : Color.gray.opacity(0.25))
+                            .frame(width: index == page ? 24 : 7, height: 7)
+                    }
+                }.accessibilityElement(children: .ignore).accessibilityLabel("第 \(page + 1) 步，共 3 步")
+                Button {
+                    if page == pages.count - 1 { finish() }
+                    else { withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) { page += 1 } }
+                } label: { Text(page == pages.count - 1 ? "开始使用" : "继续") }
+                    .buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier("guide-next")
+            }.padding(.horizontal, 28).padding(.vertical, 24).frame(maxWidth: 440)
+        }
+        .background(AppStyle.background).foregroundStyle(AppStyle.ink).tint(AppStyle.ink)
+        .interactiveDismissDisabled()
     }
 }
 

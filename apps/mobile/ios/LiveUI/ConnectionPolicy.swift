@@ -33,3 +33,45 @@ struct Connection: Codable, Equatable {
     }
     var credential: URLCredential { URLCredential(user: username, password: password, persistence: .none) }
 }
+
+// A saved custom endpoint must never silently receive a new app login or migrate
+// credentials to a different host. The distributed app has one fixed entry point.
+extension Connection {
+    var isAppConnection: Bool { address == Self.defaultAddress && realm == "LiveUIAgent" }
+}
+
+enum OnboardingPolicy {
+    static func shouldPresent(signedIn: Bool, completed: Bool) -> Bool { signedIn && !completed }
+    static func launchDelay(reduceMotion: Bool) -> UInt64 { reduceMotion ? 0 : 650_000_000 }
+}
+
+struct LoginAttempt {
+    private var current: UUID?
+    mutating func begin() -> UUID { let ticket = UUID(); current = ticket; return ticket }
+    mutating func cancel() { current = nil }
+    func isCurrent(_ ticket: UUID) -> Bool { current == ticket }
+}
+
+enum AppLoginFailure: Error { case credentials, unavailable }
+
+enum LoginFeedback {
+    static func message(for error: Error) -> String {
+        if let failure = error as? AppLoginFailure {
+            switch failure {
+            case .credentials: return "账号或密码不正确，请检查后重试。"
+            case .unavailable: return "暂时无法登录，请稍后重试。"
+            }
+        }
+        let code = (error as NSError).code
+        if (error as NSError).domain == NSURLErrorDomain {
+            if code == NSURLErrorUserAuthenticationRequired || code == NSURLErrorUserCancelledAuthentication {
+                return "账号或密码不正确，请检查后重试。"
+            }
+            if [NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorCannotConnectToHost,
+                NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorTimedOut].contains(code) {
+                return "网络连接不顺畅，请检查网络后重试。"
+            }
+        }
+        return "暂时无法登录，请稍后重试。"
+    }
+}

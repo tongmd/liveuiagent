@@ -18,7 +18,10 @@ struct BrowserView: UIViewRepresentable {
         webView.allowsBackForwardNavigationGestures = true
         webView.scrollView.keyboardDismissMode = .interactive
         webView.scrollView.contentInsetAdjustmentBehavior = .never
+        webView.isOpaque = false
+        webView.backgroundColor = UIColor(red: 0.98, green: 0.98, blue: 0.97, alpha: 1)
         model.webView = webView
+        context.coordinator.activeWebView = webView
         if let url = connection.url { webView.load(URLRequest(url: url)) }
         return webView
     }
@@ -33,16 +36,22 @@ struct BrowserView: UIViewRepresentable {
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
         let connection: Connection
         let model: BrowserModel
+        weak var activeWebView: WKWebView?
         init(connection: Connection, model: BrowserModel) { self.connection = connection; self.model = model }
         private func authenticate(_ challenge: URLAuthenticationChallenge,
                                   _ completion: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
             if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
                 completion(.performDefaultHandling, nil)
-            } else if connection.accepts(challenge) && model.connection == connection {
+            } else if connection.accepts(challenge) && model.connection == connection && model.webView === activeWebView {
                 completion(.useCredential, connection.credential)
             } else {
                 completion(.cancelAuthenticationChallenge, nil)
-                model.message = "认证未通过，请通过连接设置重新登录。"
+                let space = challenge.protectionSpace
+                if challenge.previousFailureCount > 0, connection.accepts(host: space.host, port: space.port,
+                    protocolName: space.protocol, realm: space.realm, method: space.authenticationMethod, failures: 0),
+                   model.connection == connection, model.webView === activeWebView {
+                    model.disconnect(message: "登录已失效，请重新登录。")
+                }
             }
         }
         func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge,
@@ -75,25 +84,43 @@ struct BrowserView: UIViewRepresentable {
             decisionHandler(.cancel)
             if action.navigationType == .linkActivated, ["https", "http", "mailto", "tel"].contains(url.scheme ?? "") {
                 UIApplication.shared.open(url)
-            } else { model.message = "页面尝试离开当前服务，已停止。" }
+            } else { model.message = "无法打开这个页面，请返回后重试。" }
         }
         func webView(_ webView: WKWebView, decidePolicyFor response: WKNavigationResponse,
                      decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+            if response.isForMainFrame, let http = response.response as? HTTPURLResponse, http.statusCode >= 400 {
+                decisionHandler(.cancel)
+                guard model.connection == connection, model.webView === webView else { return }
+                if http.statusCode == 401 || http.statusCode == 403 {
+                    model.disconnect(message: "登录已失效，请重新登录。")
+                } else {
+                    model.loading = false
+                    model.workspaceError = "暂时无法打开你的应用，请稍后重试。"
+                }
+                return
+            }
             let disposition = (response.response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition") ?? ""
             decisionHandler(!response.canShowMIMEType || disposition.lowercased().hasPrefix("attachment") ? .download : .allow)
         }
-        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) { model.loading = true }
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            model.loading = false; model.canGoBack = webView.canGoBack
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            guard model.connection == connection, model.webView === webView else { return }
+            model.loading = true; model.workspaceError = nil
         }
-        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed(error) }
-        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(error) }
-        private func failed(_ error: Error) {
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard model.connection == connection, model.webView === webView else { return }
+            model.loading = false; model.canGoBack = webView.canGoBack
+            if model.workspaceError == nil { model.workspaceReady = true; model.authenticated = true }
+        }
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { failed(error, webView) }
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { failed(error, webView) }
+        private func failed(_ error: Error, _ webView: WKWebView) {
+            guard model.connection == connection, model.webView === webView, (error as NSError).code != NSURLErrorCancelled else { return }
             model.loading = false
-            if (error as NSError).code != NSURLErrorCancelled { model.message = "连接中断。可重新载入页面，原任务不会自动重新提交。" }
+            model.workspaceError = "网络连接中断，请检查网络后重试。"
         }
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-            model.loading = false; model.message = "页面进程已停止。请重新载入。"
+            guard model.connection == connection, model.webView === webView else { return }
+            model.loading = false; model.workspaceError = "页面暂时无法继续，请重新载入。"
         }
         func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) { download.delegate = self; model.activeDownloads[ObjectIdentifier(download)] = download }
         func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) { download.delegate = self; model.activeDownloads[ObjectIdentifier(download)] = download }

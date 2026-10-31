@@ -16,6 +16,11 @@ enum CredentialStore {
               let data = result as? Data else { return nil }
         return try? JSONDecoder().decode(Connection.self, from: data)
     }
+    static func loadForApp() -> Connection? {
+        guard let saved = load() else { return nil }
+        guard saved.isAppConnection else { remove(); return nil }
+        return saved
+    }
     static func save(_ connection: Connection) throws {
         let data = try JSONEncoder().encode(connection)
         let status = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
@@ -33,7 +38,13 @@ enum CredentialStore {
 
 final class LoginVerifier: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let connection: Connection
+    private let authLock = NSLock()
     private var challenged = false
+    private var rejectedCredentials = false
+    private func authenticationState() -> (challenged: Bool, rejected: Bool) {
+        authLock.lock(); defer { authLock.unlock() }
+        return (challenged, rejectedCredentials)
+    }
     init(connection: Connection) { self.connection = connection }
     func verify() async throws {
         guard let url = connection.url else { throw LoginError.invalidAddress }
@@ -43,19 +54,32 @@ final class LoginVerifier: NSObject, URLSessionTaskDelegate, @unchecked Sendable
         config.urlCredentialStorage = nil
         let session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
         defer { session.invalidateAndCancel() }
-        let (_, response) = try await session.data(from: url)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200,
-              response.url.map(connection.contains) == true,
-              response.mimeType?.lowercased() == "text/html", challenged else { throw LoginError.rejected }
+        let response: URLResponse
+        do { (_, response) = try await session.data(from: url) }
+        catch {
+            if authenticationState().rejected { throw AppLoginFailure.credentials }
+            throw error
+        }
+        guard let http = response as? HTTPURLResponse else { throw AppLoginFailure.unavailable }
+        if http.statusCode == 401 || http.statusCode == 403 { throw AppLoginFailure.credentials }
+        guard http.statusCode == 200, response.url.map(connection.contains) == true,
+              response.mimeType?.lowercased() == "text/html", authenticationState().challenged else { throw AppLoginFailure.unavailable }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, didReceive challenge: URLAuthenticationChallenge,
                     completionHandler: @escaping @Sendable (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
         if challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust {
             completionHandler(.performDefaultHandling, nil)
         } else if connection.accepts(challenge) {
-            challenged = true
+            authLock.lock(); challenged = true; authLock.unlock()
             completionHandler(.useCredential, connection.credential)
-        } else { completionHandler(.cancelAuthenticationChallenge, nil) }
+        } else {
+            let space = challenge.protectionSpace
+            if challenge.previousFailureCount > 0, connection.accepts(host: space.host, port: space.port,
+                protocolName: space.protocol, realm: space.realm, method: space.authenticationMethod, failures: 0) {
+                authLock.lock(); rejectedCredentials = true; authLock.unlock()
+            }
+            completionHandler(.cancelAuthenticationChallenge, nil)
+        }
     }
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {

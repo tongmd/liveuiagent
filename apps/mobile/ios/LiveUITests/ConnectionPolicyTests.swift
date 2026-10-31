@@ -28,3 +28,44 @@ final class ConnectionPolicyTests: XCTestCase {
         XCTAssertFalse(accepts("liveui.example", 443, "https", "LiveUIAgent", NSURLAuthenticationMethodHTTPBasic, 1))
     }
 }
+
+final class OnboardingPolicyTests: XCTestCase {
+    func testFirstLoginReturnAndExplicitReplay() {
+        XCTAssertFalse(OnboardingPolicy.shouldPresent(signedIn: false, completed: false))
+        XCTAssertTrue(OnboardingPolicy.shouldPresent(signedIn: true, completed: false))
+        XCTAssertFalse(OnboardingPolicy.shouldPresent(signedIn: true, completed: true))
+        XCTAssertFalse(OnboardingPolicy.shouldPresent(signedIn: false, completed: true))
+        // Logging out does not reset the guide preference. Replay is an explicit
+        // account-menu presentation and never writes this preference to false.
+        let defaults = UserDefaults(suiteName: UUID().uuidString)!
+        defaults.set(true, forKey: "liveui.onboarding.completed.v1")
+        XCTAssertFalse(OnboardingPolicy.shouldPresent(signedIn: true, completed: defaults.bool(forKey: "liveui.onboarding.completed.v1")))
+    }
+    func testReduceMotionHasNoLaunchDelay() {
+        XCTAssertEqual(OnboardingPolicy.launchDelay(reduceMotion: true), 0)
+        XCTAssertLessThanOrEqual(OnboardingPolicy.launchDelay(reduceMotion: false), 700_000_000)
+    }
+    func testCancelledOrSupersededLoginCannotAcceptLateSuccess() {
+        var attempt = LoginAttempt()
+        let old = attempt.begin()
+        attempt.cancel()
+        XCTAssertFalse(attempt.isCurrent(old))
+        let next = attempt.begin()
+        XCTAssertFalse(attempt.isCurrent(old))
+        XCTAssertTrue(attempt.isCurrent(next))
+        attempt.cancel()
+        XCTAssertFalse(attempt.isCurrent(next))
+    }
+    func testRejectsSavedCustomEndpointRatherThanMovingCredentials() {
+        XCTAssertTrue(Connection(address: Connection.defaultAddress, username: "u", password: "p", realm: "LiveUIAgent").isAppConnection)
+        for address in ["https://other.example/liveui/", "https://liveui.stonezhang.com:8443/liveui/", "https://liveui.stonezhang.com/intern/"] {
+            XCTAssertFalse(Connection(address: address, username: "u", password: "p", realm: "LiveUIAgent").isAppConnection)
+        }
+    }
+    func testFriendlyErrorsDistinguishCredentialsFromNetwork() {
+        XCTAssertEqual(LoginFeedback.message(for: AppLoginFailure.credentials), "账号或密码不正确，请检查后重试。")
+        XCTAssertEqual(LoginFeedback.message(for: URLError(.notConnectedToInternet)), "网络连接不顺畅，请检查网络后重试。")
+        XCTAssertEqual(LoginFeedback.message(for: URLError(.timedOut)), "网络连接不顺畅，请检查网络后重试。")
+        XCTAssertEqual(LoginFeedback.message(for: NSError(domain: "private-backend-url", code: 503)), "暂时无法登录，请稍后重试。")
+    }
+}
