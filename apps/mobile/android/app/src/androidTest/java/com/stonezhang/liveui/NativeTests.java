@@ -157,8 +157,7 @@ public final class NativeTests extends Instrumentation {
                 });
                 android.os.SystemClock.sleep(1200);
                 runOnMainSync(() -> { try {
-                    assertBrandCentered(a.getWindow().getDecorView(), "Ulemi");
-                    assertBrandCentered(a.getWindow().getDecorView(), "Opening your space");
+                    assertCompactLoading(a.getWindow().getDecorView());
                     java.lang.reflect.Method await = MainActivity.class.getDeclaredMethod("awaitWorkspace", int.class, int.class); await.setAccessible(true); await.invoke(a, (int)get(a,"workspaceAttempt"), 0);
                 } catch (Exception e) { throw new AssertionError(e); } });
                 for (int poll = 0; poll < 100; poll++) {
@@ -191,11 +190,11 @@ public final class NativeTests extends Instrumentation {
                 runOnMainSync(() -> assertBrandCentered(a.getWindow().getDecorView(), "Ulemi"));
                 runOnMainSync(() -> { try {
                     invoke(a,"showRestoring"); mark[0] = findMotion(a.getWindow().getDecorView()); require(mark[0] != null);
-                    require(labels(a.getWindow().getDecorView()).contains("Opening your space"));
+                    require(labels(a.getWindow().getDecorView()).contains("Opening workspace"));
                     require(!labels(a.getWindow().getDecorView()).matches(".*[\\u4e00-\\u9fff].*")); phases[0] = mark[0].motionPhase();
                 } catch(Exception e) { throw new AssertionError(e); } });
                 capture("android-motion-1.png");
-                runOnMainSync(() -> { assertBrandCentered(a.getWindow().getDecorView(), "Ulemi"); assertBrandCentered(a.getWindow().getDecorView(), "Opening your space"); });
+                runOnMainSync(() -> assertCompactLoading(a.getWindow().getDecorView()));
                 android.os.SystemClock.sleep(600);
                 runOnMainSync(() -> { phases[1] = mark[0].motionPhase(); if(android.animation.ValueAnimator.areAnimatorsEnabled()) { require(mark[0].motionRunning()); require(phases[1] != phases[0]); } else require(!mark[0].motionRunning()); });
                 capture("android-motion-2.png");
@@ -342,7 +341,7 @@ public final class NativeTests extends Instrumentation {
             final Activity screen = main;
             runOnMainSync(() -> { try { invoke(screen, "showRestoring"); } catch(Exception e) { throw new AssertionError(e); } });
             android.os.SystemClock.sleep(5000);
-            runOnMainSync(() -> { assertBrandCentered(screen.getWindow().getDecorView(), "Ulemi"); assertBrandCentered(screen.getWindow().getDecorView(), "Opening your space"); });
+            runOnMainSync(() -> assertCompactLoading(screen.getWindow().getDecorView()));
             capture("android-preview-loading.png");
             runOnMainSync(() -> { try { java.lang.reflect.Method m=MainActivity.class.getDeclaredMethod("showLogin",String.class);m.setAccessible(true);m.invoke(screen,new Object[]{null}); } catch(Exception e) { throw new AssertionError(e); } });
             android.os.SystemClock.sleep(3000); capture("android-preview-login.png");
@@ -388,6 +387,24 @@ public final class NativeTests extends Instrumentation {
         String value = v instanceof android.widget.TextView ? ((android.widget.TextView) v).getText().toString() : "";
         if (v instanceof android.view.ViewGroup) for (int i=0; i<((android.view.ViewGroup)v).getChildCount(); i++) value += " " + labels(((android.view.ViewGroup)v).getChildAt(i));
         return value;
+    }
+    private static void assertCompactLoading(android.view.View stage) {
+        assertBrandCentered(stage, "Opening workspace");
+        require(countVisibleLabels(stage, "Opening workspace") == 1);
+        require(findLabel(stage, "Ulemi") == null);
+        BrandMotionView mark = findMotion(stage);
+        float density = stage.getResources().getDisplayMetrics().density;
+        require(mark != null && mark.isShown());
+        require(Math.abs(mark.getWidth() - 112f * density) <= density);
+        require(Math.abs(mark.getHeight() - 112f * density) <= density);
+    }
+    private static int countVisibleLabels(android.view.View view, String title) {
+        int count = view instanceof android.widget.TextView && view.isShown()
+                && title.contentEquals(((android.widget.TextView)view).getText()) ? 1 : 0;
+        if (view instanceof android.view.ViewGroup)
+            for (int i = 0; i < ((android.view.ViewGroup)view).getChildCount(); i++)
+                count += countVisibleLabels(((android.view.ViewGroup)view).getChildAt(i), title);
+        return count;
     }
     private static void assertBrandCentered(android.view.View stage, String title) {
         BrandMotionView mark = findMotion(stage); android.widget.TextView label = findLabel(stage, title);
