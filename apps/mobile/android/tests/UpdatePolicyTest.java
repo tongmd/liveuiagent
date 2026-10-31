@@ -11,7 +11,7 @@ public final class UpdatePolicyTest {
         ok(UpdatePolicy.trustedUrl("https://ulemi-updates.pages.dev/android/releases/Ulemi-0.3.3-6.apk", true) != null);
         for (String url : new String[]{"http://ulemi-updates.pages.dev/android/latest.json", "https://ulemi-updates.pages.dev.evil.test/android/latest.json", "https://evil.test@ulemi-updates.pages.dev/android/latest.json", "https://ulemi-updates.pages.dev:8443/android/latest.json", "https://ulemi-updates.pages.dev/android/latest.json?key=x", "https://ulemi-updates.pages.dev/android/latest.json#x", "https://ulemi-updates.pages.dev/android/%2e/latest.json"}) reject(() -> UpdatePolicy.trustedUrl(url, false));
         for (String path : new String[]{"/android/releases/../bad.apk", "/android/releases/%2e%2e/bad.apk", "/android/latest.json", "/android/releases/x.apk/other", "/android/releases/x.apk?token=x"}) reject(() -> UpdatePolicy.trustedUrl("https://ulemi-updates.pages.dev"+path, true));
-        String hash="0".repeat(64); UpdatePolicy.metadata(UpdatePolicy.PACKAGE,6,"0.3.3",26,2048,hash); passed++;
+        String hash=new String(new char[64]).replace("\0", "0"); UpdatePolicy.metadata(UpdatePolicy.PACKAGE,6,"0.3.3",26,2048,hash); passed++;
         reject(() -> UpdatePolicy.metadata("other",6,"0.3.3",26,2048,hash));
         reject(() -> UpdatePolicy.metadata(UpdatePolicy.PACKAGE,0,"0.3.3",26,2048,hash));
         reject(() -> UpdatePolicy.metadata(UpdatePolicy.PACKAGE,6,"0.3.3",26,UpdatePolicy.MAX_APK+1,hash));

@@ -12,9 +12,11 @@ final class UpdateRelease {
         }
         for (String key : new String[]{"packageName", "versionName", "url", "sha256"}) if (!(o.get(key) instanceof String)) throw new IllegalArgumentException("Invalid update text");
         if (o.has("notes") && !(o.get("notes") instanceof String)) throw new IllegalArgumentException("Invalid update notes");
-        if (o.getInt("schemaVersion") != 1) throw new IllegalArgumentException("Unsupported update format");
+        if (o.getLong("schemaVersion") != 1) throw new IllegalArgumentException("Unsupported update format");
         packageName = o.getString("packageName"); versionCode = o.getLong("versionCode");
-        versionName = o.getString("versionName"); size = o.getLong("size"); minSdk = o.getInt("minSdk");
+        versionName = o.getString("versionName"); size = o.getLong("size");
+        long sdk = o.getLong("minSdk"); if (sdk < 26 || sdk > 100) throw new IllegalArgumentException("Invalid minimum Android version");
+        minSdk = (int)sdk;
         url = o.getString("url"); sha256 = o.getString("sha256"); notes = o.optString("notes", "");
         UpdatePolicy.metadata(packageName, versionCode, versionName, minSdk, size, sha256);
         UpdatePolicy.trustedUrl(url, true);

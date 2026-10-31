@@ -92,7 +92,8 @@ final class AppUpdater {
                 }
                 control.verify(); download(c, r, cellular, control); control.verify();
                 prefs(c).edit().putString("ready", r.json().toString()).putString("available", "").putString("error", "").apply();
-                onUi(() -> { AppUpdater u = active(); if (u != null) u.ready(manual, false); else tryAutomatic(c, r); });
+                if (active() == null) tryAutomatic(c, r);
+                else onUi(() -> { AppUpdater u = active(); if (u != null) u.ready(manual, false); else notifyReady(c); });
             } catch (Exception e) {
                 if (control.stopped) return;
                 prefs(c).edit().putString("error", "Could not check or download the update. Try again later.").apply();
@@ -147,10 +148,8 @@ final class AppUpdater {
         String state = prefs(c).getString("install_status", "");
         if ("committed".equals(state) || "confirmation_required".equals(state)) { notifyReady(c); return; }
         if (Build.VERSION.SDK_INT >= 31 && c.getPackageManager().canRequestPackageInstalls() && !LocalAssistantActivity.isUpdateBlocked()) {
-            IO.execute(() -> {
-                if (active() != null || LocalAssistantActivity.isUpdateBlocked()) { notifyReady(c); return; }
-                try { installVerified(c, apk(c, r), r); } catch (Exception e) { notifyReady(c); }
-            });
+            if (active() != null || LocalAssistantActivity.isUpdateBlocked()) { notifyReady(c); return; }
+            try { installVerified(c, apk(c, r), r); } catch (Exception e) { notifyReady(c); }
         } else notifyReady(c);
     }
     static void notifyReady(Context c) {
@@ -207,7 +206,8 @@ final class AppUpdater {
         PackageInfo current = pm.getPackageInfo(c.getPackageName(), flags), next = pm.getPackageArchiveInfo(file.getAbsolutePath(), flags);
         if (next == null || !c.getPackageName().equals(r.packageName) || !r.packageName.equals(next.packageName)
                 || (Build.VERSION.SDK_INT >= 28 ? next.getLongVersionCode() : next.versionCode) != r.versionCode
-                || r.versionCode <= installedVersion(c) || next.applicationInfo == null || next.applicationInfo.minSdkVersion > Build.VERSION.SDK_INT)
+                || !r.versionName.equals(next.versionName) || r.versionCode <= installedVersion(c) || next.applicationInfo == null
+                || next.applicationInfo.minSdkVersion != r.minSdk || next.applicationInfo.minSdkVersion > Build.VERSION.SDK_INT)
             throw new SecurityException("Update package or version mismatch");
         Signature[] a = Build.VERSION.SDK_INT >= 28 ? current.signingInfo.getApkContentsSigners() : current.signatures;
         Signature[] b = Build.VERSION.SDK_INT >= 28 ? next.signingInfo.getApkContentsSigners() : next.signatures;

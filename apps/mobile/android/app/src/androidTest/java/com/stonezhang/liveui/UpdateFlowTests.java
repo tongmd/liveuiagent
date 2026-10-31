@@ -40,7 +40,7 @@ public final class UpdateFlowTests extends Instrumentation {
                 rejected(fixture("update-test-wrong-signer.apk"), release(fixture("update-test-wrong-signer.apk"), 1002), "Wrong signing certificate accepted");
                 rejected(fixture("update-test-old.apk"), release(fixture("update-test-old.apk"), 1001), "Same version accepted");
                 rejected(fixture("update-test-other-package.apk"), release(fixture("update-test-other-package.apk"), 1002), "Other package accepted");
-                JSONObject wrongHash = release(apk, 1002).json().put("sha256", "0".repeat(64));
+                JSONObject wrongHash = release(apk, 1002).json().put("sha256", new String(new char[64]).replace('\0', '0'));
                 rejected(apk, new UpdateRelease(wrongHash), "Wrong hash accepted");
                 JSONObject wrongLength = release(apk, 1002).json().put("size", apk.length() + 1);
                 rejected(apk, new UpdateRelease(wrongLength), "Wrong size accepted");
@@ -60,8 +60,12 @@ public final class UpdateFlowTests extends Instrumentation {
                 File model = new File(c.getNoBackupFilesDir(), "local-models/update-test-model-marker.bin"); model.getParentFile().mkdirs();
                 Files.write(model.toPath(), "model-file-preserved".getBytes(StandardCharsets.UTF_8));
                 Files.write(fixture("update-test-chat.json").toPath(), "[{\"content\":\"keep my offline history\"}]".getBytes(StandardCharsets.UTF_8));
+                AppUpdater.schedule(c);
+                UpdateRelease next = release(apk, 1002);
+                Files.copy(apk.toPath(), AppUpdater.apk(c, next).toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                require(AppUpdater.prefs(c).edit().putString("ready", next.json().toString()).commit(), "Could not save ready update");
                 report("requested", new JSONObject().put("from", 1001).put("to", 1002).put("path", "production AppUpdater.installVerified"));
-                AppUpdater.installVerified(c, apk, release(apk, 1002));
+                AppUpdater.installVerified(c, AppUpdater.apk(c, next), next);
                 // The OS may terminate this process before finish: the external driver checks the installed package.
                 report("committed", new JSONObject().put("sessionId", AppUpdater.prefs(c).getInt("session_id", -1)));
             } else if ("verify".equals(phase)) {

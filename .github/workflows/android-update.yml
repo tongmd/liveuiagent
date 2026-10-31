@@ -18,6 +18,10 @@ jobs:
   actual-self-update:
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [30, 34]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -47,16 +51,16 @@ jobs:
       - name: Verify real self-update and retained data on Android
         uses: reactivecircus/android-emulator-runner@v2
         with:
-          api-level: 34
+          api-level: ${{ matrix.api }}
           target: default
           arch: x86_64
           profile: pixel_3a
           disable-animations: true
-          script: python3 apps/mobile/android/tests/run-update-device.py --fixtures "$RUNNER_TEMP/update-fixtures" --output update-artifacts
+          script: python3 apps/mobile/android/tests/run-update-device.py --fixtures "$RUNNER_TEMP/update-fixtures" --output update-artifacts ${{ matrix.api == 30 && '--require-confirmation' || '' }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: android-actual-self-update
+          name: android-actual-self-update-api${{ matrix.api }}
           path: update-artifacts/
           if-no-files-found: warn
           retention-days: 7
