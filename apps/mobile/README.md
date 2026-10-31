@@ -20,6 +20,18 @@ Inference uses [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), tries G
 
 Local conversation and the hosted application workspace are separate. This version does not run the workspace’s application-generation tools, connected services or development sessions through the local model. Signing out of the hosted workspace does not erase local chat or model files; use the local assistant’s clear/delete controls for those.
 
+## Devices and sensors
+
+Open **Devices & sensors** from the native sign-in screen or account menu. Each operation starts when you select it. The app requests the relevant system permission, handles denial, and offers a link to system settings. Leaving the screen or putting the app in the background stops discovery and readings.
+
+- **Bluetooth:** bounded foreground discovery of BLE advertisements. Bluetooth must be available and enabled. Android uses the nearby-device permission on recent versions and foreground location for scanning on older versions.
+- **Local network:** bounded Bonjour discovery for HTTP and MQTT services; Android also lists HomeKit accessory announcements. iOS requests local-network access through the discovery operation. An empty result does not establish that permission was denied.
+- **Phone sensors:** available motion and environment readings, with explicit start/stop. Android lists supported sensors supplied by the device. iOS offers accelerometer, gyroscope, magnetometer and relative altitude when available.
+- **Location:** a foreground, bounded current-location request; approximate location remains usable.
+- **USB on Android:** inventory of attached USB-host devices, without opening a data connection.
+
+These are native discovery and observation tools. Results are not uploaded or passed to generated web pages. Discovered devices are not automatically paired, connected or controlled. A robot or accessory still needs its own protocol adapter, device authentication and command/stop handling before it can be operated. iOS does not provide generic USB serial access merely by adding a permission. No background scanning, unrestricted hardware bridge or actuator commands are included.
+
 ## Android
 
 Open `android/` in Android Studio, or use its Gradle wrapper with JDK 21 and Android SDK 35:
@@ -59,7 +71,7 @@ The Android and iOS projects contain their platform-specific verification instru
 
 ## Current file support
 
-Android opens the system document picker for file and photo selection. Same-origin HTTPS downloads use a 32 MiB limit; top-level Blob exports use an 8 MiB limit and the system Save dialog. Downloads from an opaque-origin sandboxed HTML iframe may need the system browser. Camera recording, microphone, and location permissions are not enabled in the Android wrapper.
+Android opens the system document picker for file and photo selection. Same-origin HTTPS downloads use a 32 MiB limit; top-level Blob exports use an 8 MiB limit and the system Save dialog. Downloads from an opaque-origin sandboxed HTML iframe may need the system browser. Foreground location is available in Devices & sensors. WebView camera and microphone access are separate from this native device screen.
 
 iOS uses WebKit's file picker and download handling, followed by the system share sheet. A download with a known size above 32 MiB is rejected; downloads with an unknown size can be canceled from the menu. These paths still require device testing for the particular generated application. Neither platform changes the server's own upload or request limits.
 
