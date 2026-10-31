@@ -121,6 +121,36 @@ final class DeviceObservationTransferTests: XCTestCase {
         web.stopLoading(); web.navigationDelegate = nil
     }
 
+
+    func testTypingDuringAcknowledgementPreservesNewTextAndRetryDoesNotAppendAgain() async throws {
+        let web = WKWebView(); web.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
+        let window = present(web); defer { window.isHidden = true }
+        let ready = expectation(description: "Loaded concurrent typing fixture")
+        let navigation = DeviceTestNavigation(ready); web.navigationDelegate = navigation
+        web.loadHTMLString("""
+        <form class="liveui-composer"><textarea>Original draft</textarea></form>
+        <script>
+        window.inputs=0;window.sent=0;
+        document.addEventListener('submit',e=>{e.preventDefault();window.sent++});
+        document.addEventListener('input',e=>{
+          window.inputs++;
+          if(window.inputs===1)requestAnimationFrame(()=>{e.target.value+='\\nMy next thought';});
+        });
+        </script>
+        """, baseURL: URL(string: "https://example.invalid"))
+        await fulfillment(of: [ready], timeout: 15)
+        let requestID = UUID(), text = "Accelerometer observed 12:00 UTC: x 0.25 g"
+        let first = try await transfer(text, requestID: requestID, web: web) as? [String: Any]
+        XCTAssertEqual(first?["ok"] as? Bool, true)
+        let second = try await transfer(text, requestID: requestID, web: web) as? [String: Any]
+        XCTAssertEqual(second?["ok"] as? Bool, true)
+        let state = try await execute("return {value:document.querySelector('textarea').value,inputs:window.inputs,sent:window.sent}", web: web) as? [String: Any]
+        XCTAssertEqual(state?["value"] as? String, "Original draft\n\n" + text + "\nMy next thought")
+        XCTAssertEqual(state?["inputs"] as? Int, 1)
+        XCTAssertEqual(state?["sent"] as? Int, 0)
+        web.stopLoading(); web.navigationDelegate = nil
+    }
+
     func testMissingCurrentAppComposerDoesNotFallBackOrClaimSuccess() async throws {
         let web = WKWebView(); web.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
         let window = present(web); defer { window.isHidden = true }

@@ -74,6 +74,11 @@ enum DeviceWorkspaceTransfer {
           const selectors = sheet ? '.ulemi-native-compose textarea, .rich-workspace-request textarea, .complete-app-edit textarea' : '.liveui-composer textarea';
           const input = [...scope.querySelectorAll(selectors)].find(node => visible(node) && !node.disabled && !node.readOnly);
           if (!input) return {ok:false, requestID, message:'Open the instruction field in your current app, then try again.'};
+          if (receipts[requestID]?.ok === false && input.value.includes(text)) {
+            const receipt = {ok:true, requestID, appendedCharacters:text.length, draftCharacters:input.value.length};
+            receipts[requestID] = receipt;
+            return receipt;
+          }
           const old = input.value;
           const next = old + (old ? '\\n\\n' : '') + text;
           if (input.maxLength >= 0 && next.length > input.maxLength) return {ok:false, requestID, message:'Your draft is too long for these observations. Shorten it and try again.'};
@@ -82,8 +87,8 @@ enum DeviceWorkspaceTransfer {
           input.dispatchEvent(new Event('input', {bubbles:true}));
           receipts[requestID] = {pending:true, requestID};
           requestAnimationFrame(() => requestAnimationFrame(() => {
-            if (!input.isConnected || input.value !== next) { receipts[requestID] = {ok:false, requestID, message:'The instruction field changed before it accepted the observations. Please try again.'}; return; }
-            const receipt = {ok:true, requestID, appendedCharacters:text.length, draftCharacters:next.length};
+            if (!input.isConnected || !input.value.startsWith(next)) { receipts[requestID] = {ok:false, requestID, message:'The instruction field changed before it accepted the observations. Please try again.'}; return; }
+            const receipt = {ok:true, requestID, appendedCharacters:text.length, draftCharacters:input.value.length};
             receipts[requestID] = receipt;
             const keys = Object.keys(receipts); if (keys.length > 50) delete receipts[keys[0]];
           }));
