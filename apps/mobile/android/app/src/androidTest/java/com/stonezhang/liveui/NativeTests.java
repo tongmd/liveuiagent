@@ -12,6 +12,11 @@ public final class NativeTests extends Instrumentation {
     private int current = 0, failed = 0;
     @Override public void onCreate(Bundle args) { super.onCreate(args); start(); }
     @Override public void onStart() {
+        check("actualImageBytesReachWebViewAndSandbox", () -> MediaChecks.webUploadPixels(this));
+        check("imageDecodeBoundsAndRealGestures", () -> MediaChecks.decodingAndGestures(this));
+        check("webPermissionOriginAndNavigationCancel", () -> MediaChecks.originsAndCancellation(this));
+        check("realOsGrantsAndApproximateLocation", () -> MediaChecks.realPermissionGrantAndApproximateLocation(this));
+        check("captureProviderAndActualImageViewer", () -> MediaChecks.captureProviderAndViewer(this));
         check("encryptedRoundTripAndLogout", () -> {
             Context c = getTargetContext(); CredentialStore store = new CredentialStore(c, ".test");
             try {
@@ -172,11 +177,11 @@ public final class NativeTests extends Instrumentation {
                 runOnMainSync(() -> { try { set(a,"currentSession",null); } catch(Exception ignored) {} a.finish(); });
             }
         });
-        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (8 tests)\n" : "\nFAILURES!!! Tests run: 8, Failures: " + failed + "\n");
-        result.putInt("numtests", 8); finish(Activity.RESULT_OK, result);
+        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (13 tests)\n" : "\nFAILURES!!! Tests run: 13, Failures: " + failed + "\n");
+        result.putInt("numtests", 13); finish(Activity.RESULT_OK, result);
     }
     private void check(String name, Check task) {
-        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 8); b.putInt("current", ++current);
+        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 13); b.putInt("current", ++current);
         sendStatus(1, b);
         try { task.run(); sendStatus(0, b); }
         catch (Throwable e) { failed++; b.putString("stack", android.util.Log.getStackTraceString(e)); sendStatus(-2, b); }

@@ -1,0 +1,153 @@
+package com.stonezhang.liveui;
+
+import android.app.*;
+import android.content.*;
+import android.graphics.*;
+import android.net.Uri;
+import android.os.SystemClock;
+import android.view.*;
+import android.webkit.PermissionRequest;
+import java.io.*;
+
+final class MediaChecks {
+    private static void require(boolean value) { if (!value) throw new AssertionError("Media check failed"); }
+    static void decodingAndGestures(Instrumentation test) throws Exception {
+        Bitmap source = Bitmap.createBitmap(200, 100, Bitmap.Config.ARGB_8888); source.eraseColor(Color.BLUE);
+        ByteArrayOutputStream bytes = new ByteArrayOutputStream(); require(source.compress(Bitmap.CompressFormat.PNG, 100, bytes)); source.recycle();
+        Bitmap decoded = ImageViewerActivity.decode(bytes.toByteArray()); require(decoded.getWidth() == 200 && decoded.getHeight() == 100);
+        boolean rejected = false; try { ImageViewerActivity.decode("<html>not an image</html>".getBytes()); } catch (IOException expected) { rejected = true; } require(rejected);
+        rejected = false; try { ImageViewerActivity.readBounded(new InputStream() {
+            int left = ImageViewerActivity.MAX_BYTES + 1;
+            public int read() { return left-- > 0 ? 1 : -1; }
+            public int read(byte[] b, int off, int size) { if (left <= 0) return -1; int n = Math.min(size, left); left -= n; return n; }
+        }); } catch (IOException expected) { rejected = true; } require(rejected);
+        test.runOnMainSync(() -> {
+            ImageViewerActivity.ZoomImage view = new ImageViewerActivity.ZoomImage(test.getTargetContext()); view.layout(0, 0, 400, 600); view.image(decoded);
+            Bitmap frame = Bitmap.createBitmap(400,600,Bitmap.Config.ARGB_8888); view.draw(new Canvas(frame)); require(frame.getPixel(200,300) == Color.BLUE); frame.recycle();
+            long t = SystemClock.uptimeMillis(); touch(view,t,t,MotionEvent.ACTION_DOWN,200,300); touch(view,t,t+40,MotionEvent.ACTION_UP,200,300); touch(view,t+120,t+120,MotionEvent.ACTION_DOWN,200,300); touch(view,t+120,t+160,MotionEvent.ACTION_UP,200,300); require(view.zoom() > 1);
+            view.reset(); require(view.zoom() == 1);
+            pinch(view); require(view.zoom() > 1); view.reset(); require(view.zoom() == 1); view.image(null);
+        });
+    }
+    static void originsAndCancellation(Instrumentation test) throws Exception {
+        require(WebCapabilityPermissions.androidPermissions(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE, "future-resource"}) == null);
+        require(WebCapabilityPermissions.androidPermissions(new String[]{PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID}) == null);
+        require(WebCapabilityPermissions.androidPermissions(new String[]{PermissionRequest.RESOURCE_AUDIO_CAPTURE}).length == 1);
+        Activity activity = test.startActivitySync(new Intent(test.getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); SystemClock.sleep(600);
+        try { test.runOnMainSync(() -> {
+            WebCapabilityPermissions gate = new WebCapabilityPermissions(activity, value -> value.equals("https://liveui.stonezhang.com"));
+            FakeRequest foreign = new FakeRequest("https://foreign.example", PermissionRequest.RESOURCE_VIDEO_CAPTURE); gate.media(foreign); require(foreign.denied && foreign.granted == null);
+            gate.capture("https://liveui.stonezhang.com", () -> {}, () -> {});
+            FakeRequest request = new FakeRequest("https://liveui.stonezhang.com", PermissionRequest.RESOURCE_VIDEO_CAPTURE); gate.media(request); require(!request.denied); gate.cancel(); require(request.denied && request.granted == null); gate.result(WebCapabilityPermissions.REQUEST); require(request.granted == null);
+            final boolean[] denied = {false}; gate.location("https://foreign.example", (origin, allow, retain) -> denied[0] = !allow && !retain); require(denied[0]);
+        }); } finally { test.runOnMainSync(activity::finish); }
+    }
+    static void realPermissionGrantAndApproximateLocation(Instrumentation test) throws Exception {
+        String pkg = test.getTargetContext().getPackageName();
+        test.getUiAutomation().grantRuntimePermission(pkg, android.Manifest.permission.CAMERA);
+        test.getUiAutomation().grantRuntimePermission(pkg, android.Manifest.permission.RECORD_AUDIO);
+        test.getUiAutomation().grantRuntimePermission(pkg, android.Manifest.permission.ACCESS_COARSE_LOCATION);
+        Activity activity = test.startActivitySync(new Intent(test.getTargetContext(), MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); SystemClock.sleep(600);
+        try { test.runOnMainSync(() -> {
+            try {
+                WebCapabilityPermissions gate = new WebCapabilityPermissions(activity, value -> true);
+                gate.capture("https://liveui.stonezhang.com", () -> {}, () -> {});
+                FakeRequest request = new FakeRequest("https://liveui.stonezhang.com", PermissionRequest.RESOURCE_VIDEO_CAPTURE, PermissionRequest.RESOURCE_AUDIO_CAPTURE); gate.media(request);
+                final boolean[] allowed = {false}; gate.location("https://liveui.stonezhang.com", (origin, allow, retain) -> allowed[0] = allow && !retain);
+                require(request.granted == null && !allowed[0]);
+                gate.finishCapture();
+                require(request.granted != null && request.granted.length == 2 && !request.denied && allowed[0]);
+                require(!gate.busy());
+            } catch (Exception e) { throw new AssertionError(e); }
+        }); } finally { test.runOnMainSync(activity::finish); }
+        // Revoking a permission kills its app process. This instrumentation therefore keeps these test-app grants.
+    }
+    static void captureProviderAndViewer(Instrumentation test) throws Exception {
+        Context context = test.getTargetContext();
+        require(ImageCapture.imageOnly(new String[]{"image/png", "image/jpeg"})); require(!ImageCapture.imageOnly(new String[]{"*/*"}));
+        File file = new File(context.getCacheDir(), "ulemi-capture-" + java.util.UUID.randomUUID() + ".jpg");
+        Uri uri = Uri.parse("content://" + context.getPackageName() + ".captures/" + file.getName());
+        Bitmap bitmap = Bitmap.createBitmap(200,100,Bitmap.Config.ARGB_8888); bitmap.eraseColor(Color.MAGENTA);
+        try (FileOutputStream out = new FileOutputStream(file)) { require(bitmap.compress(Bitmap.CompressFormat.JPEG,95,out)); } bitmap.recycle();
+        require(CaptureProvider.file(context,uri).equals(file));
+        for (String suffix : new String[]{"?query=1", "/../private", "#secret"}) {
+            boolean rejected = false; try { CaptureProvider.file(context, Uri.parse(uri + suffix)); } catch (FileNotFoundException expected) { rejected = true; } require(rejected);
+        }
+        try (InputStream stream = context.getContentResolver().openInputStream(uri)) { require(stream != null && stream.read() == 255); }
+        Activity activity = test.startActivitySync(new Intent(context, ImageViewerActivity.class).setData(uri).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        SystemClock.sleep(700); test.waitForIdleSync();
+        test.runOnMainSync(() -> {
+            try {
+                java.lang.reflect.Field field = ImageViewerActivity.class.getDeclaredField("status"); field.setAccessible(true); require(((android.widget.TextView)field.get(activity)).getText().toString().contains("Pinch"));
+                Bitmap screenshot = Bitmap.createBitmap(activity.getWindow().getDecorView().getWidth(),activity.getWindow().getDecorView().getHeight(),Bitmap.Config.ARGB_8888); activity.getWindow().getDecorView().draw(new Canvas(screenshot));
+                try(FileOutputStream out = new FileOutputStream(new File(context.getFilesDir(),"media-image-viewer.png"))) { screenshot.compress(Bitmap.CompressFormat.PNG,100,out); } screenshot.recycle();
+                activity.finish();
+            } catch (Exception e) { throw new AssertionError(e); }
+        });
+        file.delete();
+    }
+    static void webUploadPixels(Instrumentation test) throws Exception {
+        Context context = test.getTargetContext();
+        File file = new File(context.getCacheDir(), "ulemi-capture-" + java.util.UUID.randomUUID() + ".jpg");
+        Uri uri = Uri.parse("content://" + context.getPackageName() + ".captures/" + file.getName());
+        Bitmap bitmap = Bitmap.createBitmap(16,12,Bitmap.Config.ARGB_8888); bitmap.eraseColor(Color.RED);
+        try(FileOutputStream out=new FileOutputStream(file)){require(bitmap.compress(Bitmap.CompressFormat.PNG,100,out));} bitmap.recycle();
+        require(UploadSelection.parse(Activity.RESULT_CANCELED,new Intent().setData(uri)) == null);
+        require(UploadSelection.parse(Activity.RESULT_OK,new Intent().setData(Uri.parse("file:///private"))) == null);
+        Activity activity = test.startActivitySync(new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); SystemClock.sleep(600);
+        final android.webkit.WebView[] browser = {null};
+        try {
+            for (boolean sandbox : new boolean[]{false,true}) {
+                java.util.concurrent.CountDownLatch loaded = new java.util.concurrent.CountDownLatch(1);
+                java.util.concurrent.CountDownLatch chooser = new java.util.concurrent.CountDownLatch(1);
+                String script = "const f=document.getElementById('photo');f.onchange=async()=>{try{const file=f.files[0];const data=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(file)});const im=new Image();im.src=data;await im.decode();const c=document.createElement('canvas');c.width=im.width;c.height=im.height;c.getContext('2d').drawImage(im,0,0);parent.postMessage({width:im.width,height:im.height,size:file.size,pixels:[...c.getContext('2d').getImageData(0,0,1,1).data]},'*')}catch(e){parent.postMessage({error:String(e)},'*')}};";
+                String inner = "<input id='photo' type='file' accept='image/*'><script>" + script + "</script>";
+                String html = "<html><body><script>window.addEventListener('message',e=>window.uploadResult=e.data)</script>" + (sandbox ? "<iframe sandbox='allow-scripts' srcdoc=\"" + inner.replace("&","&amp;").replace("\"","&quot;") + "\"></iframe>" : inner) + "</body></html>";
+                test.runOnMainSync(() -> {
+                    if(browser[0]!=null)browser[0].destroy();
+                    android.webkit.WebView web=new android.webkit.WebView(activity);browser[0]=web;activity.setContentView(web);
+                    web.getSettings().setJavaScriptEnabled(true);web.getSettings().setAllowContentAccess(false);web.getSettings().setAllowFileAccess(false);
+                    web.setWebViewClient(new android.webkit.WebViewClient(){@Override public void onPageFinished(android.webkit.WebView view,String url){loaded.countDown();}});
+                    web.setWebChromeClient(new android.webkit.WebChromeClient(){@Override public boolean onShowFileChooser(android.webkit.WebView view,android.webkit.ValueCallback<Uri[]> callback,FileChooserParams params){callback.onReceiveValue(UploadSelection.parse(Activity.RESULT_OK,new Intent().setData(uri)));chooser.countDown();return true;}});
+                    web.loadDataWithBaseURL("https://image-fixture.invalid/",html,"text/html","UTF-8",null);
+                });
+                require(loaded.await(15,java.util.concurrent.TimeUnit.SECONDS));
+                if(sandbox){
+                    // Opaque frame cannot be scripted by its parent: tap the actual visible file input.
+                    int[] xy = new int[2];test.runOnMainSync(() -> browser[0].getLocationOnScreen(xy));
+                    float density=context.getResources().getDisplayMetrics().density;
+                    float x=xy[0]+45*density,y=xy[1]+35*density;
+                    test.sendPointerSync(MotionEvent.obtain(SystemClock.uptimeMillis(),SystemClock.uptimeMillis(),MotionEvent.ACTION_DOWN,x,y,0));
+                    test.sendPointerSync(MotionEvent.obtain(SystemClock.uptimeMillis(),SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,x,y,0));
+                } else test.runOnMainSync(() -> browser[0].evaluateJavascript("document.getElementById('photo').click()",null));
+                // Use a real child-frame gesture via its own focus when system insets vary.
+                if(sandbox && !chooser.await(1,java.util.concurrent.TimeUnit.SECONDS)){
+                    test.sendKeyDownUpSync(KeyEvent.KEYCODE_TAB);test.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER);
+                }
+                require(chooser.await(10,java.util.concurrent.TimeUnit.SECONDS));
+                String value = null;
+                for(int i=0;i<50;i++){
+                    java.util.concurrent.atomic.AtomicReference<String> result=new java.util.concurrent.atomic.AtomicReference<>();java.util.concurrent.CountDownLatch read=new java.util.concurrent.CountDownLatch(1);
+                    test.runOnMainSync(() -> browser[0].evaluateJavascript("JSON.stringify(window.uploadResult||null)",v->{result.set(v);read.countDown();}));require(read.await(3,java.util.concurrent.TimeUnit.SECONDS));
+                    value=result.get();if(value!=null&&value.contains("pixels"))break;SystemClock.sleep(100);
+                }
+                require(value != null && value.contains("pixels") && value.contains("255,0,0,255") && value.contains("width"));
+                try(FileOutputStream out=new FileOutputStream(new File(context.getFilesDir(),sandbox?"media-upload-sandbox.json":"media-upload-top.json"))){out.write(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+            }
+        } finally { test.runOnMainSync(() -> {if(browser[0]!=null)browser[0].destroy();activity.finish();});file.delete(); }
+    }
+    private static void touch(View view,long down,long time,int action,float x,float y) { MotionEvent e=MotionEvent.obtain(down,time,action,x,y,0); view.onTouchEvent(e);e.recycle(); }
+    private static void pinch(View view) {
+        long t=SystemClock.uptimeMillis(); touch(view,t,t,MotionEvent.ACTION_DOWN,100,250);
+        MotionEvent.PointerProperties[] props={new MotionEvent.PointerProperties(),new MotionEvent.PointerProperties()};props[0].id=0;props[1].id=1;props[0].toolType=props[1].toolType=MotionEvent.TOOL_TYPE_FINGER;
+        MotionEvent.PointerCoords[] coords={new MotionEvent.PointerCoords(),new MotionEvent.PointerCoords()};coords[0].x=100;coords[1].x=200;coords[0].y=coords[1].y=250;coords[0].pressure=coords[1].pressure=1;coords[0].size=coords[1].size=1;
+        for(int i=0;i<5;i++){coords[0].x=100-i*18;coords[1].x=200+i*18;MotionEvent e=MotionEvent.obtain(t,t+20+i*25,i==0?MotionEvent.ACTION_POINTER_DOWN|(1<<MotionEvent.ACTION_POINTER_INDEX_SHIFT):MotionEvent.ACTION_MOVE,2,props,coords,0,0,1,1,0,0,android.view.InputDevice.SOURCE_TOUCHSCREEN,0);view.onTouchEvent(e);e.recycle();}
+        touch(view,t,t+160,MotionEvent.ACTION_UP,100,250);
+    }
+    private static final class FakeRequest extends PermissionRequest {
+        final Uri origin; final String[] resources; boolean denied; String[] granted;
+        FakeRequest(String origin,String...resources){this.origin=Uri.parse(origin);this.resources=resources;}
+        public Uri getOrigin(){return origin;} public String[] getResources(){return resources;}
+        public void grant(String[] values){granted=values;} public void deny(){denied=true;}
+    }
+}
