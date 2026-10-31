@@ -2,7 +2,7 @@
 { archiveVersion = 1; classes = {}; objectVersion = 56; objects = {
 011253AABBCCDDEEFF000004 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalModelTests.swift; sourceTree = "<group>"; };
 011253AABBCCDDEEFF000005 = { isa = PBXBuildFile; fileRef = 011253AABBCCDDEEFF000004; };
-011253AABBCCDDEEFF000001 = { isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/google-ai-edge/LiteRT-LM"; requirement = { kind = revision; revision = 3c0b6da5a468f070f6cee9598810ff4438bd3dae; }; };
+011253AABBCCDDEEFF000001 = { isa = XCRemoteSwiftPackageReference; repositoryURL = "https://github.com/google-ai-edge/LiteRT-LM"; requirement = { kind = revision; revision = bda624851d74be34d4e1f7fac1fc4155939539c7; }; };
 011253AABBCCDDEEFF000002 = { isa = XCSwiftPackageProductDependency; package = 011253AABBCCDDEEFF000001; productName = LiteRTLM; };
 011253AABBCCDDEEFF000003 = { isa = PBXBuildFile; productRef = 011253AABBCCDDEEFF000002; };
 8C47B82DB49C407E7B3BC669 = { isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocalChatView.swift; sourceTree = "<group>"; };
