@@ -52,6 +52,7 @@ public final class MainActivity extends Activity {
     private volatile int connectionGeneration = 0;
     private final Object credentialLock = new Object();
     private ValueCallback<Uri[]> upload;
+    private boolean pickerActive;
     private File pendingDownload;
     private boolean downloadBusy = false;
     private String blobNonce;
@@ -61,7 +62,7 @@ public final class MainActivity extends Activity {
         super.onCreate(state);
         store = new CredentialStore(this);
         capture = new ImageCapture(this);
-        capabilities = new WebCapabilityPermissions(this, origin -> authenticated && web != null && ConnectionPolicy.sameOrigin(endpoint, origin) && ConnectionPolicy.sameOrigin(endpoint, web.getUrl()), capture::busy);
+        capabilities = new WebCapabilityPermissions(this, origin -> authenticated && web != null && ConnectionPolicy.sameOrigin(endpoint, origin) && ConnectionPolicy.sameOrigin(endpoint, web.getUrl()), () -> capture.busy() || pickerActive);
         File[] oldExports = getCacheDir().listFiles((dir, name) -> name.startsWith("liveui-export-") || name.startsWith("liveui-download-") || name.startsWith("ulemi-capture-"));
         if (oldExports != null) for (File old : oldExports) old.delete();
         WebView.setWebContentsDebuggingEnabled((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0);
@@ -303,26 +304,32 @@ public final class MainActivity extends Activity {
         });
         web.setWebChromeClient(new WebChromeClient() {
             @Override public boolean onShowFileChooser(WebView view, ValueCallback<Uri[]> callback, FileChooserParams params) {
-                if (capture.busy()) { callback.onReceiveValue(null); return true; }
+                if (capture.busy() || pickerActive) { callback.onReceiveValue(null); return true; }
                 if (upload != null) upload.onReceiveValue(null); upload = callback;
-                if (params.isCaptureEnabled() && ImageCapture.imageOnly(params.getAcceptTypes()) && params.getMode() != FileChooserParams.MODE_OPEN_MULTIPLE) {
-                    final ValueCallback<Uri[]> original = callback;
-                    final int generation = workspaceAttempt;
-                    capabilities.capture(view.getUrl(), () -> capture.start(uri -> {
-                        capabilities.finishCapture();
-                        if (upload == original) { upload = null; original.onReceiveValue(uri == null ? null : new Uri[]{uri}); }
-                    }, () -> { capabilities.finishCapture(); if (upload == original && generation == workspaceAttempt) chooseUpload(params); }), () -> {
-                        capture.cancel(); if (upload == original) { upload = null; original.onReceiveValue(null); }
-                    });
-                    return true;
-                }
-                chooseUpload(params); return true;
+                final ValueCallback<Uri[]> original = callback;
+                final int generation = workspaceAttempt;
+                capabilities.capture(view.getUrl(), () -> {
+                    if (upload != original || generation != workspaceAttempt) { capabilities.finishCapture(); return; }
+                    if (params.isCaptureEnabled() && ImageCapture.imageOnly(params.getAcceptTypes()) && params.getMode() != FileChooserParams.MODE_OPEN_MULTIPLE) {
+                        capture.start(uri -> {
+                            capabilities.finishCapture();
+                            if (upload == original) { upload = null; original.onReceiveValue(uri == null ? null : new Uri[]{uri}); }
+                        }, () -> {
+                            if (upload == original && generation == workspaceAttempt) chooseUpload(params);
+                            else capabilities.finishCapture();
+                        });
+                    } else chooseUpload(params);
+                }, () -> {
+                    if (upload == original) { capture.cancel(); upload = null; original.onReceiveValue(null); }
+                });
+                return true;
             }
             private void chooseUpload(FileChooserParams params) {
                 Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("*/*");
                 String[] types = params.getAcceptTypes(); if (types != null && types.length > 0 && !types[0].isEmpty()) pick.putExtra(Intent.EXTRA_MIME_TYPES, types);
                 pick.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, params.getMode() == FileChooserParams.MODE_OPEN_MULTIPLE);
-                try { startActivityForResult(pick, PICK_FILE); } catch (ActivityNotFoundException e) { upload.onReceiveValue(null); upload = null; notice("没有可用的文件选择器"); }
+                try { pickerActive = true; startActivityForResult(pick, PICK_FILE); }
+                catch (ActivityNotFoundException e) { pickerActive = false; if (upload != null) upload.onReceiveValue(null); upload = null; capabilities.finishCapture(); notice("No file picker is available."); }
             }
             @Override public boolean onJsPrompt(WebView view, String url, String message, String value, JsPromptResult result) {
                 if ("__ulemi_menu_v1__".equals(message)) {
@@ -509,9 +516,10 @@ public final class MainActivity extends Activity {
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
         capture.result(request, result); capabilities.resume();
-        if (request == PICK_FILE && upload != null) {
-            Uri[] values = UploadSelection.parse(result, data);
-            upload.onReceiveValue(values); upload = null;
+        if (request == PICK_FILE) {
+            pickerActive = false;
+            if (upload != null) { ValueCallback<Uri[]> resultCallback=upload; upload=null; resultCallback.onReceiveValue(UploadSelection.parse(result, data)); }
+            capabilities.finishCapture(); capabilities.resume();
         }
         if (request == SAVE_FILE && pendingDownload != null) {
             File file = pendingDownload; pendingDownload = null; downloadBusy = false;

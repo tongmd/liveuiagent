@@ -40,6 +40,11 @@ final class MediaChecks {
             gate.capture("https://liveui.stonezhang.com", () -> {}, () -> {});
             FakeRequest request = new FakeRequest("https://liveui.stonezhang.com", PermissionRequest.RESOURCE_VIDEO_CAPTURE); gate.media(request); require(!request.denied); gate.cancel(); require(request.denied && request.granted == null); gate.result(WebCapabilityPermissions.REQUEST); require(request.granted == null);
             final boolean[] denied = {false}; gate.location("https://foreign.example", (origin, allow, retain) -> denied[0] = !allow && !retain); require(denied[0]);
+            final int[] canceled={0}, launched={0};
+            gate.capture("https://liveui.stonezhang.com", () -> launched[0]++, () -> canceled[0]++);
+            gate.capture("https://liveui.stonezhang.com", () -> launched[0]++, () -> canceled[0]++);
+            gate.location("https://liveui.stonezhang.com", (origin,allow,retain) -> { if(!allow)canceled[0]++; });
+            gate.cancel(); gate.resume(); require(launched[0]==1 && canceled[0]==3 && !gate.busy());
         }); } finally { test.runOnMainSync(activity::finish); }
     }
     static void realPermissionGrantAndApproximateLocation(Instrumentation test) throws Exception {
@@ -88,13 +93,13 @@ final class MediaChecks {
     }
     static void webUploadPixels(Instrumentation test) throws Exception {
         Context context = test.getTargetContext();
+        Activity activity = test.startActivitySync(new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); SystemClock.sleep(600);
         File file = new File(context.getCacheDir(), "ulemi-capture-" + java.util.UUID.randomUUID() + ".jpg");
         Uri uri = Uri.parse("content://" + context.getPackageName() + ".captures/" + file.getName());
         Bitmap bitmap = Bitmap.createBitmap(16,12,Bitmap.Config.ARGB_8888); bitmap.eraseColor(Color.RED);
         try(FileOutputStream out=new FileOutputStream(file)){require(bitmap.compress(Bitmap.CompressFormat.PNG,100,out));} bitmap.recycle();
         require(UploadSelection.parse(Activity.RESULT_CANCELED,new Intent().setData(uri)) == null);
         require(UploadSelection.parse(Activity.RESULT_OK,new Intent().setData(Uri.parse("file:///private"))) == null);
-        Activity activity = test.startActivitySync(new Intent(context, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)); SystemClock.sleep(600);
         final android.webkit.WebView[] browser = {null};
         try {
             for (boolean sandbox : new boolean[]{false,true}) {
