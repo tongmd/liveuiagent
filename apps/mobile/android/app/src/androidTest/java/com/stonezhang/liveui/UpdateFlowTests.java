@@ -37,7 +37,15 @@ public final class UpdateFlowTests extends Instrumentation {
         for (PackageInstaller.SessionInfo session : c.getPackageManager().getPackageInstaller().getMySessions())
             sessions.put(new JSONObject().put("id", session.getSessionId()).put("package", session.getAppPackageName())
                 .put("sealed", session.isSealed()).put("active", session.isActive()));
-        return new JSONObject().put("installedVersion", AppUpdater.installedVersion(c)).put("sessions", sessions)
+        JSONObject confirmation = new JSONObject();
+        String saved = AppUpdater.prefs(c).getString("confirmation_intent", "");
+        if (!saved.isEmpty()) {
+            android.content.Intent parsed = android.content.Intent.parseUri(saved, android.content.Intent.URI_INTENT_SCHEME);
+            confirmation.put("action", parsed.getAction()).put("package", parsed.getPackage())
+                .put("component", parsed.getComponent() == null ? JSONObject.NULL : parsed.getComponent().flattenToString())
+                .put("flags", parsed.getFlags()).put("extraKeys", new JSONArray(parsed.getExtras() == null ? java.util.Collections.emptyList() : parsed.getExtras().keySet()));
+        }
+        return new JSONObject().put("confirmation", confirmation).put("installedVersion", AppUpdater.installedVersion(c)).put("sessions", sessions)
             .put("installStatus", AppUpdater.prefs(c).getString("install_status", ""))
             .put("sessionId", AppUpdater.prefs(c).getInt("session_id", -1));
     }
