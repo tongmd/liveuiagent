@@ -137,6 +137,18 @@ jobs:
             adb exec-out run-as com.stonezhang.liveui cat files/android-local-assistant.png > mobile-artifacts/android-local-assistant.png || true
             adb exec-out run-as com.stonezhang.liveui cat files/android-local-keyboard.png > mobile-artifacts/android-local-keyboard.png || true
             grep -F 'OK (10 tests)' mobile-artifacts/android-native-tests.txt
+            adb shell settings put global animator_duration_scale 1
+            adb shell settings put global transition_animation_scale 1
+            adb shell settings put global window_animation_scale 1
+            adb shell screenrecord --time-limit 150 /sdcard/ulemi-motion.mp4 &
+            ULEMI_RECORD_PID=$!
+            adb shell am instrument -w com.stonezhang.liveui.test/com.stonezhang.liveui.NativeTests | tee mobile-artifacts/android-motion-tests.txt
+            adb shell pkill -INT screenrecord || true
+            wait "$ULEMI_RECORD_PID" || true
+            adb pull /sdcard/ulemi-motion.mp4 mobile-artifacts/android-motion.mp4
+            adb exec-out run-as com.stonezhang.liveui cat files/android-loader-phase1.png > mobile-artifacts/android-loader-phase1.png || true
+            adb exec-out run-as com.stonezhang.liveui cat files/android-loader-phase2.png > mobile-artifacts/android-loader-phase2.png || true
+            grep -F 'OK (10 tests)' mobile-artifacts/android-motion-tests.txt
       - name: Collect Android device evidence
         if: always()
         uses: actions/upload-artifact@v4
