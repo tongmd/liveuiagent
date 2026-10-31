@@ -123,6 +123,7 @@ struct RootView: View {
     @State private var showGuide = false
     @State private var confirmLogout = false
     @State private var localChat = false
+    @State private var devices = false
 
     var body: some View {
         ZStack {
@@ -149,6 +150,7 @@ struct RootView: View {
                             Menu {
                                 Text(browser.connection?.username ?? "")
                                 Button { localChat = true } label: { Label("本机对话", systemImage: "iphone") }
+                                Button { devices = true } label: { Label("Devices & sensors", systemImage: "sensor") }
                                 Button { showGuide = true } label: { Label("使用指引", systemImage: "sparkles") }
                                 Button { browser.reload() } label: { Label("重新载入", systemImage: "arrow.clockwise") }
                                 if !browser.activeDownloads.isEmpty {
@@ -192,6 +194,7 @@ struct RootView: View {
         }
         .tint(AppStyle.ink)
         .sheet(isPresented: $localChat) { LocalChatView() }
+        .sheet(isPresented: $devices) { DeviceAccessView() }
         .sheet(item: $browser.share) { item in ShareSheet(url: item.url) }
         .fullScreenCover(isPresented: $showGuide) {
             OnboardingView {
@@ -202,6 +205,7 @@ struct RootView: View {
         .confirmationDialog("Ulemi", isPresented: $browser.showNativeMenu, titleVisibility: .visible) {
             Button("返回") { browser.goBack() }
             Button("本机对话") { localChat = true }
+            Button("Devices & sensors") { devices = true }
             Button("使用指引") { showGuide = true }
             Button("重新载入") { browser.reload() }
             if !browser.activeDownloads.isEmpty { Button("取消下载", role: .destructive) { browser.cancelDownloads() } }
@@ -234,6 +238,11 @@ struct RootView: View {
         if ProcessInfo.processInfo.arguments.contains("--preview-local-assistant") {
             showGuide = false
             localChat = true
+        }
+        if ProcessInfo.processInfo.arguments.contains("--preview-devices") {
+            showGuide = false
+            localChat = false
+            devices = true
         }
         #endif
     }
@@ -272,6 +281,7 @@ struct ConnectionView: View {
     @State private var loginTask: Task<Void, Never>?
     @State private var attempt = LoginAttempt()
     @State private var localChat = false
+    @State private var devices = false
     @FocusState private var focusedField: Field?
     private enum Field { case username, password }
 
@@ -311,6 +321,7 @@ struct ConnectionView: View {
                         .disabled(busy || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
                         .accessibilityIdentifier("login-submit")
                     Button("使用手机模型，不登录") { localChat = true }.frame(minHeight: 44)
+                    Button("Devices & sensors") { devices = true }.frame(minHeight: 44)
                     if busy { Button("取消") { cancelLogin() }.frame(minHeight: 44) }
                     else {
                         Link("还没有账号？加入候补名单", destination: URL(string: "https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")!)
@@ -323,6 +334,7 @@ struct ConnectionView: View {
         .scrollDismissesKeyboard(.interactively)
         .background(AppStyle.background)
         .sheet(isPresented: $localChat) { LocalChatView() }
+        .sheet(isPresented: $devices) { DeviceAccessView() }
         .onDisappear { cancelLogin() }
     }
 

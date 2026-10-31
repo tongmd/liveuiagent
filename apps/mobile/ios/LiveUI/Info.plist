@@ -16,4 +16,9 @@
 <key>NSCameraUsageDescription</key><string>拍照或录制后，将你选择的内容上传到当前 Ulemi 应用。</string>
 <key>NSPhotoLibraryUsageDescription</key><string>选择照片或视频，上传到当前 Ulemi 应用。</string>
 <key>NSMicrophoneUsageDescription</key><string>在你选择录音或录制视频时使用麦克风。</string>
+<key>NSBluetoothAlwaysUsageDescription</key><string>Find nearby Bluetooth LE devices when you start a scan in Devices &amp; sensors.</string>
+<key>NSLocalNetworkUsageDescription</key><string>Find devices advertising HTTP or MQTT services on your local network when you choose Find devices.</string>
+<key>NSBonjourServices</key><array><string>_http._tcp</string><string>_mqtt._tcp</string></array>
+<key>NSMotionUsageDescription</key><string>Show live motion, pressure and relative altitude readings when you start sensors.</string>
+<key>NSLocationWhenInUseUsageDescription</key><string>Show your current location when you request it in Devices &amp; sensors. It is not shared with web pages.</string>
 </dict></plist>

@@ -70,3 +70,24 @@ E2B is recommended below 11 GiB physical memory; E4B remains selectable from 7 G
 SwiftPM pins the official repository to `bda624851d74be34d4e1f7fac1fc4155939539c7` (release `v0.18.1`). Its iOS binary is `v0.18.1/CLiteRTLM.xcframework.zip`, SHA-256 `5c51905e38c77ccc611dc2f8c2af6cf5144621046f1dde6518aab83f78488937`. The package supports iOS 15+, while this app keeps iOS 16+. Xcode resolves and verifies the binary automatically. Set `GIT_LFS_SKIP_SMUDGE=1` while resolving the package to avoid downloading unrelated upstream Linux/Android LFS assets.
 
 Sources: [Google Swift guide](https://developers.google.com/edge/litert-lm/swift), [Gemma 4 models and device measurements](https://developers.google.com/edge/litert-lm/models/gemma-4). Google's published iOS measurements use iPhone 17 Pro. Actual iPhone 16 inference, download interruption and thermal/memory behavior require a physical-device test; simulator compilation alone does not validate those behaviors.
+
+### Devices and sensors
+
+The native **Devices & sensors** screen is available before sign-in and from the
+account menu. Each capability starts only after its button is pressed. Bluetooth
+LE discovery and Bonjour (`_http._tcp`, `_mqtt._tcp`) browsing stop after 15 seconds.
+Motion readings stop after 60 seconds; a single location request expires after 20
+seconds and accepts only a recent valid fix. Leaving the screen or backgrounding
+Ulemi stops all work and clears readings. Permission denial provides a Settings
+entry. Unsupported hardware is reported without fabricated values.
+
+This screen discovers devices and reads local phone sensors. It does not pair,
+open device connections, send MQTT messages, issue robot commands, or expose a
+native device bridge to generated web pages. Device-specific authentication,
+command contracts and an emergency stop still need implementation and physical
+hardware testing before robot control. No background Bluetooth/location modes,
+multicast entitlement or location-always permission are requested.
+
+For a simulator screenshot, launch a Debug build with `--preview-devices`. This
+opens the screen only; it does not start any scan or sensor request. Real Bluetooth,
+network permission prompts and sensor values require supported physical hardware.
