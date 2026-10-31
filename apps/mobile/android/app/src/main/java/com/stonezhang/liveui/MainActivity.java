@@ -166,6 +166,8 @@ public final class MainActivity extends Activity {
         connect = button("登录", true); connect.setOnClickListener(v -> connect()); LinearLayout.LayoutParams bp = new LinearLayout.LayoutParams(-1, dp(54)); bp.topMargin = dp(8); box.addView(connect, bp);
         status = text(message == null ? "" : message, 14, 0xffad3333); status.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE); status.setPadding(0, dp(14), 0, 0); box.addView(status); status.setVisibility(message == null || message.isEmpty() ? View.GONE : View.VISIBLE);
         Button waitlist = button("还没有账号？加入候补名单", false); loginWaitlist = waitlist; waitlist.setTextSize(14); waitlist.setOnClickListener(v -> external("https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")); LinearLayout.LayoutParams wp = new LinearLayout.LayoutParams(-1, dp(50)); wp.topMargin = dp(12); box.addView(waitlist, wp);
+        Button local = button("离线助手 · Gemma 4", false); local.setOnClickListener(v -> startActivity(new Intent(this, LocalAssistantActivity.class)));
+        LinearLayout.LayoutParams lpLocal = new LinearLayout.LayoutParams(-1, dp(50)); lpLocal.topMargin = dp(12); box.addView(local, lpLocal);
         reveal(box);
     }
     private void enterAccount() {
@@ -356,8 +358,10 @@ public final class MainActivity extends Activity {
     private void showMenu(View anchor) {
         PopupMenu menu = new PopupMenu(this, anchor);
         menu.getMenu().add(0, 1, 0, "刷新"); menu.getMenu().add(0, 5, 1, "使用引导"); menu.getMenu().add(0, 2, 2, "在浏览器打开"); menu.getMenu().add(0, 3, 3, "分享 Ulemi"); menu.getMenu().add(0, 4, 4, "退出登录");
+        menu.getMenu().add(0, 6, 5, "离线助手 · Gemma 4");
         menu.setOnMenuItemClickListener(item -> {
             switch (item.getItemId()) {
+                case 6: startActivity(new Intent(this, LocalAssistantActivity.class)); break;
                 case 1: reloadWorkspace(); break;
                 case 5: showGuide(); break;
                 case 2: external(endpoint.toString()); break;

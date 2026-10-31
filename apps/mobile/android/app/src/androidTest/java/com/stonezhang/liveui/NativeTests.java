@@ -74,11 +74,27 @@ public final class NativeTests extends Instrumentation {
                 });
             } finally { a.getSharedPreferences("experience", 0).edit().clear().commit(); runOnMainSync(a::finish); }
         });
-        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (5 tests)\n" : "\nFAILURES!!! Tests run: 5, Failures: " + failed + "\n");
-        result.putInt("numtests", 5); finish(Activity.RESULT_OK, result);
+        check("offlineAssistantStartsWithoutAccountOrNetwork", () -> {
+            Activity a = startActivitySync(new android.content.Intent(getTargetContext(), LocalAssistantActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            try {
+                runOnMainSync(() -> {
+                    try {
+                        String text = labels(a.getWindow().getDecorView());
+                        require(text.contains("离线助手") && text.contains("Gemma 4 E4B") && text.contains("官方来源"));
+                        require(!text.contains("账号") && !text.contains("密码") && countInputs(a.getWindow().getDecorView()) == 1);
+                        java.lang.reflect.Field engine = LocalAssistantActivity.class.getDeclaredField("engine"); engine.setAccessible(true); require(engine.get(a) == null);
+                        java.lang.reflect.Field send = LocalAssistantActivity.class.getDeclaredField("send"); send.setAccessible(true);
+                        LocalModelFile model = new LocalModelFile(new java.io.File(a.getNoBackupFilesDir(), "local-models"));
+                        if (!model.installed()) require(!((android.widget.Button)send.get(a)).isEnabled());
+                    } catch (Exception e) { throw new AssertionError(e); }
+                });
+            } finally { runOnMainSync(a::finish); }
+        });
+        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (6 tests)\n" : "\nFAILURES!!! Tests run: 6, Failures: " + failed + "\n");
+        result.putInt("numtests", 6); finish(Activity.RESULT_OK, result);
     }
     private void check(String name, Check task) {
-        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 5); b.putInt("current", ++current);
+        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 6); b.putInt("current", ++current);
         sendStatus(1, b);
         try { task.run(); sendStatus(0, b); }
         catch (Throwable e) { failed++; b.putString("stack", android.util.Log.getStackTraceString(e)); sendStatus(-2, b); }

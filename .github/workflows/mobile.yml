@@ -18,6 +18,8 @@ jobs:
   ios:
     runs-on: macos-15
     timeout-minutes: 25
+    env:
+      GIT_LFS_SKIP_SMUDGE: "1"
     steps:
       - uses: actions/checkout@v4
       - name: Select simulator
@@ -75,6 +77,7 @@ jobs:
         working-directory: apps/mobile/android
         run: |
           ./tests/run-policy-tests.sh
+          ./tests/run-model-tests.sh
           ./gradlew --no-daemon assembleDebug assembleRelease lintDebug
       - uses: actions/upload-artifact@v4
         with:
