@@ -35,8 +35,8 @@ struct PolicyCheck {
         precondition(!attempts.isCurrent(old) && attempts.isCurrent(current))
         precondition(!c.isAppConnection)
         precondition(Connection(address: Connection.defaultAddress, username: "u", password: "p", realm: "LiveUIAgent").isAppConnection)
-        precondition(LoginFeedback.message(for: AppLoginFailure.credentials).contains("账号或密码"))
-        precondition(LoginFeedback.message(for: URLError(.notConnectedToInternet)).contains("网络"))
+        precondition(LoginFeedback.message(for: AppLoginFailure.credentials).contains("username and password"))
+        precondition(LoginFeedback.message(for: URLError(.notConnectedToInternet)).contains("connection"))
         precondition(!LoginFeedback.message(for: NSError(domain: "secret-url", code: 500)).contains("secret-url"))
         print("31 connection/authentication and first-use policy checks passed")
     }

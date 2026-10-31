@@ -58,20 +58,20 @@ enum LoginFeedback {
     static func message(for error: Error) -> String {
         if let failure = error as? AppLoginFailure {
             switch failure {
-            case .credentials: return "账号或密码不正确，请检查后重试。"
-            case .unavailable: return "暂时无法登录，请稍后重试。"
+            case .credentials: return "Check your username and password, then try again."
+            case .unavailable: return "Unable to sign in right now. Please try again."
             }
         }
         let code = (error as NSError).code
         if (error as NSError).domain == NSURLErrorDomain {
             if code == NSURLErrorUserAuthenticationRequired || code == NSURLErrorUserCancelledAuthentication {
-                return "账号或密码不正确，请检查后重试。"
+                return "Check your username and password, then try again."
             }
             if [NSURLErrorNotConnectedToInternet, NSURLErrorNetworkConnectionLost, NSURLErrorCannotConnectToHost,
                 NSURLErrorCannotFindHost, NSURLErrorDNSLookupFailed, NSURLErrorTimedOut].contains(code) {
-                return "网络连接不顺畅，请检查网络后重试。"
+                return "Check your connection and try again."
             }
         }
-        return "暂时无法登录，请稍后重试。"
+        return "Unable to sign in right now. Please try again."
     }
 }

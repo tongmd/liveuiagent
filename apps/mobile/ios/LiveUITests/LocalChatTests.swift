@@ -3,6 +3,12 @@ import XCTest
 
 @MainActor
 final class LocalChatTests: XCTestCase {
+    func testFeedbackKeepsReviewedErrorsAndHidesLocalizedSDKDetails() {
+        XCTAssertEqual(LocalChat.feedback(LocalModelError.message("Download paused."), fallback: "Try again."), "Download paused.")
+        let privateError = NSError(domain: "private.sdk", code: 500, userInfo: [NSLocalizedDescriptionKey: "internal-path-and-localized-detail"])
+        XCTAssertEqual(LocalChat.feedback(privateError, fallback: "Please try again."), "Please try again.")
+    }
+
     private func unreadableChat() throws -> (URL, URL) {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let chat = folder.appendingPathComponent("chat.json", isDirectory: true)

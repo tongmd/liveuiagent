@@ -88,12 +88,12 @@ final class BrowserModel: ObservableObject {
     }
 }
 
-private enum AppStyle {
-    static let background = Color(red: 0.98, green: 0.98, blue: 0.97)
+enum AppStyle {
+    static let background = Color(red: 0.98, green: 0.98, blue: 0.975)
     static let ink = Color(red: 0.08, green: 0.08, blue: 0.08)
 }
 
-private struct BrandMark: View {
+struct BrandMark: View {
     var size: CGFloat = 64
     var body: some View {
         Image("BrandMark").resizable().scaledToFit().frame(width: size, height: size)
@@ -101,7 +101,50 @@ private struct BrandMark: View {
     }
 }
 
-private struct PrimaryButtonStyle: ButtonStyle {
+// The clock stops when hidden or backgrounded. Motion never represents completion.
+struct BrandMotion: View {
+    var size: CGFloat = 112
+    var active = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var phase
+    @State private var visible = false
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || phase != .active || !visible || !active)) { context in
+            let time = reduceMotion ? 0 : context.date.timeIntervalSinceReferenceDate
+            let breath = reduceMotion ? 1 : 1 + 0.035 * sin(time * .pi / 1.8)
+            ZStack {
+                Circle().stroke(AppStyle.ink.opacity(0.055), lineWidth: 1)
+                if !reduceMotion {
+                    Circle().trim(from: 0.03, to: 0.19)
+                        .stroke(AppStyle.ink.opacity(0.24), style: StrokeStyle(lineWidth: 1.5, lineCap: .round))
+                        .rotationEffect(.degrees(time.truncatingRemainder(dividingBy: 6) * 60))
+                    Circle().fill(AppStyle.ink.opacity(0.3)).frame(width: 4, height: 4)
+                        .offset(y: -size / 2)
+                        .rotationEffect(.degrees(-time.truncatingRemainder(dividingBy: 9) * 40))
+                }
+                BrandMark(size: size * 0.52).scaleEffect(CGFloat(breath))
+            }.frame(width: size, height: size)
+        }.accessibilityHidden(true)
+            .onAppear { visible = true }.onDisappear { visible = false }
+    }
+}
+
+struct SecondaryButtonStyle: ButtonStyle {
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.system(size: 16, weight: .medium))
+            .frame(maxWidth: .infinity).padding(.vertical, 16)
+            .foregroundStyle(AppStyle.ink.opacity(enabled ? 0.8 : 0.35))
+            .background(.white.opacity(configuration.isPressed ? 0.6 : 1))
+            .clipShape(RoundedRectangle(cornerRadius: 18))
+            .overlay(RoundedRectangle(cornerRadius: 18).stroke(AppStyle.ink.opacity(0.06), lineWidth: 1))
+            .scaleEffect(configuration.isPressed && !reduceMotion ? 0.985 : 1)
+            .animation(reduceMotion ? nil : .easeOut(duration: 0.15), value: configuration.isPressed)
+    }
+}
+
+struct PrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     func makeBody(configuration: Configuration) -> some View {
@@ -130,7 +173,7 @@ struct RootView: View {
             NavigationStack {
                 Group {
                     if browser.clearing {
-                        ProgressView("正在退出…").frame(maxWidth: .infinity, maxHeight: .infinity)
+                        VStack(spacing: 28) { BrandMotion(); Text("Signing out…").font(.callout).foregroundStyle(.secondary) }.frame(maxWidth: .infinity, maxHeight: .infinity)
                     } else if let connection = browser.connection {
                         workspace(connection)
                     } else { ConnectionView() }
@@ -138,27 +181,27 @@ struct RootView: View {
                 .background(AppStyle.background)
                 .navigationTitle(browser.connection == nil ? "" : "Ulemi")
                 .navigationBarTitleDisplayMode(.inline)
-                .toolbar(browser.connection == nil || (browser.hasNativeMenu && browser.workspaceError == nil) ? .hidden : .visible, for: .navigationBar)
+                .toolbar(browser.connection == nil || !browser.workspaceReady || browser.workspaceError != nil || browser.hasNativeMenu ? .hidden : .visible, for: .navigationBar)
                 .toolbar {
                     if browser.connection != nil {
                         ToolbarItem(placement: .navigationBarLeading) {
                             Button { browser.goBack() } label: { Image(systemName: "chevron.left") }
-                                .accessibilityLabel("返回")
+                                .accessibilityLabel("Back")
                         }
                         ToolbarItem(placement: .navigationBarTrailing) {
                             Menu {
                                 Text(browser.connection?.username ?? "")
-                                Button { localChat = true } label: { Label("本机对话", systemImage: "iphone") }
-                                Button { showGuide = true } label: { Label("使用指引", systemImage: "sparkles") }
-                                Button { browser.reload() } label: { Label("重新载入", systemImage: "arrow.clockwise") }
+                                Button { localChat = true } label: { Label("On-device chat", systemImage: "iphone") }
+                                Button { showGuide = true } label: { Label("Quick tour", systemImage: "sparkles") }
+                                Button { browser.reload() } label: { Label("Reload", systemImage: "arrow.clockwise") }
                                 if !browser.activeDownloads.isEmpty {
-                                    Button("取消下载", role: .destructive) { browser.cancelDownloads() }
+                                    Button("Cancel download", role: .destructive) { browser.cancelDownloads() }
                                 }
                                 Button(role: .destructive) { confirmLogout = true } label: {
-                                    Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+                                    Label("Sign out", systemImage: "rectangle.portrait.and.arrow.right")
                                 }
                             } label: { Image(systemName: "person.crop.circle") }
-                            .accessibilityLabel("账号")
+                            .accessibilityLabel("Account")
                         }
                     }
                 }
@@ -167,7 +210,7 @@ struct RootView: View {
                         HStack {
                             Text(message).font(.callout)
                             Spacer()
-                            Button("关闭") { browser.message = nil }.frame(minWidth: 44, minHeight: 44)
+                            Button("Dismiss") { browser.message = nil }.frame(minWidth: 44, minHeight: 44)
                         }.padding(.horizontal, 16).background(.regularMaterial)
                     }
                 }
@@ -176,8 +219,8 @@ struct RootView: View {
             .accessibilityHidden(starting)
             if starting {
                 VStack(spacing: 20) {
-                    BrandMark(size: 82)
-                    Text("Ulemi").font(.system(size: 28, weight: .semibold))
+                    BrandMotion(size: 132)
+                    Text("Ulemi").font(.system(size: 25, weight: .semibold, design: .rounded)).tracking(-0.7)
                 }
                 .scaleEffect(revealed || reduceMotion ? 1 : 0.94)
                 .opacity(revealed || reduceMotion ? 1 : 0)
@@ -187,7 +230,7 @@ struct RootView: View {
                 .transition(.opacity)
                 .onTapGesture { finishLaunch() }
                 .accessibilityAddTraits(.isButton)
-                .accessibilityHint("轻点继续")
+                .accessibilityHint("Tap to continue")
             }
         }
         .tint(AppStyle.ink)
@@ -200,17 +243,17 @@ struct RootView: View {
             }
         }
         .confirmationDialog("Ulemi", isPresented: $browser.showNativeMenu, titleVisibility: .visible) {
-            Button("返回") { browser.goBack() }
-            Button("本机对话") { localChat = true }
-            Button("使用指引") { showGuide = true }
-            Button("重新载入") { browser.reload() }
-            if !browser.activeDownloads.isEmpty { Button("取消下载", role: .destructive) { browser.cancelDownloads() } }
-            Button("退出登录", role: .destructive) { confirmLogout = true }
-            Button("取消", role: .cancel) { }
+            Button("Back") { browser.goBack() }
+            Button("On-device chat") { localChat = true }
+            Button("Quick tour") { showGuide = true }
+            Button("Reload") { browser.reload() }
+            if !browser.activeDownloads.isEmpty { Button("Cancel download", role: .destructive) { browser.cancelDownloads() } }
+            Button("Sign out", role: .destructive) { confirmLogout = true }
+            Button("Cancel", role: .cancel) { }
         }
-        .confirmationDialog("退出当前账号？", isPresented: $confirmLogout, titleVisibility: .visible) {
-            Button("退出登录", role: .destructive) { browser.disconnect() }
-        } message: { Text("已保存的应用会保留，下次登录后可以继续使用。") }
+        .confirmationDialog("Sign out?", isPresented: $confirmLogout, titleVisibility: .visible) {
+            Button("Sign out", role: .destructive) { browser.disconnect() }
+        } message: { Text("Your apps are saved. Sign in again to pick up where you left off.") }
         .onChange(of: browser.connection) { connection in
             if connection == nil { showGuide = false }
             else if !starting && OnboardingPolicy.shouldPresent(signedIn: browser.authenticated, completed: completedGuide) { showGuide = true }
@@ -244,15 +287,18 @@ struct RootView: View {
                 .opacity(browser.workspaceReady && browser.workspaceError == nil ? 1 : 0)
                 .accessibilityHidden(!browser.workspaceReady || browser.workspaceError != nil)
             if !browser.workspaceReady || browser.workspaceError != nil {
-                VStack(spacing: 24) {
-                    BrandMark(size: 58)
+                VStack(spacing: 28) {
                     if let error = browser.workspaceError {
+                        BrandMark(size: 58)
                         Text(error).font(.body).multilineTextAlignment(.center)
-                        Button("重试") { browser.reload() }.buttonStyle(PrimaryButtonStyle())
-                        Button("返回登录") { browser.disconnect() }.frame(minHeight: 44)
+                        Button("Try again") { browser.reload() }.buttonStyle(PrimaryButtonStyle())
+                        Button("Back to sign in") { browser.disconnect() }.buttonStyle(SecondaryButtonStyle())
                     } else {
-                        ProgressView().tint(AppStyle.ink)
-                        Text("正在打开你的应用…").font(.body)
+                        BrandMotion(size: 120, active: !showGuide && !localChat)
+                        VStack(spacing: 9) {
+                            Text("Ulemi").font(.system(size: 25, weight: .semibold, design: .rounded)).tracking(-0.7)
+                            Text("Opening your workspace…").font(.system(size: 14)).foregroundStyle(.secondary)
+                        }
                     }
                 }.padding(28).frame(maxWidth: 360)
                     .frame(maxWidth: .infinity, maxHeight: .infinity).background(AppStyle.background)
@@ -279,23 +325,23 @@ struct ConnectionView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 VStack(alignment: .leading, spacing: 20) {
-                    BrandMark(size: 66)
-                    Text("欢迎来到 Ulemi").font(.largeTitle.weight(.semibold))
-                    Text("从一个想法开始，做出自己的应用。")
+                    HStack(spacing: 13) { BrandMark(size: 37); Text("Ulemi").font(.system(size: 21, weight: .semibold, design: .rounded)).tracking(-0.5) }.padding(.bottom, 28)
+                    Text("Make it yours.").font(.system(size: 38, weight: .semibold)).tracking(-1.5)
+                    Text("Turn an idea into something you can use.")
                         .font(.body).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }.padding(.bottom, 8)
                 VStack(alignment: .leading, spacing: 14) {
-                    TextField("账号", text: $username).textContentType(.username)
+                    TextField("Username", text: $username).textContentType(.username)
                         .textInputAutocapitalization(.never).autocorrectionDisabled()
                         .focused($focusedField, equals: .username).submitLabel(.next)
                         .onSubmit { focusedField = .password }
                         .accessibilityIdentifier("login-account")
-                        .padding(17).background(.white, in: RoundedRectangle(cornerRadius: 16))
-                    SecureField("密码", text: $password).textContentType(.password)
+                        .padding(18).background(.white, in: RoundedRectangle(cornerRadius: 18)).overlay(RoundedRectangle(cornerRadius: 18).stroke(AppStyle.ink.opacity(0.07), lineWidth: 1))
+                    SecureField("Password", text: $password).textContentType(.password)
                         .focused($focusedField, equals: .password).submitLabel(.go)
                         .onSubmit { signIn() }
                         .accessibilityIdentifier("login-password")
-                        .padding(17).background(.white, in: RoundedRectangle(cornerRadius: 16))
+                        .padding(18).background(.white, in: RoundedRectangle(cornerRadius: 18)).overlay(RoundedRectangle(cornerRadius: 18).stroke(AppStyle.ink.opacity(0.07), lineWidth: 1))
                     if let message = error ?? browser.message {
                         Text(message).font(.callout).foregroundStyle(.red)
                             .fixedSize(horizontal: false, vertical: true).accessibilityIdentifier("login-error")
@@ -305,15 +351,15 @@ struct ConnectionView: View {
                     Button { signIn() } label: {
                         HStack(spacing: 10) {
                             if busy { ProgressView().tint(.white) }
-                            Text(busy ? "正在登录…" : "登录")
+                            Text(busy ? "Signing in…" : "Sign in")
                         }
                     }.buttonStyle(PrimaryButtonStyle())
                         .disabled(busy || username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || password.isEmpty)
                         .accessibilityIdentifier("login-submit")
-                    Button("使用手机模型，不登录") { localChat = true }.frame(minHeight: 44)
-                    if busy { Button("取消") { cancelLogin() }.frame(minHeight: 44) }
+                    Button("Continue on this device") { localChat = true }.buttonStyle(SecondaryButtonStyle())
+                    if busy { Button("Cancel") { cancelLogin() }.frame(minHeight: 44) }
                     else {
-                        Link("还没有账号？加入候补名单", destination: URL(string: "https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")!)
+                        Link("Join the waitlist", destination: URL(string: "https://docs.google.com/forms/d/e/1FAIpQLSckrULbwm5t1j0UiV7KwVIUwq2-qsMnI4pkikL7Ii1J6K55QA/viewform")!)
                             .font(.callout).frame(minHeight: 44)
                     }
                 }
@@ -350,7 +396,7 @@ struct ConnectionView: View {
             } catch {
                 guard !Task.isCancelled, attempt.isCurrent(ticket) else { return }
                 if error is CredentialStore.StoreError {
-                    self.error = "暂时无法安全保存登录信息，请解锁设备后重试。"
+                    self.error = "Your sign-in could not be saved securely. Unlock your device and try again."
                 } else { self.error = LoginFeedback.message(for: error) }
             }
             guard attempt.isCurrent(ticket) else { return }
@@ -360,30 +406,63 @@ struct ConnectionView: View {
     }
 }
 
+private struct GuideIllustration: View {
+    let page: Int
+    let active: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.scenePhase) private var phase
+    @State private var visible = false
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion || phase != .active || !visible || !active)) { context in
+            let wave = reduceMotion ? 0 : sin(context.date.timeIntervalSinceReferenceDate * 1.5)
+            ZStack {
+                RoundedRectangle(cornerRadius: 28).fill(.white)
+                    .frame(width: 220, height: 150).rotationEffect(.degrees(-5))
+                    .offset(x: -10, y: 6)
+                    .overlay(RoundedRectangle(cornerRadius: 28).stroke(AppStyle.ink.opacity(0.05), lineWidth: 1).frame(width: 220, height: 150).rotationEffect(.degrees(-5)).offset(x: -10, y: 6))
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack { BrandMark(size: 23); Spacer(); Circle().fill(AppStyle.ink.opacity(0.1)).frame(width: 5, height: 5) }
+                    if page == 0 {
+                        Capsule().fill(AppStyle.ink.opacity(0.12)).frame(width: 126, height: 8)
+                        Capsule().fill(AppStyle.ink.opacity(0.06)).frame(width: 86, height: 8)
+                    } else if page == 1 {
+                        HStack(alignment: .bottom, spacing: 8) {
+                            ForEach(0..<4) { i in RoundedRectangle(cornerRadius: 5).fill(AppStyle.ink.opacity(0.12 + Double(i) * 0.12)).frame(width: 28, height: CGFloat(20 + i * 8) + CGFloat(wave) * 3) }
+                        }.frame(height: 46)
+                    } else {
+                        HStack(spacing: 10) { ForEach(0..<3) { _ in RoundedRectangle(cornerRadius: 10).fill(AppStyle.ink.opacity(0.08)).frame(width: 44, height: 42) } }
+                    }
+                }.padding(24).frame(width: 220, height: 150).background(AppStyle.background, in: RoundedRectangle(cornerRadius: 24))
+                    .overlay(RoundedRectangle(cornerRadius: 24).stroke(AppStyle.ink.opacity(0.10), lineWidth: 1))
+                    .offset(x: 6, y: -5 + CGFloat(wave) * 3)
+            }.frame(maxWidth: .infinity).accessibilityHidden(true)
+        }.onAppear { visible = true }.onDisappear { visible = false }
+    }
+}
+
 @MainActor
 struct OnboardingView: View {
     let finish: () -> Void
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var page = 0
     private let pages: [(icon: String, title: String, body: String)] = [
-        ("text.bubble", "说说你想做什么", "在底部输入你的想法，例如整理待办、规划行程，或比较一组数据。"),
-        ("slider.horizontal.3", "边用边调整", "打开应用后，继续告诉 Ulemi 你的想法。你可以调整内容、功能和布局。"),
-        ("square.grid.2x2", "随时回来继续", "关闭应用会回到列表。下次打开时，继续使用已保存的内容。")
+        ("text.bubble", "Start with an idea.", "Describe what you need. Plan a trip, organize your day, or explore your data."),
+        ("slider.horizontal.3", "Shape it as you go.", "Keep the conversation going. Change the content, tools, and layout as your needs evolve."),
+        ("square.grid.2x2", "Pick up where you left off.", "Your apps stay in your workspace. Open one whenever you want to continue.")
     ]
     var body: some View {
         VStack(spacing: 0) {
             HStack {
                 Text("Ulemi").font(.headline)
                 Spacer()
-                Button("跳过") { finish() }.frame(minWidth: 44, minHeight: 44)
+                Button("Skip") { finish() }.frame(minWidth: 44, minHeight: 44)
                     .accessibilityIdentifier("guide-skip")
             }.padding(.horizontal, 24)
             TabView(selection: $page) {
                 ForEach(pages.indices, id: \.self) { index in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 28) {
-                            Image(systemName: pages[index].icon).font(.system(size: 70, weight: .light))
-                                .accessibilityHidden(true).frame(height: 120)
+                            GuideIllustration(page: index, active: page == index).frame(height: 210)
                             Text(pages[index].title).font(.largeTitle.weight(.semibold))
                             Text(pages[index].body).font(.title3).foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -398,11 +477,12 @@ struct OnboardingView: View {
                         Capsule().fill(index == page ? AppStyle.ink : Color.gray.opacity(0.25))
                             .frame(width: index == page ? 24 : 7, height: 7)
                     }
-                }.accessibilityElement(children: .ignore).accessibilityLabel("第 \(page + 1) 步，共 3 步")
+                }.accessibilityElement(children: .ignore).accessibilityLabel("Step \(page + 1) of 3")
+                    .animation(reduceMotion ? nil : .easeInOut(duration: 0.25), value: page)
                 Button {
                     if page == pages.count - 1 { finish() }
                     else { withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) { page += 1 } }
-                } label: { Text(page == pages.count - 1 ? "开始使用" : "继续") }
+                } label: { Text(page == pages.count - 1 ? "Get started" : "Continue") }
                     .buttonStyle(PrimaryButtonStyle()).accessibilityIdentifier("guide-next")
             }.padding(.horizontal, 28).padding(.vertical, 24).frame(maxWidth: 440)
         }

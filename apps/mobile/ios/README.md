@@ -25,7 +25,7 @@ The archive can be exported through Xcode Organizer for the chosen development, 
 
 ## First use
 
-The app opens with the black U mark, then a native account-and-password login. The brief reveal can be tapped to continue and has no delay when Reduce Motion is enabled. The app uses a fixed application address; no server address or connection settings appear in the user flow. People without an account can open the existing waitlist in their browser.
+The app opens with an animated black U mark, then a native account-and-password login. Native screens, accessibility labels, permission descriptions and error messages use English. A quiet orbit and breathing mark replace the system spinner while the workspace loads; this animation follows real readiness and stops when hidden or backgrounded. Reduce Motion uses a static mark. The guide uses lightweight native animated illustrations, with no downloaded animation assets. The brief reveal can be tapped to continue and has no delay when Reduce Motion is enabled. The app uses a fixed application address; no server address or connection settings appear in the user flow. People without an account can open the existing waitlist in their browser.
 
 After verified login, three short, skippable pages introduce describing a need, refining an application and reopening saved work. Completion stays on the device, so returning users go straight to their applications. The account menu can replay the guide, reload, cancel downloads or sign out. Loading and network failures use native screens with a clear retry action; incorrect credentials remain on the login screen. Cancelling login invalidates its pending result, and a saved session is verified by WebKit before it can display first-use guidance.
 
