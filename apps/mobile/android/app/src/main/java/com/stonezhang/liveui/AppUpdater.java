@@ -25,6 +25,7 @@ final class AppUpdater {
     private static final long INTERVAL = 12L * 60 * 60 * 1000, REMIND = 24L * 60 * 60 * 1000;
     private static final ExecutorService IO = Executors.newSingleThreadExecutor();
     private static final AtomicBoolean RUNNING = new AtomicBoolean(false);
+    private static final Object INSTALL_STATE_LOCK = new Object();
     private static volatile WeakReference<AppUpdater> foreground = new WeakReference<>(null);
     static final class CheckControl {
         volatile boolean stopped; volatile HttpsURLConnection connection;
@@ -322,30 +323,45 @@ final class AppUpdater {
                 PackageInstaller.SessionInfo actual = installer.getSessionInfo(id);
                 if (actual != null && actual.isSealed()) {
                     // The binder call may have committed before its result was lost.
-                    prefs(c).edit().putString("install_status", "committed").apply();
+                    recoverInterruptedState(prefs(c), id, token, "committed");
                 } else {
                     try { installer.abandonSession(id); } catch (Exception ignored) { }
-                    prefs(c).edit().putString("install_status", deferred ? "deferred" : "failed").apply();
+                    recoverInterruptedState(prefs(c), id, token, deferred ? "deferred" : "failed");
                 }
             }
         }
     }
+    static boolean recoverInterruptedState(SharedPreferences p, int sessionId, String token, String state) {
+        synchronized (INSTALL_STATE_LOCK) {
+            String current = p.getString("install_status", "");
+            if (p.getInt("session_id", -1) != sessionId || !token.equals(p.getString("session_token", ""))
+                    || (!"preparing".equals(current) && !"committed".equals(current))) return false;
+            p.edit().putString("install_status", state).apply();
+            return true;
+        }
+    }
     static void installResult(Context c, Intent intent) {
         SharedPreferences p = prefs(c); int id = intent.getIntExtra(PackageInstaller.EXTRA_SESSION_ID, -1);
-        if (!ACTION.equals(intent.getAction()) || id != p.getInt("session_id", -2) || !p.getString("session_token", "").equals(intent.getStringExtra("ulemi_session_token"))) return;
         int result = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE);
+        Intent confirmation = result == PackageInstaller.STATUS_PENDING_USER_ACTION ? intent.getParcelableExtra(Intent.EXTRA_INTENT) : null;
+        synchronized (INSTALL_STATE_LOCK) {
+            if (!ACTION.equals(intent.getAction()) || id != p.getInt("session_id", -2) || !p.getString("session_token", "").equals(intent.getStringExtra("ulemi_session_token"))) return;
+            if (result == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                p.edit().putString("install_status", "confirmation_required")
+                    .putString("confirmation_intent", confirmation == null ? "" : confirmation.toUri(Intent.URI_INTENT_SCHEME)).commit();
+            } else {
+                p.edit().putString("install_status", result == PackageInstaller.STATUS_SUCCESS ? "installed" : "failed")
+                    .remove("session_id").remove("session_token").remove("confirmation_intent").apply();
+            }
+        }
+        // UI and system calls are outside the state lock. APK verification/copying never holds it.
         if (result == PackageInstaller.STATUS_PENDING_USER_ACTION) {
-            Intent confirmation = intent.getParcelableExtra(Intent.EXTRA_INTENT);
-            p.edit().putString("install_status", "confirmation_required")
-                .putString("confirmation_intent", confirmation == null ? "" : confirmation.toUri(Intent.URI_INTENT_SCHEME)).commit();
             AppUpdater u = active();
             if (u != null && confirmation != null) { try { u.activity.startActivity(confirmation); } catch (Exception e) { notifyReady(c); } }
             else notifyReady(c);
         } else if (result == PackageInstaller.STATUS_SUCCESS) {
-            p.edit().putString("install_status", "installed").remove("session_id").remove("session_token").remove("confirmation_intent").apply();
             NotificationManager nm = c.getSystemService(NotificationManager.class); if (nm != null) nm.cancel(NOTICE);
         } else {
-            p.edit().putString("install_status", "failed").remove("session_id").remove("session_token").remove("confirmation_intent").apply();
             onUi(() -> { AppUpdater u = active(); if (u != null) u.message("Update not installed. Your current version and data are unchanged."); });
         }
     }
