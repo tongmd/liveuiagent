@@ -176,7 +176,8 @@ public final class LocalAssistantActivity extends Activity {
     }
     private String readable(Throwable e) {
         if ((e instanceof IOException || e instanceof IllegalStateException) && e.getMessage() != null && "对话未能保存到手机".equals(e.getMessage())) return e.getMessage();
-        if (e instanceof IOException && e.getMessage() != null) return e.getMessage();
+        if (e instanceof IOException && e.getMessage() != null && e.getMessage().matches(".*[\\u4e00-\\u9fff].*")) return e.getMessage();
+        if (e instanceof IOException) return "连接中断，下载进度已保留。检查网络后可以继续。";
         return "此设备暂时无法运行模型。请关闭其他应用后重试；已下载模型会保留。";
     }
     private void cancelWork() {
