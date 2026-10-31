@@ -237,18 +237,24 @@ public final class NativeTests extends Instrumentation {
             android.os.SystemClock.sleep(650);
             final android.webkit.WebView[] page = new android.webkit.WebView[1];
             final String[] snapshot = {null};
+            final java.util.concurrent.CountDownLatch pageLoaded = new java.util.concurrent.CountDownLatch(1);
             ActivityMonitor monitor = addMonitor(DeviceAccessActivity.class.getName(), null, false);
             Activity devices = null;
             try {
                 runOnMainSync(() -> { try {
                     set(host,"authenticated",true); set(host,"username","sensor-fixture"); set(host,"endpoint",ConnectionPolicy.parse(ConnectionPolicy.DEFAULT_URL));
                     page[0] = new android.webkit.WebView(host); page[0].getSettings().setJavaScriptEnabled(true); set(host,"web",page[0]); host.setContentView(page[0]);
-                    page[0].loadDataWithBaseURL(ConnectionPolicy.DEFAULT_URL, "<meta name='viewport' content='width=device-width,initial-scale=1'><form class='frontend-prompt' style='display:none'><textarea>Do not change global draft</textarea></form><section class='app-sheet' data-app-id='sensor-context-fixture'><h1>Current app</h1><form class='ulemi-native-compose'><textarea>Keep my draft</textarea><button>Send</button></form></section><script>window.inputEvents=0;window.submits=0;document.querySelector('.ulemi-native-compose textarea').addEventListener('input',()=>window.inputEvents++);document.querySelector('.ulemi-native-compose').addEventListener('submit',e=>{e.preventDefault();window.submits++})</script>", "text/html", "utf-8", null);
+                    page[0].setWebViewClient(new android.webkit.WebViewClient() { @Override public void onPageFinished(android.webkit.WebView view, String url) { pageLoaded.countDown(); } });
+                    page[0].loadDataWithBaseURL(ConnectionPolicy.DEFAULT_URL, "<meta name='viewport' content='width=device-width,initial-scale=1'><form class='frontend-prompt' style='display:none'><textarea>Do not change global draft</textarea></form><section class='app-sheet' data-app-id='sensor-context-fixture'><h1>Current app</h1><form class='ulemi-native-compose'><textarea>Keep my draft</textarea><button>Send</button></form></section><script>window.inputEvents=0;window.submits=0;document.querySelector('.ulemi-native-compose textarea').addEventListener('input',()=>window.inputEvents++);document.querySelector('.ulemi-native-compose').addEventListener('submit',e=>{e.preventDefault();window.submits++})</script>", "text/html", "utf-8", ConnectionPolicy.DEFAULT_URL);
                 } catch(Exception e) { throw new AssertionError(e); } });
-                android.os.SystemClock.sleep(1000);
-                runOnMainSync(() -> { try { invoke(host,"openDeviceAccess"); } catch(Exception e) { throw new AssertionError(e); } });
+                require(pageLoaded.await(10, java.util.concurrent.TimeUnit.SECONDS));
+                runOnMainSync(() -> { try {
+                    if (!(boolean)get(host,"authenticated") || !ConnectionPolicy.sameOrigin(ConnectionPolicy.parse(ConnectionPolicy.DEFAULT_URL),page[0].getUrl())) throw new AssertionError("Fixture must be authenticated at the real workspace origin; URL=" + page[0].getUrl());
+                    invoke(host,"openDeviceAccess");
+                } catch(Exception e) { throw new AssertionError(e); } });
                 devices = waitForMonitorWithTimeout(monitor, 5000); require(devices != null); final Activity sensorActivity = devices;
                 runOnMainSync(() -> { try {
+                    require(sensorActivity.getIntent().getBooleanExtra("workspaceAvailable",false));
                     android.hardware.Sensor sensor = ((android.hardware.SensorManager)sensorActivity.getSystemService(Context.SENSOR_SERVICE)).getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);
                     require(sensor != null);
                     java.lang.reflect.Method read = DeviceAccessActivity.class.getDeclaredMethod("readSensor", android.hardware.Sensor.class); read.setAccessible(true); read.invoke(sensorActivity,sensor);
@@ -259,6 +265,9 @@ public final class NativeTests extends Instrumentation {
                 }
                 require(snapshot[0] != null);
                 org.json.JSONObject actual = new org.json.JSONObject(snapshot[0]); require(actual.getString("kind").equals("sensor")); require(actual.getJSONObject("values").getJSONArray("values").length() >= 3); require(actual.getJSONObject("values").getLong("sampleElapsedNanos") > 0);
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(),"android-device-observation.json"))){out.write(new org.json.JSONObject(snapshot[0]).put("readableText",DeviceObservation.readable(actual)).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(),"android-device-transfer.js"))){out.write(DeviceObservation.composerScript(snapshot[0],"https://liveui.stonezhang.com").getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(),"android-device-ack.js"))){out.write(DeviceObservation.acknowledgementScript(snapshot[0],"https://liveui.stonezhang.com").getBytes(java.nio.charset.StandardCharsets.UTF_8));}
                 capture("android-devices-sensor.png");
                 runOnMainSync(() -> { try { java.lang.reflect.Method use=DeviceAccessActivity.class.getDeclaredMethod("useObservation");use.setAccessible(true);use.invoke(sensorActivity); }catch(Exception e){throw new AssertionError(e);} });
                 for (int poll=0;poll<50;poll++) {
@@ -270,11 +279,10 @@ public final class NativeTests extends Instrumentation {
                 runOnMainSync(() -> page[0].evaluateJavascript("JSON.stringify({draft:document.querySelector('.ulemi-native-compose textarea').value,global:document.querySelector('.frontend-prompt textarea').value,inputs:window.inputEvents,submits:window.submits,appId:document.querySelector('.app-sheet').dataset.appId})", value -> {dom[0]=value;checked.countDown();}));
                 require(checked.await(5,java.util.concurrent.TimeUnit.SECONDS));
                 String decoded=(String)new org.json.JSONTokener(dom[0]).nextValue();org.json.JSONObject state=new org.json.JSONObject(decoded);
-                require(state.getString("draft").startsWith("Keep my draft\n\nDevice observation")); require(state.getString("draft").contains("m/s²")); require(state.getInt("inputs")==1 && state.getInt("submits")==0); require(state.getString("global").equals("Do not change global draft")); require(state.getString("appId").equals("sensor-context-fixture"));
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(),"android-device-dom.json"))){out.write(state.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+                if (!state.getString("draft").startsWith("Keep my draft\n\nDevice observation")) throw new AssertionError("Native observation was not added: " + state);
+                 require(state.getString("draft").contains("m/s²")); require(state.getInt("inputs")==1 && state.getInt("submits")==0); require(state.getString("global").equals("Do not change global draft")); require(state.getString("appId").equals("sensor-context-fixture"));
                 require(state.getString("draft").contains(DeviceObservation.readable(actual)));
-                try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(),"android-device-observation.json"))){out.write(new org.json.JSONObject(snapshot[0]).put("readableText",DeviceObservation.readable(actual)).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));}
-                try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(),"android-device-transfer.js"))){out.write(DeviceObservation.composerScript(snapshot[0],"https://liveui.stonezhang.com").getBytes(java.nio.charset.StandardCharsets.UTF_8));}
-                try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(),"android-device-ack.js"))){out.write(DeviceObservation.acknowledgementScript(snapshot[0],"https://liveui.stonezhang.com").getBytes(java.nio.charset.StandardCharsets.UTF_8));}
                 // Replay the same immutable envelope: one insertion only.
                 final java.util.concurrent.CountDownLatch duplicate = new java.util.concurrent.CountDownLatch(1); final String[] duplicateResult={null};
                 runOnMainSync(() -> { try {page[0].evaluateJavascript(DeviceObservation.composerScript(snapshot[0],"https://liveui.stonezhang.com"), value->{duplicateResult[0]=value;duplicate.countDown();});}catch(Exception e){throw new AssertionError(e);} });
