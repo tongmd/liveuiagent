@@ -1,6 +1,6 @@
 # Ulemi for Android and iOS
 
-Ulemi is the mobile app for the existing liveUI workspace. Android uses WebView; iOS uses WKWebView. The workspace remains served by your liveUI installation, so applications, model settings, development conversations, and saved data stay on the same server. These apps need an internet connection and a running server.
+Ulemi is the mobile app for the existing liveUI workspace. Android uses WebView; iOS uses WKWebView. The workspace remains served by your liveUI installation, so applications, model settings, development conversations, and saved data stay on the same server. The hosted workspace needs an internet connection and a running server. The separate on-device assistant runs locally after its model has been downloaded.
 
 The mobile projects use the selected black U icon. The visible app name is Ulemi; existing package identifiers, credentials, and service addresses stay compatible. They do not bundle model credentials or an account password. Sign in with your existing liveUI account. The service address is built into the app; the first-use flow does not ask for backend configuration. The older `apps/shell` is a separate component-renderer prototype, not the build target for these apps.
 
@@ -9,6 +9,16 @@ The mobile projects use the selected black U icon. The visible app name is Ulemi
 A brief black U animation leads into account sign-in. The first successful login offers three short, skippable steps: describe what you need, refine an application through conversation, and reopen it later. Returning users go straight to their workspace after authentication. The account menu can reopen the guide.
 
 The interface respects reduced-motion settings and keeps login errors next to the form. Invalid credentials and unavailable connectivity have different recovery messages. Loading and retry screens do not resubmit application requests. Signing out removes local credentials and browser session data, while the account's applications remain on the service.
+
+## On-device assistant
+
+Open **本机 AI** from sign-in or the account menu. No account or API key is needed for local conversation. Android offers Gemma 4 E4B; iOS offers E4B and the smaller E2B with a device-memory recommendation. Choose a model, download it, and the app verifies and configures the local runtime. Downloads can be paused and continued. Models and local conversations stay in private app storage.
+
+The files come from the LiteRT Community repositories linked by [Google’s official Gemma 4 guide](https://developers.google.com/edge/litert-lm/models/gemma-4). Downloads use immutable revisions, expected byte counts and SHA-256 verification before activation. E4B is 3,659,530,240 bytes; E2B is 2,588,147,712 bytes. Leave additional space for runtime caches. An incomplete or corrupt download is never passed to the inference engine.
+
+Inference uses [LiteRT-LM](https://github.com/google-ai-edge/LiteRT-LM), tries GPU acceleration, and reports a CPU fallback when GPU initialization is unavailable. It does not silently send a local prompt to a cloud provider. Device memory, thermal limits and supported drivers affect whether a model can load and how fast it responds. Google’s published iPhone measurements use an iPhone 17 Pro; they do not establish a universal best model or verify every iPhone 16 device.
+
+Local conversation and the hosted application workspace are separate. This version does not run the workspace’s application-generation tools, connected services or development sessions through the local model. Signing out of the hosted workspace does not erase local chat or model files; use the local assistant’s clear/delete controls for those.
 
 ## Android
 
