@@ -106,8 +106,9 @@ final class MediaChecks {
                 java.util.concurrent.CountDownLatch loaded = new java.util.concurrent.CountDownLatch(1);
                 java.util.concurrent.CountDownLatch chooser = new java.util.concurrent.CountDownLatch(1);
                 String script = "const f=document.getElementById('photo');f.onchange=async()=>{try{const file=f.files[0];const data=await new Promise((ok,no)=>{const r=new FileReader();r.onload=()=>ok(r.result);r.onerror=no;r.readAsDataURL(file)});const im=new Image();im.src=data;await im.decode();const c=document.createElement('canvas');c.width=im.width;c.height=im.height;c.getContext('2d').drawImage(im,0,0);parent.postMessage({width:im.width,height:im.height,size:file.size,pixels:[...c.getContext('2d').getImageData(0,0,1,1).data]},'*')}catch(e){parent.postMessage({error:String(e)},'*')}};";
-                String inner = "<input id='photo' type='file' accept='image/*'><script>" + script + "</script>";
-                String html = "<html><body><script>window.addEventListener('message',e=>window.uploadResult=e.data)</script>" + (sandbox ? "<iframe sandbox='allow-scripts' srcdoc=\"" + inner.replace("&","&amp;").replace("\"","&quot;") + "\"></iframe>" : inner) + "</body></html>";
+                String css = "<meta name=viewport content=\"width=device-width,initial-scale=1\"><style>html,body{margin:0;padding:0}input{position:absolute;left:16px;top:16px;width:250px;height:64px;font-size:20px}iframe{width:100%;height:160px;border:0}</style>";
+                String inner = css + "<input id='photo' type='file' accept='image/*'><script>" + script + "</script>";
+                String html = "<html>" + css + "<body><script>window.addEventListener('message',e=>window.uploadResult=e.data)</script>" + (sandbox ? "<iframe sandbox='allow-scripts' srcdoc=\"" + inner.replace("&","&amp;").replace("\"","&quot;") + "\"></iframe>" : inner) + "</body></html>";
                 test.runOnMainSync(() -> {
                     if(browser[0]!=null)browser[0].destroy();
                     android.webkit.WebView web=new android.webkit.WebView(activity);browser[0]=web;activity.setContentView(web);
@@ -117,18 +118,12 @@ final class MediaChecks {
                     web.loadDataWithBaseURL("https://image-fixture.invalid/",html,"text/html","UTF-8",null);
                 });
                 require(loaded.await(15,java.util.concurrent.TimeUnit.SECONDS));
-                if(sandbox){
-                    // Opaque frame cannot be scripted by its parent: tap the actual visible file input.
-                    int[] xy = new int[2];test.runOnMainSync(() -> browser[0].getLocationOnScreen(xy));
-                    float density=context.getResources().getDisplayMetrics().density;
-                    float x=xy[0]+45*density,y=xy[1]+35*density;
-                    test.sendPointerSync(MotionEvent.obtain(SystemClock.uptimeMillis(),SystemClock.uptimeMillis(),MotionEvent.ACTION_DOWN,x,y,0));
-                    test.sendPointerSync(MotionEvent.obtain(SystemClock.uptimeMillis(),SystemClock.uptimeMillis(),MotionEvent.ACTION_UP,x,y,0));
-                } else test.runOnMainSync(() -> browser[0].evaluateJavascript("document.getElementById('photo').click()",null));
-                // Use a real child-frame gesture via its own focus when system insets vary.
-                if(sandbox && !chooser.await(1,java.util.concurrent.TimeUnit.SECONDS)){
-                    test.sendKeyDownUpSync(KeyEvent.KEYCODE_TAB);test.sendKeyDownUpSync(KeyEvent.KEYCODE_ENTER);
-                }
+                // Both documents use a real user tap; the opaque frame is never scripted by its parent.
+                int[] xy = new int[2];test.runOnMainSync(() -> browser[0].getLocationOnScreen(xy));
+                float density=context.getResources().getDisplayMetrics().density;
+                float x=xy[0]+50*density,y=xy[1]+50*density;long when=SystemClock.uptimeMillis();
+                test.sendPointerSync(MotionEvent.obtain(when,when,MotionEvent.ACTION_DOWN,x,y,0));
+                test.sendPointerSync(MotionEvent.obtain(when,when+25,MotionEvent.ACTION_UP,x,y,0));
                 require(chooser.await(10,java.util.concurrent.TimeUnit.SECONDS));
                 String value = null;
                 for(int i=0;i<50;i++){
