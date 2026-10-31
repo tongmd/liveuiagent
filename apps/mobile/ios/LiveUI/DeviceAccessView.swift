@@ -58,7 +58,7 @@ struct DeviceAccessView: View {
                     }
                     if boundSink != nil {
                         Button {
-                            guard !transferring, !model.observations.isEmpty, let sink = boundSink else { return }
+                            guard !transferring, pendingTransfer != nil || !model.observations.isEmpty, let sink = boundSink else { return }
                             transferring = true; transferMessage = nil
                             let snapshot = pendingTransfer ?? model.snapshot(); pendingTransfer = snapshot
                             sink(snapshot) { result in
@@ -72,7 +72,7 @@ struct DeviceAccessView: View {
                             Label(transferring ? "Adding observations…" : (pendingTransfer == nil ? "Use in workspace" : "Retry adding observations"), systemImage: "arrow.up.doc")
                                 .font(.headline).frame(maxWidth: .infinity, minHeight: 48)
                         }.buttonStyle(.borderedProminent).tint(.black)
-                            .disabled(model.observations.isEmpty || transferring)
+                            .disabled((pendingTransfer == nil && model.observations.isEmpty) || transferring)
                         if let transferMessage { status(transferMessage) }
                         Text("Adds the latest observed values, sources, times and units to your current instruction. Your draft stays intact; you choose when to send.")
                             .font(.footnote).foregroundStyle(.secondary)
