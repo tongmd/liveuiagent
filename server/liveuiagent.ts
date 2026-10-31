@@ -209,6 +209,8 @@ type OrchestratorAgentRequest = {
 export type OrchestratorModelProvider = (request: OrchestratorAgentRequest) => Promise<unknown>;
 
 export type LlmRuntimeConfig = {
+  /** Host-only, per-task recorder; never taken from request JSON. */
+  taskDiagnostics?: NativeTaskDiagnostics;
   /** Server-owned inference adapter, never accepted from browser JSON. */
   chatCompletion?: (request: Record<string, unknown>, options?: { timeoutMs: number; roleLabel?: string }) => Promise<unknown>;
   /** Server-owned Native inference capacity; never accepted from browser JSON. */
@@ -221,6 +223,158 @@ export type LlmRuntimeConfig = {
   // 由 HTTP 层转成 SSE progress 事件。不参与序列化。
   onProgress?: (step: string) => void;
 };
+
+export type NativeTaskDiagnostics = {
+  begin: (stage: string | undefined, model: string | undefined, body: unknown) => number;
+  end: (sequence: number, response?: { status: number; text: string }, error?: unknown) => void;
+  finish: (status: 'done' | 'error') => void;
+};
+
+/** Private evidence for the actual inference, not a replay or another model call.
+ * A file belongs to one host-created task row. Limits omit whole payloads with
+ * explicit gaps; diagnostics failure must never change the business result. */
+export function createNativeTaskDiagnostics(input: { dataDirectory: string; owner: string; chatId: number; secrets?: string[] }): NativeTaskDiagnostics | undefined {
+  if (!['tongzhang', 'test'].includes(input.owner) || !Number.isSafeInteger(input.chatId) || input.chatId <= 0) return undefined;
+  const fileBytes = 8 * 1024 * 1024, totalBytes = 32 * 1024 * 1024;
+  const ownerHash = createHash('sha256').update(input.owner).digest('hex');
+  const root = path.join(input.dataDirectory, 'task-diagnostics'), directory = path.join(root, ownerHash);
+  const destination = path.join(directory, `${input.chatId}.json`);
+  const document: any = { schemaVersion: 1, ownerHash, chatId: input.chatId, status: 'running', scope: 'nativeModelTransport',
+    startedAt: new Date().toISOString(), updatedAt: '', calls: [], gaps: [], limits: { fileBytes, totalBytes }, redactionApplied: true, knownLimits: ['Records host nativeModelTransport requests and final transport-returned responses, not adapter-internal raw streams or intermediate retry responses.'] };
+  const secrets = (input.secrets || []).filter(value => typeof value === 'string' && value.length >= 4);
+  let sequence = 0, closed = false, warned = false;
+  const sensitiveKey = /(?:authorization|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|password|passwd|secret|credential|private[-_]?key|cookie|^token$|^headers$|^env$)/i;
+  function text(value: string): string {
+    let result = value;
+    for (const secret of secrets) result = result.split(secret).join('[redacted]');
+    const urls: string[] = [];
+    const placeholder = `__DIAGNOSTIC_URL_${randomUUID()}_`;
+    result = result.replace(/https?:\/\/[^\s"'<>]+/gi, raw => {
+      let clean = raw;
+      try {
+        const url = new URL(raw); let changed = false;
+        if (url.username || url.password) { url.username = 'redacted'; url.password = ''; changed = true; }
+        for (const key of Array.from(url.searchParams.keys())) if (sensitiveKey.test(key) || /^(?:key|auth|signature|sig)$/i.test(key)) { url.searchParams.set(key, '[redacted]'); changed = true; }
+        if (url.hash.includes('=')) {
+          const fragment = new URLSearchParams(url.hash.slice(1)); let hidden = false;
+          for (const key of Array.from(fragment.keys())) if (sensitiveKey.test(key) || /^(?:key|auth|signature|sig)$/i.test(key)) { fragment.set(key, '[redacted]'); hidden = true; }
+          if (hidden) { url.hash = fragment.toString(); changed = true; }
+        }
+        if (changed) clean = url.toString();
+      } catch { clean = '[invalid URL omitted]'; }
+      urls.push(clean); return `${placeholder}${urls.length - 1}__`;
+    });
+    result = result.replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?-----END [^-]*PRIVATE KEY-----/g, '[redacted private key]')
+      .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]+/gi, '$1 [redacted]')
+      .replace(/\b(?:(?:sk|key|token)[-_][A-Za-z0-9_-]{8,}|gh[pousr]_[A-Za-z0-9]{16,}|AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g, '[redacted]')
+      .replace(/((?:["']?)(?:authorization|api[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|password|passwd|secret|credential|token|cookie)(?:["']?)\s*[:=]\s*)(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)/gi, '$1"[redacted]"')
+      .replace(/data:[^\s"']+;base64,[A-Za-z0-9+/=]+/gi, raw => { gap(0, 'binary_payload_omitted', Buffer.byteLength(raw)); return '[binary omitted]'; });
+    for (let index = 0; index < urls.length; index++) result = result.split(`${placeholder}${index}__`).join(urls[index]);
+    return result;
+  }
+  function discover(value: unknown, sensitive = false) {
+    if (typeof value === 'string') {
+      if (sensitive && value.length >= 6 && !secrets.includes(value)) secrets.push(value);
+      // Preserve redaction even when JSON.parse would discard earlier duplicate
+      // secret keys; repeated literal echoes elsewhere must also be hidden.
+      for (const match of value.matchAll(/("(?:\\.|[^"\\])*")\s*:\s*("(?:\\.|[^"\\])*")/g)) {
+        try { const key = JSON.parse(match[1]), found = JSON.parse(match[2]); if (sensitiveKey.test(key) && typeof found === 'string' && found.length >= 6 && !secrets.includes(found)) secrets.push(found); } catch { /* invalid quoted key/value */ }
+      }
+      try { const parsed = JSON.parse(value); if (parsed && typeof parsed === 'object') discover(parsed, sensitive); } catch { /* not nested JSON */ }
+    } else if (Array.isArray(value)) value.forEach(item => discover(item, sensitive));
+    else if (value && typeof value === 'object') for (const [key, item] of Object.entries(value)) discover(item, sensitive || sensitiveKey.test(key));
+  }
+  function redact(value: unknown): unknown {
+    if (typeof value === 'string') {
+      try {
+        const parsed = JSON.parse(value);
+        if (parsed && typeof parsed === 'object') {
+          const clean = redact(parsed);
+          // Unchanged transport text stays byte-for-byte exact; changed text is
+          // explicitly redacted, with original hash/bytes recorded separately.
+          return JSON.stringify(clean) === JSON.stringify(parsed) && text(value) === value ? value : JSON.stringify(clean);
+        }
+      } catch { /* Plain or invalid output is retained as redacted text. */ }
+      return text(value);
+    }
+    if (Array.isArray(value)) return value.map(redact);
+    if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sensitiveKey.test(key) ? '[redacted]' : redact(item)]));
+    return value;
+  }
+  function gap(call: number, reason: string, bytes?: number) {
+    if (document.gaps.length < 128) document.gaps.push({ call, reason, ...(bytes === undefined ? {} : { bytes }) });
+    else document.additionalGapCount = (document.additionalGapCount || 0) + 1;
+  }
+  function warn() { if (!warned) { warned = true; console.warn('[task-diagnostics] evidence unavailable; business result unchanged'); } }
+  function safeDirectory(folder: string) {
+    fs.mkdirSync(folder, { recursive: true, mode: 0o700 });
+    const stat = fs.lstatSync(folder);
+    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('unsafe diagnostic directory');
+    fs.chmodSync(folder, 0o700);
+  }
+  function persist() {
+    let temporary: string | undefined;
+    try {
+      safeDirectory(root); safeDirectory(directory);
+      if (fs.existsSync(destination)) { const stat = fs.lstatSync(destination); if (!stat.isFile() || stat.isSymbolicLink()) throw new Error('unsafe diagnostic file'); }
+      document.updatedAt = new Date().toISOString();
+      let content = JSON.stringify(document), size = Buffer.byteLength(content);
+      // One file per task: the stricter 8 MiB file cap also stays below the
+      // 32 MiB context budget. Other historical failures are never pruned here.
+      if (size > fileBytes) {
+        gap(0, 'file_budget_exceeded', size);
+        document.calls = document.calls.map((call: any) => ({ sequence: call.sequence, stage: call.stage, model: call.model, startedAt: call.startedAt, endedAt: call.endedAt, payloadOmitted: true }));
+        content = JSON.stringify(document); size = Buffer.byteLength(content);
+      }
+      if (size > fileBytes) { warn(); return; }
+      temporary = path.join(directory, `.${input.chatId}.${randomUUID()}.tmp`);
+      fs.writeFileSync(temporary, content, { flag: 'wx', mode: 0o600 });
+      fs.renameSync(temporary, destination); temporary = undefined;
+    } catch { warn(); }
+    finally { if (temporary) { try { fs.unlinkSync(temporary); } catch { /* best effort cleanup */ } } }
+  }
+  function payload(value: unknown, call: number): unknown {
+    try {
+      const serialized = JSON.stringify(value), bytes = Buffer.byteLength(serialized);
+      if (bytes > fileBytes - 65536) { gap(call, 'payload_budget_exceeded', bytes); return { payloadOmitted: true, bytes }; }
+      discover(value);
+      return redact(value);
+    } catch { gap(call, 'payload_serialization_failed'); return { payloadOmitted: true }; }
+  }
+  return {
+    begin(stage, model, body) {
+      if (closed) return 0;
+      const id = ++sequence;
+      try {
+        if (document.calls.length >= 256) { gap(id, 'call_count_exceeded'); persist(); return 0; }
+        const request = typeof body === 'string' ? JSON.parse(body) : body as any;
+        const safeRequest = Object.fromEntries(['model', 'messages', 'response_format', 'temperature', 'max_tokens', 'max_completion_tokens', 'reasoning_effort', 'reasoning', 'thinking', 'top_p', 'stop', 'seed', 'stream']
+          .filter(key => request?.[key] !== undefined).map(key => [key, request[key]]));
+        document.calls.push({ sequence: id, stage: text(String(stage || 'Unspecified role')), model: text(String(model || 'unknown')), startedAt: new Date().toISOString(),
+          request: payload(safeRequest, id) });
+        persist();
+      } catch { gap(id, 'request_capture_failed'); persist(); }
+      return id;
+    },
+    end(id, response, error) {
+      if (closed || !id) return;
+      try {
+        const call = document.calls.find((item: any) => item.sequence === id);
+        if (!call) return;
+        if (response) call.response = payload({ status: response.status, body: response.text, originalBytes: Buffer.byteLength(response.text), originalSha256: createHash('sha256').update(response.text).digest('hex') }, id);
+        if (error !== undefined) { if (!call.response) gap(id, 'transport_failed_before_response_capture'); call.error = payload({ name: error instanceof Error ? error.name : 'Error', message: error instanceof Error ? error.message : String(error) }, id); }
+        call.endedAt = new Date().toISOString(); persist();
+      } catch { gap(id, 'response_capture_failed'); persist(); }
+    },
+    finish(status) {
+      if (closed) return;
+      closed = true;
+      if (status === 'done') { try { if (fs.existsSync(destination) && !fs.lstatSync(destination).isSymbolicLink()) fs.unlinkSync(destination); } catch { warn(); } return; }
+      for (const call of document.calls) if (!call.endedAt) gap(call.sequence, 'inference_not_finished_at_task_failure');
+      document.status = 'error'; persist();
+    },
+  };
+}
 
 type LIVEUIAGENTRuntimeOptions = {
   // Trusted host configuration only; application/request JSON never sets this.
@@ -1748,7 +1902,14 @@ async function chatFetchWithRetry(url: string, init: RequestInit, timeoutMs: num
 }
 
 async function nativeModelTransport(llm: LlmRuntimeConfig, url: string, init: RequestInit, timeoutMs: number, roleLabel?: string) {
-  if (!llm.chatCompletion) return chatFetchWithRetry(url, init, timeoutMs);
+  let diagnosticId = 0;
+  try { diagnosticId = llm.taskDiagnostics?.begin(roleLabel, llm.model, init.body) || 0; } catch { /* Evidence cannot replace model behavior. */ }
+  try {
+  if (!llm.chatCompletion) {
+    const response = await chatFetchWithRetry(url, init, timeoutMs);
+    try { llm.taskDiagnostics?.end(diagnosticId, response); } catch { /* best effort evidence */ }
+    return response;
+  }
   const actionBudget = remainingActionMs();
   const budget = Math.min(timeoutMs, actionBudget);
   const totalBudgetLimited = actionDeadlineAt() !== undefined && actionBudget <= timeoutMs;
@@ -1758,9 +1919,15 @@ async function nativeModelTransport(llm: LlmRuntimeConfig, url: string, init: Re
       llm.chatCompletion(JSON.parse(String(init.body)), { timeoutMs: budget, roleLabel }),
       new Promise<never>((_, reject) => { timer = setTimeout(() => reject(totalBudgetLimited ? actionDeadlineError() : new Error('native inference adapter deadline exceeded')), budget); }),
     ]);
+    const response = { ok: true, status: 200, text: JSON.stringify(result) };
+    try { llm.taskDiagnostics?.end(diagnosticId, response); } catch { /* best effort evidence */ }
     remainingActionMs();
-    return { ok: true, status: 200, text: JSON.stringify(result) };
+    return response;
   } finally { if (timer) clearTimeout(timer); }
+  } catch (error) {
+    try { llm.taskDiagnostics?.end(diagnosticId, undefined, error); } catch { /* preserve original exception */ }
+    throw error;
+  }
 }
 
 async function openAIChatJson(request: {
