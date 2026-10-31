@@ -32,7 +32,7 @@
     const modelLabel=node('label','',labels(sheet,'模型','Model')),models=node('select');models.setAttribute('aria-label','App model');modelLabel.append(models);
     const status=node('p');status.setAttribute('role','status');status.setAttribute('aria-live','polite');
     const footer=node('div','ulemi-harness-actions'),cancel=button(labels(sheet,'取消','Cancel'),close),submit=button(labels(sheet,'切换','Switch'),change,'primary');footer.append(cancel,submit);
-    const memory=document.querySelector('.personal-space-button');if(memory){const openMemory=button(labels(sheet,'记忆','Memory'),()=>{dialog.close();memory.click();});footer.prepend(openMemory);}
+    const memory=document.querySelector('.personal-space-button');if(memory){const openMemory=button(labels(sheet,'记忆','Memory'),()=>{if(pending)return;dialog.close();memory.click();});footer.prepend(openMemory);}
     dialog.append(header,info,agentLabel,modelLabel,status,footer);document.body.append(dialog);
     let state=null,pending=false;
     const message=(text,error=false)=>{status.textContent=text;status.classList.toggle('is-error',error);};
@@ -59,6 +59,7 @@
       }catch(error){
         // PATCH may have committed before a transport loss. Only read back; never repeat it.
         pending=false;cancel.disabled=false;await read();
+        try{await window.__ulemiReloadAppBinding?.(id,state);}catch{}
         message(labels(sheet,'未确认切换完成。已重新读取当前设置，请检查后再操作。','The switch was not confirmed. Current settings were reloaded; check them before trying again.')+' '+error.message,true);
       }
     }

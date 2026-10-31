@@ -72,8 +72,8 @@
     },
     {
       "file": "rich-workspaces.js",
-      "sha256": "c40afb1206eae2481535195eede8de47216190e5c4226989525f215e7bfe130c",
-      "bytes": 11956
+      "sha256": "c349a124e96dd5754a905bdf576caf285c79bb87cfc339f55b479fb05668fcfc",
+      "bytes": 12060
     },
     {
       "file": "rich-workspaces.css",
@@ -97,8 +97,8 @@
     },
     {
       "file": "app-experience.js",
-      "sha256": "53109a46ef97c4cf3be7e007faebb7779b8cbed7f9d234be8477940e7a12c464",
-      "bytes": 12654
+      "sha256": "0713201e2c010a47063109652593686dd8490dfc6a879908bafcc91977f4d3c3",
+      "bytes": 12742
     },
     {
       "file": "app-experience.css",

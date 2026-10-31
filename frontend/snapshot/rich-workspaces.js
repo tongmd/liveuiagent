@@ -97,7 +97,7 @@
     R.useEffect(() => {if(container.current)container.current.inert=busy;}, [busy]);
     R.useEffect(() => {
       const registry=window.__ulemiBindingReloaders || (window.__ulemiBindingReloaders=new Map());
-      const reload=async ()=>{let failedSave=false;await writes.current.catch(()=>{failedSave=true;});const snapshot=await api(base);if(alive.current){publish(snapshot);if(failedSave){setData(snapshot);show(locale()==='zh-CN'?'上次保存未完成，已恢复已保存内容。':'The previous save failed. Saved content was restored.');}}};
+      const reload=async ()=>{const priorWrite=writes.current;let failedSave=false;await priorWrite.catch(()=>{failedSave=true;});const snapshot=await api(base);if(alive.current){if(failedSave&&writes.current===priorWrite)writes.current=Promise.resolve();publish(snapshot);if(failedSave){setData(snapshot);show(locale()==='zh-CN'?'上次保存未完成，已恢复已保存内容。':'The previous save failed. Saved content was restored.');}}};
       registry.set(id,reload);
       window.__ulemiReloadAppBinding=async appId=>registry.get(appId)?.();
       return ()=>{if(registry.get(id)===reload)registry.delete(id);};
