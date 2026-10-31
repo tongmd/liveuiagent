@@ -18,6 +18,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Native, on-device conversation. No web bridge, credentials or cloud inference fallback. */
 public final class LocalAssistantActivity extends Activity {
+    private static java.lang.ref.WeakReference<LocalAssistantActivity> activeInstance = new java.lang.ref.WeakReference<>(null);
+    static boolean isUpdateBlocked() { LocalAssistantActivity a = activeInstance.get(); return a != null && a.busy; }
+    private AppUpdater updater;
     private static final ExecutorService WORKER = Executors.newSingleThreadExecutor();
     private final ExecutorService worker = WORKER;
     private final Handler ui = new Handler(Looper.getMainLooper());
@@ -40,6 +43,7 @@ public final class LocalAssistantActivity extends Activity {
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);
+        activeInstance = new java.lang.ref.WeakReference<>(this); updater = new AppUpdater(this);
         model = new LocalModelFile(new File(getNoBackupFilesDir(), "local-models"));
         readHistory();
         ActivityManager.MemoryInfo hardware = new ActivityManager.MemoryInfo(); ((ActivityManager)getSystemService(ACTIVITY_SERVICE)).getMemoryInfo(hardware);
@@ -246,5 +250,7 @@ public final class LocalAssistantActivity extends Activity {
     }
     @Override protected void onStop() { super.onStop(); if (busy) cancelWork(); }
     @Override public void onBackPressed() { if (busy) { cancelWork(); new AlertDialog.Builder(this).setMessage("正在停止，完成后可以返回。下载进度会保留。").setPositiveButton("知道了", null).show(); } else super.onBackPressed(); }
+    @Override protected void onResume() { super.onResume(); if (updater != null) updater.resume(); }
+    @Override protected void onPause() { if (updater != null) updater.pause(); super.onPause(); }
     @Override protected void onDestroy() { closing = true; cancelled.set(true); model.cancel(); Conversation c = conversation; if (c != null) c.cancelProcess(); worker.execute(this::closeEngine); super.onDestroy(); }
 }
