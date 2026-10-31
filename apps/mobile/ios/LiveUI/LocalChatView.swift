@@ -57,7 +57,7 @@ struct LocalChatView: View {
             } message: { Text("Your conversations will stay. You can download the model again.") }
             .onChange(of: scenePhase) { phase in if phase != .active { chat.unload(); chat.pauseDownload() } }
             .onDisappear { chat.stop(); chat.pauseDownload(); chat.unload() }
-        }
+        }.tint(AppStyle.ink)
     }
     private var modelControls: some View {
         VStack(alignment: .leading, spacing: 0) {
