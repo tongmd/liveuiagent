@@ -9,10 +9,12 @@ struct DiscoveredDevice: Identifiable {
     let id: String
     let name: String
     let detail: String
+    var metadata: [String: String] = [:]
 }
 
 // All hardware is foreground-only, explicit and native. No data is injected into
-// web pages, uploaded, persisted, or used to send device commands.
+// web pages unless the user explicitly adds an observation snapshot to the
+// current instruction. No device commands are sent.
 final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDelegate, CLLocationManagerDelegate {
     @Published private(set) var bluetoothStatus = "Find nearby Bluetooth LE devices."
     @Published private(set) var networkStatus = "Find HTTP and MQTT services on your Wi-Fi network."
@@ -25,6 +27,19 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
     @Published private(set) var scanningNetwork = false
     @Published private(set) var readingSensors = false
     @Published private(set) var locating = false
+    @Published private(set) var observations: [String: DeviceObservation] = [:]
+
+    func record(_ observation: DeviceObservation) {
+        guard observation.values.values.allSatisfy({ $0.isFinite }) else {
+            sensorStatus = "A sensor returned an invalid reading. Start readings again."
+            return
+        }
+        observations[observation.id] = observation
+    }
+    func snapshot() -> DeviceObservationEnvelope {
+        DeviceObservationEnvelope(createdAt: Date(), observations: Array(observations.values), availability: ["Bluetooth": bluetoothStatus, "Local network": networkStatus, "Sensors": sensorStatus, "Location": locationStatus])
+    }
+    private func clearObservations(_ prefix: String) { observations = observations.filter { !$0.key.hasPrefix(prefix) } }
 
     private var central: CBCentralManager?
     private var browsers: [NWBrowser] = []
@@ -49,7 +64,7 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
 
     func startBluetooth() {
         stopBluetooth()
-        bluetoothDevices = []
+        bluetoothDevices = []; clearObservations("ble:")
         scanningBluetooth = true
         let ticket = bluetoothSession.begin()
         bluetoothStatus = "Waiting for Bluetooth…"
@@ -88,12 +103,17 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
         let item = DiscoveredDevice(id: id, name: name, detail: "Bluetooth LE · \(signal)")
         if let index = bluetoothDevices.firstIndex(where: { $0.id == id }) { bluetoothDevices[index] = item }
         else if bluetoothDevices.count < DeviceAccessPolicy.maximumResults { bluetoothDevices.append(item) }
+        if bluetoothDevices.contains(where: { $0.id == id }) {
+            record(DeviceObservation(id: "ble:" + id, source: "CoreBluetooth advertisement", capturedAt: Date(),
+                values: RSSI.intValue == 127 ? [:] : ["signal": RSSI.doubleValue], units: ["signal": "dBm"],
+                details: ["name": name, "peripheralID": id, "transport": "Bluetooth LE", "serviceUUIDs": (advertisementData[CBAdvertisementDataServiceUUIDsKey] as? [CBUUID] ?? []).map { $0.uuidString }.joined(separator: ", "), "signalStatus": RSSI.intValue == 127 ? "unavailable" : "observed"]))
+        }
     }
 
     func startNetwork() {
         stopNetwork()
         let ticket = networkSession.begin()
-        networkDevices = []; networkResults = [:]; scanningNetwork = true
+        networkDevices = []; networkResults = [:]; clearObservations("bonjour:"); scanningNetwork = true
         networkStatus = "Searching your local network…"
         for type in DeviceAccessPolicy.bonjourTypes {
             let browser = NWBrowser(for: .bonjour(type: type, domain: "local."), using: .tcp)
@@ -110,9 +130,14 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
                 self.networkResults[type] = results.compactMap { result in
                     guard case let .service(name, serviceType, domain, _) = result.endpoint else { return nil }
                     return DiscoveredDevice(id: DeviceAccessPolicy.resultKey(name: name, type: serviceType, domain: domain),
-                                            name: name, detail: "\(serviceType) · \(domain)")
+                                            name: name, detail: "\(serviceType) · \(domain)", metadata: ["name":name,"serviceType":serviceType,"domain":domain])
                 }.sorted { $0.id < $1.id }
                 self.networkDevices = Array(self.networkResults.values.flatMap { $0 }.sorted { $0.id < $1.id }.prefix(DeviceAccessPolicy.maximumResults))
+                self.clearObservations("bonjour:")
+                for device in self.networkDevices {
+                    self.record(DeviceObservation(id: "bonjour:" + device.id, source: "Bonjour service advertisement", capturedAt: Date(),
+                        values: [:], units: [:], details: device.metadata))
+                }
             }
             browsers.append(browser); browser.start(queue: .main)
         }
@@ -132,7 +157,7 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
         let ticket = sensorSession.begin()
         readingSensors = true
         sensorStatus = "Live readings · stops automatically after 60 seconds."
-        sensorReadings = [:]
+        sensorReadings = [:]; clearObservations("sensor:")
         motion.accelerometerUpdateInterval = 0.25
         motion.gyroUpdateInterval = 0.25
         motion.magnetometerUpdateInterval = 0.25
@@ -143,7 +168,10 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
         if motion.isAccelerometerAvailable {
             motion.startAccelerometerUpdates(to: .main) { [weak self] data, error in
                 guard let self, self.sensorSession.accepts(ticket) else { return }
-                if let data { self.sensorReadings["Acceleration"] = vector(data.acceleration.x, data.acceleration.y, data.acceleration.z, "g") }
+                if let data {
+                    self.sensorReadings["Acceleration"] = vector(data.acceleration.x, data.acceleration.y, data.acceleration.z, "g")
+                    self.record(DeviceObservation(id: "sensor:acceleration", source: "CoreMotion accelerometer", capturedAt: Date(), values: ["x":data.acceleration.x,"y":data.acceleration.y,"z":data.acceleration.z], units: ["x":"g","y":"g","z":"g"], details: [:]))
+                }
                 else if error != nil { self.sensorReadings["Acceleration"] = "Reading unavailable" }
             }
         }
@@ -151,7 +179,10 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
         if motion.isGyroAvailable {
             motion.startGyroUpdates(to: .main) { [weak self] data, error in
                 guard let self, self.sensorSession.accepts(ticket) else { return }
-                if let data { self.sensorReadings["Rotation"] = vector(data.rotationRate.x, data.rotationRate.y, data.rotationRate.z, "rad/s") }
+                if let data {
+                    self.sensorReadings["Rotation"] = vector(data.rotationRate.x, data.rotationRate.y, data.rotationRate.z, "rad/s")
+                    self.record(DeviceObservation(id: "sensor:rotation", source: "CoreMotion gyroscope", capturedAt: Date(), values: ["x":data.rotationRate.x,"y":data.rotationRate.y,"z":data.rotationRate.z], units: ["x":"rad/s","y":"rad/s","z":"rad/s"], details: [:]))
+                }
                 else if error != nil { self.sensorReadings["Rotation"] = "Reading unavailable" }
             }
         }
@@ -159,7 +190,10 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
         if motion.isMagnetometerAvailable {
             motion.startMagnetometerUpdates(to: .main) { [weak self] data, error in
                 guard let self, self.sensorSession.accepts(ticket) else { return }
-                if let data { self.sensorReadings["Magnetic field"] = vector(data.magneticField.x, data.magneticField.y, data.magneticField.z, "µT") }
+                if let data {
+                    self.sensorReadings["Magnetic field"] = vector(data.magneticField.x, data.magneticField.y, data.magneticField.z, "µT")
+                    self.record(DeviceObservation(id: "sensor:magnetic", source: "CoreMotion magnetometer", capturedAt: Date(), values: ["x":data.magneticField.x,"y":data.magneticField.y,"z":data.magneticField.z], units: ["x":"µT","y":"µT","z":"µT"], details: [:]))
+                }
                 else if error != nil { self.sensorReadings["Magnetic field"] = "Reading unavailable" }
             }
         }
@@ -171,6 +205,7 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
                 altimeter.startRelativeAltitudeUpdates(to: .main) { [weak self] data, error in
                     guard let self, self.sensorSession.accepts(ticket) else { return }
                     if let data {
+                        self.record(DeviceObservation(id: "sensor:altimeter", source: "CoreMotion altimeter", capturedAt: Date(), values: ["pressure":data.pressure.doubleValue,"relativeAltitude":data.relativeAltitude.doubleValue], units: ["pressure":"kPa","relativeAltitude":"m"], details: [:]))
                         self.sensorReadings["Pressure / altitude"] = String(format: "%.2f kPa · %+.2f m relative", data.pressure.doubleValue, data.relativeAltitude.doubleValue)
                     } else if error != nil { self.sensorReadings["Pressure / altitude"] = "Reading unavailable. Check Motion access in Settings." }
                 }
@@ -188,7 +223,7 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
     }
 
     func requestLocation() {
-        stopLocation()
+        stopLocation(); clearObservations("location:")
         guard CLLocationManager.locationServicesEnabled() else { locationStatus = "Location Services are off. Enable them in Settings."; return }
         let ticket = locationSession.begin(); locating = true
         locationStatus = "Waiting for a current location…"
@@ -217,6 +252,9 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard manager === locationManager, locating, locationSession.id != nil, let location = locations.last,
               DeviceAccessPolicy.acceptsLocation(timestamp: location.timestamp, accuracy: location.horizontalAccuracy) else { return }
+        record(DeviceObservation(id: "location:fix", source: "CoreLocation current fix", capturedAt: location.timestamp,
+            values: ["latitude":location.coordinate.latitude,"longitude":location.coordinate.longitude,"horizontalAccuracy":location.horizontalAccuracy],
+            units: ["latitude":"degrees","longitude":"degrees","horizontalAccuracy":"m"], details: [:]))
         stopLocation(message: String(format: "%.5f, %.5f · ±%.0f m", location.coordinate.latitude, location.coordinate.longitude, location.horizontalAccuracy))
     }
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -231,6 +269,6 @@ final class DeviceAccessModel: NSObject, ObservableObject, CBCentralManagerDeleg
     func stopAll() {
         stopBluetooth(); stopNetwork(); stopSensors(); stopLocation()
         // Do not retain nearby identifiers or location after leaving this screen.
-        bluetoothDevices = []; networkDevices = []; networkResults = [:]; sensorReadings = [:]
+        bluetoothDevices = []; networkDevices = []; networkResults = [:]; sensorReadings = [:]; observations = [:]
     }
 }

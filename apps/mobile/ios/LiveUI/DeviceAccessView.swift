@@ -1,6 +1,14 @@
 import SwiftUI
+import WebKit
+
+typealias DeviceWorkspaceSink = (DeviceObservationEnvelope, @escaping (Result<Void, Error>) -> Void) -> Void
 
 struct DeviceAccessView: View {
+    var workspaceSink: DeviceWorkspaceSink? = nil
+    @State private var boundSink: DeviceWorkspaceSink?
+    @State private var bound = false
+    @State private var transferring = false
+    @State private var transferMessage: String?
     @StateObject private var model = DeviceAccessModel()
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -43,7 +51,27 @@ struct DeviceAccessView: View {
                             if model.locating { model.stopLocation() } else { model.requestLocation() }
                         }
                     }
-                    Text("Discovery does not connect to or control a device. Robot control needs a device-specific connection, authorization and emergency stop. Readings stay on this screen and stop when you leave or put Ulemi in the background.")
+                    if boundSink != nil {
+                        Button {
+                            guard !transferring, !model.observations.isEmpty, let sink = boundSink else { return }
+                            transferring = true; transferMessage = nil
+                            sink(model.snapshot()) { result in
+                                transferring = false
+                                switch result {
+                                case .success: model.stopAll(); dismiss()
+                                case .failure(let error): transferMessage = error.localizedDescription
+                                }
+                            }
+                        } label: {
+                            Label(transferring ? "Adding observations…" : "Use in workspace", systemImage: "arrow.up.doc")
+                                .font(.headline).frame(maxWidth: .infinity, minHeight: 48)
+                        }.buttonStyle(.borderedProminent).tint(.black)
+                            .disabled(model.observations.isEmpty || transferring)
+                        if let transferMessage { status(transferMessage) }
+                        Text("Adds the latest observed values, sources, times and units to your current instruction. Your draft stays intact; you choose when to send.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Text("Readings stop when you leave.")
                         .font(.footnote).foregroundStyle(.secondary)
                     Button {
                         model.stopAll()
@@ -59,6 +87,7 @@ struct DeviceAccessView: View {
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { model.stopAll(); dismiss() } } }
         }
         .tint(.primary)
+        .onAppear { if !bound { boundSink = workspaceSink; bound = true } }
         .onDisappear { model.stopAll() }
         // Permission sheets temporarily make the scene inactive. Keep the user's
         // pending request for that transition, but never run in the background.
@@ -91,6 +120,42 @@ struct DeviceAccessView: View {
                 Text(item.name).font(.subheadline.weight(.medium))
                 Text(item.detail).font(.caption).foregroundStyle(.secondary)
             }.frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
+
+@MainActor
+extension BrowserModel {
+    // Capture both account and WKWebView identity at presentation. A changed
+    // login or recreated browser cannot receive the previous screen's readings.
+    func deviceWorkspaceSink() -> DeviceWorkspaceSink? {
+        guard authenticated, workspaceReady, let expected = connection, let target = webView else { return nil }
+        return { [weak self, weak target] envelope, completion in
+            guard let self, let target, self.connection == expected, self.webView === target,
+                  self.authenticated, self.workspaceReady, let url = target.url, expected.contains(url) else {
+                completion(.failure(NSError(domain: "UlemiDevices", code: 1, userInfo: [NSLocalizedDescriptionKey: "Your workspace changed. Reopen Devices & sensors from the current account."])))
+                return
+            }
+            do {
+                let script = try DeviceWorkspaceTransfer.script(text: envelope.readableText())
+                target.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { [weak self, weak target] result in
+                    guard let self, let target, self.connection == expected, self.webView === target else {
+                        completion(.failure(NSError(domain: "UlemiDevices", code: 2, userInfo: [NSLocalizedDescriptionKey: "Your workspace changed before the observations were accepted."])))
+                        return
+                    }
+                    switch result {
+                    case .success(let value):
+                        if let receipt = value as? [String: Any], receipt["ok"] as? Bool == true { completion(.success(())) }
+                        else {
+                            let message = (value as? [String: Any])?["message"] as? String ?? "The instruction field did not accept the observations. Please try again."
+                            completion(.failure(NSError(domain: "UlemiDevices", code: 3, userInfo: [NSLocalizedDescriptionKey: message])))
+                        }
+                    case .failure:
+                        completion(.failure(NSError(domain: "UlemiDevices", code: 4, userInfo: [NSLocalizedDescriptionKey: "Could not reach the current instruction field. Open it and try again."])))
+                    }
+                }
+            } catch { completion(.failure(error)) }
         }
     }
 }

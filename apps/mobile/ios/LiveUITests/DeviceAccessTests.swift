@@ -58,3 +58,98 @@ final class DeviceAccessTests: XCTestCase {
         XCTAssertTrue(model.sensorReadings.isEmpty)
     }
 }
+
+import WebKit
+
+@MainActor
+final class DeviceObservationTransferTests: XCTestCase {
+    func testRealModelBoundaryPreservesValuesUnitsSourceAndTimestamp() throws {
+        // Synthetic input at the same recording boundary used by hardware callbacks.
+        // This tests serialization, not physical hardware availability.
+        let model = DeviceAccessModel()
+        let time = Date(timeIntervalSince1970: 1000)
+        model.record(DeviceObservation(id: "sensor:acceleration", source: "CoreMotion accelerometer", capturedAt: time,
+            values: ["x": 0.25, "y": -0.5, "z": 1], units: ["x":"g","y":"g","z":"g"], details: [:]))
+        let envelope = model.snapshot()
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: envelope.encoded()) as? [String: Any])
+        let observations = try XCTUnwrap(json["observations"] as? [[String: Any]])
+        XCTAssertEqual(observations.count, 1)
+        XCTAssertEqual(observations[0]["source"] as? String, "CoreMotion accelerometer")
+        XCTAssertEqual(observations[0]["capturedAt"] as? String, "1970-01-01T00:16:40Z")
+        XCTAssertEqual((observations[0]["values"] as? [String: Double])?["x"], 0.25)
+        XCTAssertEqual((observations[0]["units"] as? [String: String])?["x"], "g")
+        XCTAssertTrue(envelope.readableText().contains("x: 0.25 g"))
+        model.stopAll()
+        XCTAssertTrue(model.snapshot().observations.isEmpty)
+    }
+
+    func testCurrentAppComposerReceivesSafeDataAndRetainsDraftWithoutSending() async throws {
+        let web = WKWebView()
+        web.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
+        let window = present(web); defer { window.isHidden = true }
+        let ready = expectation(description: "Loaded composer fixture")
+        let navigation = DeviceTestNavigation(ready)
+        web.navigationDelegate = navigation
+        web.loadHTMLString("""
+        <html><body>
+        <form class="liveui-composer"><textarea>Global draft</textarea></form>
+        <section class="app-sheet" data-app-id="fixture-app">
+        <form class="rich-workspace-request"><textarea>Keep this task</textarea><button>Send</button></form>
+        </section>
+        <script>window.sent=0;window.inputs=0;document.addEventListener('submit',e=>{e.preventDefault();window.sent++});document.addEventListener('input',e=>{window.inputs++;window.received=e.target.value});</script>
+        </body></html>
+        """, baseURL: URL(string: "https://example.invalid"))
+        await fulfillment(of: [ready], timeout: 15)
+        let dangerousName = "Desk');window.pwned=true;//\n\"quoted\""
+        let model = DeviceAccessModel()
+        model.record(DeviceObservation(id: "ble:fixture", source: "CoreBluetooth advertisement", capturedAt: Date(timeIntervalSince1970: 1000),
+            values: ["signal":-55], units: ["signal":"dBm"], details: ["name": dangerousName]))
+        let text = model.snapshot().readableText()
+        let receipt = try await execute(DeviceWorkspaceTransfer.script(text: text), web: web) as? [String: Any]
+        XCTAssertEqual(receipt?["ok"] as? Bool, true)
+        let state = try await execute("return {draft:document.querySelector('.rich-workspace-request textarea').value,global:document.querySelector('.liveui-composer textarea').value,sent:window.sent,inputs:window.inputs,received:window.received,pwned:!!window.pwned,app:document.querySelector('.app-sheet').dataset.appId}", web: web) as? [String: Any]
+        XCTAssertEqual(state?["draft"] as? String, "Keep this task\n\n" + text)
+        XCTAssertEqual(state?["received"] as? String, "Keep this task\n\n" + text)
+        XCTAssertEqual(state?["global"] as? String, "Global draft")
+        XCTAssertEqual(state?["app"] as? String, "fixture-app")
+        XCTAssertEqual(state?["sent"] as? Int, 0)
+        XCTAssertEqual(state?["inputs"] as? Int, 1)
+        XCTAssertEqual(state?["pwned"] as? Bool, false)
+        web.stopLoading(); web.navigationDelegate = nil
+    }
+
+    func testMissingCurrentAppComposerDoesNotFallBackOrClaimSuccess() async throws {
+        let web = WKWebView(); web.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
+        let window = present(web); defer { window.isHidden = true }
+        let ready = expectation(description: "Loaded missing composer fixture")
+        let navigation = DeviceTestNavigation(ready); web.navigationDelegate = navigation
+        web.loadHTMLString("<form class='liveui-composer'><textarea>Keep global</textarea></form><section class='app-sheet'>An app without an instruction field</section>", baseURL: URL(string: "https://example.invalid"))
+        await fulfillment(of: [ready], timeout: 15)
+        let result = try await execute(DeviceWorkspaceTransfer.script(text: "Actual reading"), web: web) as? [String: Any]
+        XCTAssertEqual(result?["ok"] as? Bool, false)
+        let value = try await execute("return document.querySelector('textarea').value", web: web) as? String
+        XCTAssertEqual(value, "Keep global")
+        web.stopLoading(); web.navigationDelegate = nil
+    }
+
+    private func present(_ web: WKWebView) -> UIWindow {
+        let window: UIWindow
+        if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first { window = UIWindow(windowScene: scene) }
+        else { window = UIWindow(frame: web.frame) }
+        window.frame = web.frame; window.rootViewController = UIViewController()
+        window.rootViewController?.view.addSubview(web); window.makeKeyAndVisible()
+        return window
+    }
+
+    private func execute(_ script: String, web: WKWebView) async throws -> Any {
+        try await withCheckedThrowingContinuation { continuation in
+            web.callAsyncJavaScript(script, arguments: [:], in: nil, in: .page) { result in continuation.resume(with: result) }
+        }
+    }
+}
+
+private final class DeviceTestNavigation: NSObject, WKNavigationDelegate {
+    let ready: XCTestExpectation
+    init(_ ready: XCTestExpectation) { self.ready = ready }
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready.fulfill() }
+}

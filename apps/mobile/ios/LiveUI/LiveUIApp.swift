@@ -194,7 +194,7 @@ struct RootView: View {
         }
         .tint(AppStyle.ink)
         .sheet(isPresented: $localChat) { LocalChatView() }
-        .sheet(isPresented: $devices) { DeviceAccessView() }
+        .sheet(isPresented: $devices) { DeviceAccessView(workspaceSink: browser.deviceWorkspaceSink()) }
         .sheet(item: $browser.share) { item in ShareSheet(url: item.url) }
         .fullScreenCover(isPresented: $showGuide) {
             OnboardingView {
@@ -216,7 +216,7 @@ struct RootView: View {
             Button("退出登录", role: .destructive) { browser.disconnect() }
         } message: { Text("已保存的应用会保留，下次登录后可以继续使用。") }
         .onChange(of: browser.connection) { connection in
-            if connection == nil { showGuide = false }
+            if connection == nil { showGuide = false; devices = false }
             else if !starting && OnboardingPolicy.shouldPresent(signedIn: browser.authenticated, completed: completedGuide) { showGuide = true }
         }
         .onChange(of: browser.authenticated) { signedIn in

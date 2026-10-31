@@ -83,7 +83,11 @@ entry. Unsupported hardware is reported without fabricated values.
 
 This screen discovers devices and reads local phone sensors. It does not pair,
 open device connections, send MQTT messages, issue robot commands, or expose a
-native device bridge to generated web pages. Device-specific authentication,
+native device bridge to generated web pages. An authenticated workspace can receive
+an explicit **Use in workspace** snapshot of actual observations, including source,
+time, numeric values and units, through its existing instruction field. This preserves
+the current draft and App context and never sends the instruction automatically.
+The transfer confirms the field accepted the text before reporting completion. Device-specific authentication,
 command contracts and an emergency stop still need implementation and physical
 hardware testing before robot control. No background Bluetooth/location modes,
 multicast entitlement or location-always permission are requested.
