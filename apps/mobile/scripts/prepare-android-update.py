@@ -23,7 +23,7 @@ min_sdk = int(re.search(r"sdkVersion:'(\d+)'",meta)[1])
 body = a.apk.read_bytes(); digest=hashlib.sha256(body).hexdigest()
 # Fail closed on outages; a missing first manifest is the only bootstrap exception.
 try:
-    with urllib.request.urlopen(HOST+'/android/latest.json',timeout=45) as r: old=json.load(r)
+    with urllib.request.urlopen(urllib.request.Request(HOST+'/android/latest.json', headers={'User-Agent':'UlemiReleasePublisher/1.0'}),timeout=45) as r: old=json.load(r)
 except urllib.error.HTTPError as e:
     if e.code != 404: raise
     old=None
@@ -39,7 +39,7 @@ if old and old.get('url') != HOST+'/'+release:
     if not previous.startswith(HOST+'/android/releases/') or '..' in previous: raise SystemExit('Unexpected prior release URL')
     dest=a.output/previous.removeprefix(HOST+'/'); dest.parent.mkdir(parents=True,exist_ok=True)
     if not dest.exists() or hashlib.sha256(dest.read_bytes()).hexdigest()!=old['sha256']:
-        with urllib.request.urlopen(previous,timeout=120) as r: previous_bytes=r.read(25*1024*1024+1)
+        with urllib.request.urlopen(urllib.request.Request(previous, headers={'User-Agent':'UlemiReleasePublisher/1.0'}),timeout=120) as r: previous_bytes=r.read(25*1024*1024+1)
         if len(previous_bytes)!=old['size'] or hashlib.sha256(previous_bytes).hexdigest()!=old['sha256']: raise SystemExit('Prior artifact verification failed')
         dest.write_bytes(previous_bytes)
 dest=a.output/release; dest.parent.mkdir(parents=True,exist_ok=True); dest.write_bytes(body)

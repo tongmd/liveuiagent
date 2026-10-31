@@ -44,7 +44,15 @@ public final class UpdateFlowTests extends Instrumentation {
                 rejected(apk, new UpdateRelease(wrongHash), "Wrong hash accepted");
                 JSONObject wrongLength = release(apk, 1002).json().put("size", apk.length() + 1);
                 rejected(apk, new UpdateRelease(wrongLength), "Wrong size accepted");
-                report("validate", new JSONObject().put("passed", true).put("checks", 6));
+                UpdateRelease next = release(apk, 1002);
+                File cached = AppUpdater.apk(c, next);
+                Files.write(cached.toPath(), "incomplete cached download".getBytes(StandardCharsets.UTF_8));
+                AppUpdater.prefs(c).edit().putString("ready", next.json().toString()).putLong("last_check", 1234).commit();
+                rejected(cached, next, "Damaged cache accepted");
+                require(AppUpdater.invalidateCached(c, next), "Damaged cached update not invalidated");
+                require(!cached.exists() && AppUpdater.stored(c) == null && !AppUpdater.prefs(c).contains("last_check"), "Damaged cache prevents retry");
+                AppUpdater.verifyApk(c, apk, next);
+                report("validate", new JSONObject().put("passed", true).put("checks", 7).put("damagedCacheCanRetry", true));
             } else if ("blocked".equals(phase)) {
                 require(!c.getPackageManager().canRequestPackageInstalls(), "Unknown sources unexpectedly allowed");
                 int before = c.getPackageManager().getPackageInstaller().getMySessions().size(); boolean denied = false;
