@@ -18,7 +18,9 @@ import java.nio.charset.StandardCharsets;
 import java.util.concurrent.*;
 
 public final class MainActivity extends Activity {
-    private static final int PICK_FILE = 40, SAVE_FILE = 41;
+    private static final int PICK_FILE = 40, SAVE_FILE = 41, DEVICE_ACCESS = 12870;
+    private String pendingDeviceObservation, deviceObservationAccount;
+    private WebView deviceObservationWeb;
     private static final long MAX_DOWNLOAD = 32L * 1024 * 1024;
     private final ExecutorService network = Executors.newSingleThreadExecutor();
     private CredentialStore store;
@@ -379,10 +381,53 @@ public final class MainActivity extends Activity {
                 case 2: reloadWorkspace(); break;
                 case 3: external(endpoint.toString()); break;
                 case 4: startActivity(Intent.createChooser(new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, endpoint.toString()), "分享 Ulemi")); break;
-                case 6: startActivity(new Intent(this, DeviceAccessActivity.class)); break;
+                case 6: openDeviceAccess(); break;
                 case 5: new AlertDialog.Builder(this).setMessage("退出后会关闭 Ulemi。你的应用和内容会保留，重新打开即可登录。").setNegativeButton("取消", null).setPositiveButton("退出", (d, w) -> logout()).show(); break;
             }
         }).setNegativeButton("取消", null).show();
+    }
+    private void openDeviceAccess() {
+        if (pendingDeviceObservation != null) {
+            new AlertDialog.Builder(this).setTitle("Device reading is ready").setMessage("Your reading has not been added to the workspace yet.")
+                .setPositiveButton("Add to draft", (d,w) -> deliverDeviceObservation())
+                .setNegativeButton("Take new reading", (d,w) -> { pendingDeviceObservation = null; openDeviceAccess(); }).show(); return;
+        }
+        boolean ready = authenticated && web != null && endpoint != null && ConnectionPolicy.sameOrigin(endpoint, web.getUrl());
+        deviceObservationAccount = username; deviceObservationWeb = web;
+        startActivityForResult(new Intent(this, DeviceAccessActivity.class).putExtra("workspaceAvailable", ready), DEVICE_ACCESS);
+    }
+    private void deliverDeviceObservation() {
+        if (pendingDeviceObservation == null) return;
+        if (!authenticated || web == null || web != deviceObservationWeb || !java.util.Objects.equals(username, deviceObservationAccount)
+                || endpoint == null || !ConnectionPolicy.sameOrigin(endpoint, web.getUrl())) {
+            deviceDeliveryError("Return to the signed-in workspace that requested this reading."); return;
+        }
+        final String capture = pendingDeviceObservation;
+        try {
+            String origin = endpoint.getScheme() + "://" + endpoint.getHost() + (endpoint.getPort() >= 0 && endpoint.getPort() != 443 ? ":" + endpoint.getPort() : "");
+            web.evaluateJavascript(DeviceObservation.composerScript(capture, origin), reply -> {
+                if (!capture.equals(pendingDeviceObservation)) return;
+                if ("\"already_added\"".equals(reply)) { pendingDeviceObservation = null; notice("Device reading is already in your draft."); }
+                else if ("\"staged\"".equals(reply)) ui.postDelayed(() -> acknowledgeDeviceObservation(capture, origin), 200);
+                else deviceDeliveryError("\"draft_too_long\"".equals(reply) ? "Your draft and reading exceed this message field's limit. Shorten the draft, then retry." : "The message composer is not ready. Your reading is kept for retry.");
+            });
+        } catch (Exception e) { deviceDeliveryError("This reading could not be added. It has been kept for retry."); }
+    }
+    private void acknowledgeDeviceObservation(String capture, String origin) {
+        if (!capture.equals(pendingDeviceObservation)) return;
+        if (!authenticated || web != deviceObservationWeb || !java.util.Objects.equals(username, deviceObservationAccount) || !ConnectionPolicy.sameOrigin(endpoint, web.getUrl())) {
+            deviceDeliveryError("Return to the signed-in workspace that requested this reading."); return;
+        }
+        try { web.evaluateJavascript(DeviceObservation.acknowledgementScript(capture, origin), reply -> {
+            if (!capture.equals(pendingDeviceObservation)) return;
+            if ("\"added\"".equals(reply)) { pendingDeviceObservation = null; notice("Device reading added to your draft. Send when ready."); }
+            else deviceDeliveryError("The draft did not keep the reading. Your capture is available for retry.");
+        }); } catch (Exception e) { deviceDeliveryError("Could not confirm the draft. Your reading is kept for retry."); }
+    }
+    private void deviceDeliveryError(String message) {
+        if (isFinishing() || isDestroyed()) return;
+        new AlertDialog.Builder(this).setTitle("Reading not added").setMessage(message)
+            .setPositiveButton("Retry", (d,w) -> deliverDeviceObservation()).setNegativeButton("Keep for later", null).show();
     }
     private void external(String value) {
         try {
@@ -397,6 +442,7 @@ public final class MainActivity extends Activity {
         synchronized (credentialLock) { ++connectionGeneration; if (clear) store.clear(); }
     }
     private void logout() {
+        pendingDeviceObservation = null; deviceObservationWeb = null; deviceObservationAccount = null;
         invalidateConnection(true); currentSession = null; authenticated = false; if (authBootstrap != null) authBootstrap.close(); password = "";
         if (upload != null) { upload.onReceiveValue(null); upload = null; }
         if (web != null) { web.stopLoading(); web.loadUrl("about:blank"); web.clearHistory(); web.clearCache(true); web.clearFormData(); if (web.getParent() instanceof ViewGroup) ((ViewGroup) web.getParent()).removeView(web); web.destroy(); web = null; }
@@ -486,6 +532,12 @@ public final class MainActivity extends Activity {
     }
     @Override protected void onActivityResult(int request, int result, Intent data) {
         super.onActivityResult(request, result, data);
+        if (request == DEVICE_ACCESS && result == RESULT_OK && data != null) {
+            pendingDeviceObservation = data.getStringExtra("deviceObservation");
+            if (pendingDeviceObservation != null) deliverDeviceObservation();
+            else notice("No device reading was returned. Open Devices to try again.");
+            return;
+        }
         if (request == PICK_FILE && upload != null) {
             Uri[] values = null;
             if (result == RESULT_OK && data != null) {

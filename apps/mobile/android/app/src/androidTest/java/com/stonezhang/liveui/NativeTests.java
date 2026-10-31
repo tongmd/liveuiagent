@@ -218,11 +218,75 @@ public final class NativeTests extends Instrumentation {
                 } catch(Exception e) { throw new AssertionError(e); } });
             } finally { runOnMainSync(a::finish); }
         });
-        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (10 tests)\n" : "\nFAILURES!!! Tests run: 10, Failures: " + failed + "\n");
-        result.putInt("numtests", 10); finish(Activity.RESULT_OK, result);
+        check("devicePermissionGrantResumesOriginalOperationOnce", () -> {
+            Activity a = startActivitySync(new android.content.Intent(getTargetContext(), DeviceAccessActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            try { runOnMainSync(() -> { try {
+                final int[] calls = {0};
+                java.lang.reflect.Field pending = DeviceAccessActivity.class.getDeclaredField("pendingPermission"); pending.setAccessible(true); pending.set(a, (Runnable)() -> calls[0]++);
+                java.lang.reflect.Field purpose = DeviceAccessActivity.class.getDeclaredField("permissionPurpose"); purpose.setAccessible(true); purpose.set(a,"Nearby Bluetooth devices");
+                NativeTests.this.callActivityOnPause(a);
+                a.onRequestPermissionsResult(1287, new String[]{"android.permission.BLUETOOTH_SCAN"}, new int[]{android.content.pm.PackageManager.PERMISSION_GRANTED});
+                require(calls[0] == 0);
+                NativeTests.this.callActivityOnResume(a); require(calls[0] == 1);
+                NativeTests.this.callActivityOnPause(a); NativeTests.this.callActivityOnResume(a); require(calls[0] == 1);
+            } catch(Exception e) { throw new AssertionError(e); } }); }
+            finally { runOnMainSync(a::finish); }
+        });
+        check("realSensorReadingReachesExistingWorkspaceDraftOnce", () -> {
+            Activity host = startActivitySync(new android.content.Intent(getTargetContext(), MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            android.os.SystemClock.sleep(650);
+            final android.webkit.WebView[] page = new android.webkit.WebView[1];
+            final String[] snapshot = {null};
+            ActivityMonitor monitor = addMonitor(DeviceAccessActivity.class.getName(), null, false);
+            Activity devices = null;
+            try {
+                runOnMainSync(() -> { try {
+                    set(host,"authenticated",true); set(host,"username","sensor-fixture"); set(host,"endpoint",ConnectionPolicy.parse(ConnectionPolicy.DEFAULT_URL));
+                    page[0] = new android.webkit.WebView(host); page[0].getSettings().setJavaScriptEnabled(true); set(host,"web",page[0]); host.setContentView(page[0]);
+                    page[0].loadDataWithBaseURL(ConnectionPolicy.DEFAULT_URL, "<meta name='viewport' content='width=device-width,initial-scale=1'><form class='frontend-prompt' style='display:none'><textarea>Do not change global draft</textarea></form><section class='app-sheet' data-app-id='sensor-context-fixture'><h1>Current app</h1><form class='ulemi-native-compose'><textarea>Keep my draft</textarea><button>Send</button></form></section><script>window.inputEvents=0;window.submits=0;document.querySelector('.ulemi-native-compose textarea').addEventListener('input',()=>window.inputEvents++);document.querySelector('.ulemi-native-compose').addEventListener('submit',e=>{e.preventDefault();window.submits++})</script>", "text/html", "utf-8", null);
+                } catch(Exception e) { throw new AssertionError(e); } });
+                android.os.SystemClock.sleep(1000);
+                runOnMainSync(() -> { try { invoke(host,"openDeviceAccess"); } catch(Exception e) { throw new AssertionError(e); } });
+                devices = waitForMonitorWithTimeout(monitor, 5000); require(devices != null); final Activity sensorActivity = devices;
+                runOnMainSync(() -> { try {
+                    android.hardware.Sensor sensor = ((android.hardware.SensorManager)sensorActivity.getSystemService(Context.SENSOR_SERVICE)).getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER);
+                    require(sensor != null);
+                    java.lang.reflect.Method read = DeviceAccessActivity.class.getDeclaredMethod("readSensor", android.hardware.Sensor.class); read.setAccessible(true); read.invoke(sensorActivity,sensor);
+                } catch(Exception e) { throw new AssertionError(e); } });
+                for (int poll = 0; poll < 60 && snapshot[0] == null; poll++) {
+                    runOnMainSync(() -> { try { java.lang.reflect.Field o=DeviceAccessActivity.class.getDeclaredField("observation");o.setAccessible(true); Object actual=o.get(sensorActivity); if(actual!=null){snapshot[0]=actual.toString();java.lang.reflect.Method stop=DeviceAccessActivity.class.getDeclaredMethod("stopAll");stop.setAccessible(true);stop.invoke(sensorActivity);} }catch(Exception e){throw new AssertionError(e);} });
+                    if (snapshot[0] == null) android.os.SystemClock.sleep(100);
+                }
+                require(snapshot[0] != null);
+                org.json.JSONObject actual = new org.json.JSONObject(snapshot[0]); require(actual.getString("kind").equals("sensor")); require(actual.getJSONObject("values").getJSONArray("values").length() >= 3); require(actual.getJSONObject("values").getLong("sampleElapsedNanos") > 0);
+                capture("android-devices-sensor.png");
+                runOnMainSync(() -> { try { java.lang.reflect.Method use=DeviceAccessActivity.class.getDeclaredMethod("useObservation");use.setAccessible(true);use.invoke(sensorActivity); }catch(Exception e){throw new AssertionError(e);} });
+                for (int poll=0;poll<50;poll++) {
+                    final boolean[] delivered={false};runOnMainSync(()->{try{delivered[0]=get(host,"pendingDeviceObservation")==null;}catch(Exception e){throw new AssertionError(e);}});
+                    android.os.SystemClock.sleep(100); if(delivered[0] && poll>2)break;
+                }
+                final java.util.concurrent.CountDownLatch checked = new java.util.concurrent.CountDownLatch(1);
+                final String[] dom = {null};
+                runOnMainSync(() -> page[0].evaluateJavascript("JSON.stringify({draft:document.querySelector('.ulemi-native-compose textarea').value,global:document.querySelector('.frontend-prompt textarea').value,inputs:window.inputEvents,submits:window.submits,appId:document.querySelector('.app-sheet').dataset.appId})", value -> {dom[0]=value;checked.countDown();}));
+                require(checked.await(5,java.util.concurrent.TimeUnit.SECONDS));
+                String decoded=(String)new org.json.JSONTokener(dom[0]).nextValue();org.json.JSONObject state=new org.json.JSONObject(decoded);
+                require(state.getString("draft").startsWith("Keep my draft\n\nDevice observation")); require(state.getString("draft").contains("m/s²")); require(state.getInt("inputs")==1 && state.getInt("submits")==0); require(state.getString("global").equals("Do not change global draft")); require(state.getString("appId").equals("sensor-context-fixture"));
+                require(state.getString("draft").contains(DeviceObservation.readable(actual)));
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(),"android-device-observation.json"))){out.write(new org.json.JSONObject(snapshot[0]).put("readableText",DeviceObservation.readable(actual)).toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(),"android-device-transfer.js"))){out.write(DeviceObservation.composerScript(snapshot[0],"https://liveui.stonezhang.com").getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+                try(java.io.FileOutputStream out=new java.io.FileOutputStream(new java.io.File(getTargetContext().getFilesDir(),"android-device-ack.js"))){out.write(DeviceObservation.acknowledgementScript(snapshot[0],"https://liveui.stonezhang.com").getBytes(java.nio.charset.StandardCharsets.UTF_8));}
+                // Replay the same immutable envelope: one insertion only.
+                final java.util.concurrent.CountDownLatch duplicate = new java.util.concurrent.CountDownLatch(1); final String[] duplicateResult={null};
+                runOnMainSync(() -> { try {page[0].evaluateJavascript(DeviceObservation.composerScript(snapshot[0],"https://liveui.stonezhang.com"), value->{duplicateResult[0]=value;duplicate.countDown();});}catch(Exception e){throw new AssertionError(e);} });
+                require(duplicate.await(5,java.util.concurrent.TimeUnit.SECONDS)); require("\"already_added\"".equals(duplicateResult[0]));
+                capture("android-devices-workspace.png");
+            } finally { removeMonitor(monitor); if(devices!=null){final Activity cleanup=devices;runOnMainSync(cleanup::finish);} runOnMainSync(() -> {try{set(host,"currentSession",null);}catch(Exception ignored){}host.finish();}); }
+        });
+        Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (12 tests)\n" : "\nFAILURES!!! Tests run: 12, Failures: " + failed + "\n");
+        result.putInt("numtests", 12); finish(Activity.RESULT_OK, result);
     }
     private void check(String name, Check task) {
-        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 10); b.putInt("current", ++current);
+        Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 12); b.putInt("current", ++current);
         sendStatus(1, b);
         try { task.run(); sendStatus(0, b); }
         catch (Throwable e) { failed++; b.putString("stack", android.util.Log.getStackTraceString(e)); sendStatus(-2, b); }
