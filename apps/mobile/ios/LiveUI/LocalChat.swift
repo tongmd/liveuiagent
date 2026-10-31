@@ -42,7 +42,10 @@ final class LocalChat: ObservableObject {
             var values = URLResourceValues(); values.isExcludedFromBackup = true
             try location.setResourceValues(values)
             let chat = self.directory.appendingPathComponent("chat.json")
-            if let data = try? Data(contentsOf: chat) { messages = try JSONDecoder().decode([LocalChatMessage].self, from: data) }
+            if FileManager.default.fileExists(atPath: chat.path) {
+                let data = try Data(contentsOf: chat)
+                messages = try JSONDecoder().decode([LocalChatMessage].self, from: data)
+            }
         } catch { self.storageReadable = false; self.error = "无法读取本机保存的对话。原文件未覆盖。" }
     }
     func select(_ id: String) {
