@@ -10,8 +10,10 @@ import android.util.Base64;
 public final class NativeTests extends Instrumentation {
     private interface Check { void run() throws Exception; }
     private int current = 0, failed = 0;
-    @Override public void onCreate(Bundle args) { super.onCreate(args); start(); }
+    private boolean motionPreview;
+    @Override public void onCreate(Bundle args) { super.onCreate(args); motionPreview = args != null && "true".equals(args.getString("motionPreview")); start(); }
     @Override public void onStart() {
+        if (motionPreview) { recordPreview(); return; }
         check("encryptedRoundTripAndLogout", () -> {
             Context c = getTargetContext(); CredentialStore store = new CredentialStore(c, ".test");
             try {
@@ -207,6 +209,30 @@ public final class NativeTests extends Instrumentation {
         Bundle result = new Bundle(); result.putString("stream", failed == 0 ? "\nOK (10 tests)\n" : "\nFAILURES!!! Tests run: 10, Failures: " + failed + "\n");
         result.putInt("numtests", 10); finish(Activity.RESULT_OK, result);
     }
+    /** Test-only screen recording sequence: real native views, no credentials, network or model requests. */
+    private void recordPreview() {
+        Activity main = null, local = null;
+        Bundle result = new Bundle();
+        try {
+            main = startActivitySync(new android.content.Intent(getTargetContext(), MainActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            android.os.SystemClock.sleep(650);
+            final Activity screen = main;
+            runOnMainSync(() -> { try { invoke(screen, "showRestoring"); } catch(Exception e) { throw new AssertionError(e); } });
+            android.os.SystemClock.sleep(5000);
+            runOnMainSync(() -> { assertBrandCentered(screen.getWindow().getDecorView(), "Ulemi"); assertBrandCentered(screen.getWindow().getDecorView(), "Opening your space"); });
+            capture("android-preview-loading.png");
+            runOnMainSync(() -> { try { java.lang.reflect.Method m=MainActivity.class.getDeclaredMethod("showLogin",String.class);m.setAccessible(true);m.invoke(screen,new Object[]{null}); } catch(Exception e) { throw new AssertionError(e); } });
+            android.os.SystemClock.sleep(3000); capture("android-preview-login.png");
+            runOnMainSync(() -> { try { invoke(screen, "showGuide"); } catch(Exception e) { throw new AssertionError(e); } });
+            android.os.SystemClock.sleep(3000); capture("android-preview-guide.png");
+            runOnMainSync(() -> { try { android.app.Dialog d=(android.app.Dialog)get(screen,"guide");d.dismiss(); } catch(Exception e) { throw new AssertionError(e); } });
+            local = startActivitySync(new android.content.Intent(getTargetContext(), LocalAssistantActivity.class).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK));
+            android.os.SystemClock.sleep(3000); capture("android-preview-local.png");
+            result.putString("stream", "MOTION PREVIEW OK\n");
+        } catch(Throwable e) { result.putString("stream", "MOTION PREVIEW FAILED: " + android.util.Log.getStackTraceString(e)); }
+        finally { if(local!=null) { final Activity a=local;runOnMainSync(a::finish); } if(main!=null) { final Activity a=main;runOnMainSync(a::finish); } }
+        finish(Activity.RESULT_OK,result);
+    }
     private void check(String name, Check task) {
         Bundle b = new Bundle(); b.putString("id", "InstrumentationTestRunner"); b.putString("class", getClass().getName()); b.putString("test", name); b.putInt("numtests", 10); b.putInt("current", ++current);
         sendStatus(1, b);
@@ -246,7 +272,7 @@ public final class NativeTests extends Instrumentation {
             throw new AssertionError(title + " is not centered beneath the brand: " + inkCenter + " vs " + markCenter);
     }
     private static android.widget.TextView findLabel(android.view.View v, String title) {
-        if (v instanceof android.widget.TextView && title.contentEquals(((android.widget.TextView)v).getText()) && v.getVisibility() == android.view.View.VISIBLE) return (android.widget.TextView)v;
+        if (v instanceof android.widget.TextView && title.contentEquals(((android.widget.TextView)v).getText()) && v.isShown()) return (android.widget.TextView)v;
         if(v instanceof android.view.ViewGroup) for(int i=0;i<((android.view.ViewGroup)v).getChildCount();i++) { android.widget.TextView found=findLabel(((android.view.ViewGroup)v).getChildAt(i),title); if(found!=null) return found; } return null;
     }
     private static BrandMotionView findMotion(android.view.View v) {
