@@ -163,8 +163,20 @@ def main():
     evidence = {}
     for name in ['public-manifest', 'validate', 'blocked', 'scheduler', 'background-ready', 'requested', 'committed', 'pending-callback', 'verify']:
         result = adb('exec-out', 'run-as', PACKAGE, 'cat', 'files/update-test-' + name + '.json', check=False)
-        if result.returncode == 0:
+        required = name in {'public-manifest', 'validate', 'blocked', 'scheduler', 'requested', 'verify'}
+        required = required or (name == 'background-ready' and args.background_ready)
+        required = required or (name == 'pending-callback' and args.require_confirmation)
+        try:
+            if result.returncode:
+                raise ValueError('Device file read failed')
             evidence[name] = json.loads(result.stdout)
+        except (ValueError, UnicodeDecodeError):
+            # Android exec-out can report exit 0 for a missing optional phase.
+            # Keep mandatory receipt failures fatal; never infer verification.
+            if required:
+                raise RuntimeError('Required update receipt is missing or invalid: ' + name)
+            continue
+        (args.output / ('phase-' + name + '.json')).write_text(json.dumps(evidence[name], indent=2))
     assert evidence['verify']['installedVersion'] == 1002
     assert evidence['verify']['passed'] is True
     (args.output / 'verification.json').write_text(json.dumps({'passed': True, 'realPackageInstaller': True, 'adbUsedToInstallUpdate': False, 'systemUserConfirmation': args.require_confirmation, 'backgroundReadyJob': args.background_ready, 'schedulerDispatchedByAdb': args.background_ready, 'evidence': evidence}, indent=2))
