@@ -107,12 +107,12 @@ final class DeviceObservationTransferTests: XCTestCase {
     }
 
     func testCurrentAppComposerReceivesSafeDataAndRetainsDraftWithoutSending() async throws {
-        let web = WKWebView()
+        let web = makeFixtureWebView()
         web.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
-        let window = present(web); defer { window.isHidden = true }
+        let window = present(web); defer { window.isHidden = true; web.stopLoading(); web.navigationDelegate = nil; web.configuration.userContentController.removeScriptMessageHandler(forName: "fixtureReady") }
         let ready = expectation(description: "Loaded composer fixture")
         let navigation = DeviceTestNavigation(ready)
-        web.navigationDelegate = navigation
+        web.configuration.userContentController.add(navigation, name: "fixtureReady"); web.navigationDelegate = navigation
         web.loadHTMLString("""
         <html><body>
         <form class="liveui-composer"><textarea>Global draft</textarea></form>
@@ -120,8 +120,8 @@ final class DeviceObservationTransferTests: XCTestCase {
         <form class="rich-workspace-request"><textarea>Keep this task</textarea><button>Send</button></form>
         </section>
         <script>window.sent=0;window.inputs=0;document.addEventListener('submit',e=>{e.preventDefault();window.sent++});document.addEventListener('input',e=>{window.inputs++;window.received=e.target.value});</script>
-        </body></html>
-        """, baseURL: URL(string: "https://example.invalid"))
+        <script>window.webkit.messageHandlers.fixtureReady.postMessage(document.readyState);</script></body></html>
+        """, baseURL: nil)
         await fulfillment(of: [ready], timeout: 15)
         let dangerousName = "Desk');window.pwned=true;//\n\"quoted\""
         let model = DeviceAccessModel()
@@ -141,15 +141,14 @@ final class DeviceObservationTransferTests: XCTestCase {
         XCTAssertEqual(state?["sent"] as? Int, 0)
         XCTAssertEqual(state?["inputs"] as? Int, 1)
         XCTAssertEqual(state?["pwned"] as? Bool, false)
-        web.stopLoading(); web.navigationDelegate = nil
     }
 
 
     func testTypingDuringAcknowledgementPreservesNewTextAndRetryDoesNotAppendAgain() async throws {
-        let web = WKWebView(); web.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
-        let window = present(web); defer { window.isHidden = true }
+        let web = makeFixtureWebView(); web.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
+        let window = present(web); defer { window.isHidden = true; web.stopLoading(); web.navigationDelegate = nil; web.configuration.userContentController.removeScriptMessageHandler(forName: "fixtureReady") }
         let ready = expectation(description: "Loaded concurrent typing fixture")
-        let navigation = DeviceTestNavigation(ready); web.navigationDelegate = navigation
+        let navigation = DeviceTestNavigation(ready); web.configuration.userContentController.add(navigation, name: "fixtureReady"); web.navigationDelegate = navigation
         web.loadHTMLString("""
         <form class="liveui-composer"><textarea>Original draft</textarea></form>
         <script>
@@ -159,8 +158,8 @@ final class DeviceObservationTransferTests: XCTestCase {
           window.inputs++;
           if(window.inputs===1)requestAnimationFrame(()=>{e.target.value+='\\nMy next thought';});
         });
-        </script>
-        """, baseURL: URL(string: "https://example.invalid"))
+        </script><script>window.webkit.messageHandlers.fixtureReady.postMessage(document.readyState);</script>
+        """, baseURL: nil)
         await fulfillment(of: [ready], timeout: 15)
         let requestID = UUID(), text = "Accelerometer observed 12:00 UTC: x 0.25 g"
         let first = try await transfer(text, requestID: requestID, web: web) as? [String: Any]
@@ -171,21 +170,25 @@ final class DeviceObservationTransferTests: XCTestCase {
         XCTAssertEqual(state?["value"] as? String, "Original draft\n\n" + text + "\nMy next thought")
         XCTAssertEqual(state?["inputs"] as? Int, 1)
         XCTAssertEqual(state?["sent"] as? Int, 0)
-        web.stopLoading(); web.navigationDelegate = nil
     }
 
     func testMissingCurrentAppComposerDoesNotFallBackOrClaimSuccess() async throws {
-        let web = WKWebView(); web.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
-        let window = present(web); defer { window.isHidden = true }
+        let web = makeFixtureWebView(); web.frame = CGRect(x: 0, y: 0, width: 390, height: 800)
+        let window = present(web); defer { window.isHidden = true; web.stopLoading(); web.navigationDelegate = nil; web.configuration.userContentController.removeScriptMessageHandler(forName: "fixtureReady") }
         let ready = expectation(description: "Loaded missing composer fixture")
-        let navigation = DeviceTestNavigation(ready); web.navigationDelegate = navigation
-        web.loadHTMLString("<form class='liveui-composer'><textarea>Keep global</textarea></form><section class='app-sheet'>An app without an instruction field</section>", baseURL: URL(string: "https://example.invalid"))
+        let navigation = DeviceTestNavigation(ready); web.configuration.userContentController.add(navigation, name: "fixtureReady"); web.navigationDelegate = navigation
+        web.loadHTMLString("<form class='liveui-composer'><textarea>Keep global</textarea></form><section class='app-sheet'>An app without an instruction field</section><script>window.webkit.messageHandlers.fixtureReady.postMessage(document.readyState);</script>", baseURL: nil)
         await fulfillment(of: [ready], timeout: 15)
         let result = try await transfer("Actual reading", requestID: UUID(), web: web) as? [String: Any]
         XCTAssertEqual(result?["ok"] as? Bool, false)
         let value = try await execute("return document.querySelector('textarea').value", web: web) as? String
         XCTAssertEqual(value, "Keep global")
-        web.stopLoading(); web.navigationDelegate = nil
+    }
+
+    private func makeFixtureWebView() -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.websiteDataStore = .nonPersistent()
+        return WKWebView(frame: .zero, configuration: configuration)
     }
 
     private func present(_ web: WKWebView) -> UIWindow {
@@ -212,8 +215,21 @@ final class DeviceObservationTransferTests: XCTestCase {
     }
 }
 
-private final class DeviceTestNavigation: NSObject, WKNavigationDelegate {
+private final class DeviceTestNavigation: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
     let ready: XCTestExpectation
+    private var completed = false
     init(_ ready: XCTestExpectation) { self.ready = ready }
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) { ready.fulfill() }
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard message.name == "fixtureReady", !completed else { return }
+        completed = true
+        ready.fulfill()
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) { fail(error) }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) { fail(error) }
+    private func fail(_ error: Error) {
+        guard !completed else { return }
+        completed = true
+        XCTFail("Local composer fixture failed to load: \(error)")
+        ready.fulfill()
+    }
 }
