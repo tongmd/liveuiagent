@@ -48,7 +48,7 @@ export async function runApplicationAgent(input:ApplicationAgentInput):Promise<R
   while(JSON.stringify(catalog).length>14000&&catalog.length){catalog.pop();initialHasMore=true;}
   const infer=async(messages:{role:string;content:string}[])=>{const remaining=deadline-Date.now();if(remaining<=0)throw error('Application request timed out.','application_agent_timeout',504);return parse(await developmentCompletion(input.llm,messages,Math.min(120000,remaining)));};
   const route=await infer([{role:'system',content:ROUTE},{role:'user',content:JSON.stringify({prompt,selectedAppId:input.selectedAppId??null,catalog:{apps:catalog,total:initial.total,hasMore:initialHasMore}})}]);
-  if(route.intent==='create'||route.intent==='pass')return {handled:false};
+  if(route.intent==='create'||route.intent==='pass')return {handled:false,intent:route.intent};
   if(route.intent!=='answer'&&route.intent!=='edit')throw error('Application route is invalid.','application_agent_route',502);
   let intent:'answer'|'edit'=route.intent;
   if(intent==='edit'&&!applicationEditAuthorized(prompt))intent='answer';

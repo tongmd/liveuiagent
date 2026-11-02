@@ -16,7 +16,7 @@ for(const harness of ['native','dsh','codex','qwen','kimi','zcode'])test(`${harn
 });
 test('new Apps and unrelated host operations remain on the existing routes without progress',async()=>{
  for(const intent of ['create','pass']){
-  const f=fixture([{intent,appIds:[]}]);const result=await runApplicationAgent(f.input);assert.deepEqual(result,{handled:false});assert.deepEqual(f.handled,[]);assert.deepEqual(f.progress,[]);assert.equal(f.writes.length,0);
+  const f=fixture([{intent,appIds:[]}]);const result=await runApplicationAgent(f.input);assert.deepEqual(result,{handled:false,intent});assert.deepEqual(f.handled,[]);assert.deepEqual(f.progress,[]);assert.equal(f.writes.length,0);
  }
 });
 test('a selected App question cannot write even when route or tool asks for it',async()=>{
