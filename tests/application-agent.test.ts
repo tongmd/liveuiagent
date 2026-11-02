@@ -5,7 +5,7 @@ const envelope=(value:unknown)=>({choices:[{message:{content:JSON.stringify(valu
 function fixture(replies:unknown[],options:{format?:string;editResult?:Record<string,unknown>;writeError?:boolean}={}){
  const calls:any[]=[],reads:any[]=[],writes:any[]=[],handled:any[]=[],progress:any[]=[];
  const app={id:'app_a',title:'My actual App',format:options.format??'rich'};
- const access:ApplicationAccess={list:async()=>({apps:[app],total:1}),read:async args=>{reads.push(args);return {token:'version-actual',text:'{"count":3}',total:11,nextOffset:null};},revise:async args=>{writes.push(args);if(options.writeError)throw Object.assign(Error('Write outcome unknown'),{code:'write_unknown'});return options.editResult??{ok:true,status:'done',appId:app.id,executor:'fixture'};}};
+ const access:ApplicationAccess={list:async()=>({apps:[app],total:1}),read:async args=>{reads.push(args);return {token:'version-actual',content:'{"count":3}',totalChars:11,nextOffset:null};},revise:async args=>{writes.push(args);if(options.writeError)throw Object.assign(Error('Write outcome unknown'),{code:'write_unknown'});return options.editResult??{ok:true,status:'done',appId:app.id,executor:'fixture'};}};
  const input={prompt:'把这个应用修改为蓝色',selectedAppId:'app_a',llm:{model:'fixture',chatCompletion:async(request:any)=>{calls.push(request);if(!replies.length)throw Error('Unexpected extra inference');return envelope(replies.shift());}},access,onHandled:(value:any)=>handled.push(value),onProgress:(value:any)=>progress.push(value)};
  return {input,calls,reads,writes,handled,progress,access};
 }
@@ -52,7 +52,7 @@ test('false completion cannot replace an actual edit or actual App read',async()
  f=fixture([{intent:'answer',appIds:['app_a']},{tool:'finish',answer:'Your count is 999.'}]);await assert.rejects(runApplicationAgent({...f.input,prompt:'当前应用里有哪些数据？'}),{code:'application_agent_read_required'});
 });
 test('user edit authority distinguishes requests from negation, questions and quoted source',()=>{
- for(const value of ['修改这个应用','把清单的颜色改成蓝色','Add sorting to my app','Please edit this app','修复界面'])assert.equal(applicationEditAuthorized(value),true,value);
+ for(const value of ['修改这个应用','把清单的颜色改成蓝色','Add sorting to my app','Please edit this app','修复界面','把应用标题改大'])assert.equal(applicationEditAuthorized(value),true,value);
  for(const value of ['不要修改这个应用','只查看源码并分析怎么修改','How can I edit this app?','“修改应用”是什么意思','read only, explain the edit','Do not change the data'])assert.equal(applicationEditAuthorized(value),false,value);
 });
 test('a dispatched edit cannot run twice even across multi-target planning',async()=>{
