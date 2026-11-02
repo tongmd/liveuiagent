@@ -63,3 +63,20 @@ test('a dispatched edit cannot run twice even across multi-target planning',asyn
 test('actionable requests phrased politely still authorize edits',()=>{
  assert.equal(applicationEditAuthorized('Can you edit this app to add sorting?'),true);
 });
+test('multi-App partial success persists the confirmed receipt before a later model failure',async()=>{
+ const f=fixture([{intent:'edit',appIds:['app_a','app_b']},{tool:'read_app',appId:'app_a'},{tool:'revise_app',appId:'app_a'}]);
+ f.access.list=async()=>({apps:[{id:'app_a'},{id:'app_b'}],total:2});const persisted:any[]=[];
+ await assert.rejects(runApplicationAgent({...f.input,onEditCompleted:receipt=>{persisted.push(receipt);}}),(e:any)=>{
+  assert.equal(e.completedEdits.length,1);assert.equal(e.completedEdits[0].appId,'app_a');assert.deepEqual(e.attemptedAppIds,['app_a']);assert.deepEqual(e.unconfirmedAppIds,[]);assert.match(e.message,/Do not repeat the whole request/);return true;
+ });assert.equal(persisted.length,1);assert.equal(persisted[0].appId,'app_a');assert.equal(f.writes.length,1);
+});
+test('a later unknown edit retains prior success and the exact unconfirmed App',async()=>{
+ const f=fixture([{intent:'edit',appIds:['app_a','app_b']},{tool:'read_app',appId:'app_a'},{tool:'revise_app',appId:'app_a'},{tool:'read_app',appId:'app_b'},{tool:'revise_app',appId:'app_b'}]);
+ f.access.list=async()=>({apps:[{id:'app_a'},{id:'app_b'}],total:2});const original=f.access.revise;f.access.revise=async args=>{if(args.appId==='app_b')throw Error('Unknown after dispatch');return original(args);};
+ await assert.rejects(runApplicationAgent(f.input),(e:any)=>{assert.equal(e.completedEdits[0].appId,'app_a');assert.deepEqual(e.attemptedAppIds,['app_a','app_b']);assert.deepEqual(e.unconfirmedAppIds,['app_b']);assert.match(e.message,/Check the original edit result/);return true;});
+});
+test('multi-App later invalid tool cannot erase a successful edit receipt',async()=>{
+ const f=fixture([{intent:'edit',appIds:['app_a','app_b']},{tool:'read_app',appId:'app_a'},{tool:'revise_app',appId:'app_a'},{tool:'invented'}]);
+ f.access.list=async()=>({apps:[{id:'app_a'},{id:'app_b'}],total:2});
+ await assert.rejects(runApplicationAgent(f.input),(e:any)=>{assert.equal(e.code,'application_agent_tool');assert.equal(e.completedEdits[0].appId,'app_a');return true;});
+});

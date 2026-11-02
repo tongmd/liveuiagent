@@ -14,6 +14,8 @@ export type ApplicationAccess={
 };
 export type ApplicationAgentInput={prompt:string;selectedAppId?:string;llm:LlmRuntimeConfig;harness?:string;access:ApplicationAccess;
   onHandled?:(intent:'answer'|'edit')=>void;onProgress?:(step:string)=>void;
+  /** Persist each confirmed write before the next model turn. */
+  onEditCompleted?:(result:Record<string,unknown>)=>void|Promise<void>;
   timeoutMs?:number;maxTurns?:number;
 };
 const error=(message:string,code:string,status=400)=>Object.assign(new Error(message),{code,status});
@@ -55,6 +57,7 @@ export async function runApplicationAgent(input:ApplicationAgentInput):Promise<R
   const messages=[{role:'system',content:TOOLS},{role:'user',content:JSON.stringify({prompt,intent,selectedAppId:input.selectedAppId??null,catalog:{apps:catalog,total:initial.total,nextOffset:initial.nextOffset??null},targets:route.appIds??[]})}];
   const editAnswer=()=>edited.map(value=>`Updated ${String(value.title??value.appId)}.${value.delegated?' Editing was delegated to '+String(value.executor??'the application format adapter')+'.':''}`).join('\n');
   const finish=(answer:string)=>({handled:true,type:'answered',question:prompt,answer,trace,editedApps:edited,execution:{harness:input.harness??null,model:input.llm.model??null,intent,edits:edited.map(value=>({appId:value.appId,executor:value.executor??value.execution??null})),status:'done'}});
+  try {
   for(let turn=0;turn<Math.min(input.maxTurns??16,48);turn++){
     const command=await infer(messages);messages.push({role:'assistant',content:JSON.stringify(command)});
     const tool=command.tool;
@@ -87,7 +90,9 @@ export async function runApplicationAgent(input:ApplicationAgentInput):Promise<R
         result=await input.access.revise({appId,prompt,expectedToken:read.token});
         if(result.ok===false||result.success===false||['error','failed','unknown','running','queued','pending','accepted','timeout','cancelled'].includes(String(result.status??'')))throw Object.assign(error('Application edit has no confirmed successful result. Inspect the original job before retrying.','application_agent_edit_unconfirmed',409),{applicationResult:result});
         if(result.ok!==true&&result.success!==true&&!['done','completed','success','app_updated','app_created'].includes(String(result.status??result.type??'')))throw Object.assign(error('Application editor did not confirm completion.','application_agent_edit_unconfirmed',409),{applicationResult:result});
-        edited.push({...result,appId,title:discovered.get(appId)?.title??discovered.get(appId)?.name??appId});
+        const receipt={...result,appId,title:discovered.get(appId)?.title??discovered.get(appId)?.name??appId};
+        edited.push(receipt);
+        await input.onEditCompleted?.(structuredClone(receipt));
       }
     }else throw error('Unknown application tool.','application_agent_tool',502);
     trace.push({tool,appId:command.appId??null,status:'done',...(tool==='revise_app'?{result}: {})});
@@ -97,4 +102,12 @@ export async function runApplicationAgent(input:ApplicationAgentInput):Promise<R
     if(Buffer.byteLength(JSON.stringify(messages))>480000)throw error('Application context limit reached; continue with a narrower question.','application_agent_context',422);
   }
   throw error('Application request reached its tool limit.','application_agent_limit',422);
+  } catch(cause) {
+    const failure=cause instanceof Error?cause:error(String(cause),'application_agent_failed',502);
+    const completedEdits=structuredClone(edited),attemptedAppIds=[...attempted];
+    const unconfirmedAppIds=attemptedAppIds.filter(id=>!edited.some(item=>item.appId===id));
+    if(completedEdits.length)failure.message+=' Completed edits: '+completedEdits.map(item=>String(item.appId)).join(', ')+'. Do not repeat the whole request.';
+    if(unconfirmedAppIds.length)failure.message+=' Check the original edit result for '+unconfirmedAppIds.join(', ')+' before retrying.';
+    throw Object.assign(failure,{completedEdits,attemptedAppIds,unconfirmedAppIds});
+  }
 }
