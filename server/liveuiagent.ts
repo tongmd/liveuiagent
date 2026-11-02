@@ -7030,12 +7030,13 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
 
   // 修改现有应用:把新句子并入原始意图重新规划整个包(动作/图标/UI 全部重设计),
   // appId 与白板位置保持不变。run() 的 Router Agent 判定 modify_app 时也走这里。
-  async function patchAgentApp(input: { appId: string; prompt: string; llm?: LlmRuntimeConfig; user?: string }) {
+  async function patchAgentApp(input: { appId: string; prompt: string; llm?: LlmRuntimeConfig; user?: string; expectedContentHash?:string }) {
     // 同应用写互斥:并发的两个 modify(或 modify+action)否则会互相丢更新。
     const releaseAppLock = await acquireAppLock(String(input.appId || ''));
     try {
     const stored = getOwnedApp(db, input.appId, String(input.user || '').trim().slice(0, 60));
     if (!stored) throw httpError(`app not found: ${input.appId}`, 404);
+    if(input.expectedContentHash && createHash('sha256').update(JSON.stringify({appPackage:stored.appPackage,data:stored.data,runtimeState:stored.runtimeState})).digest('hex')!==input.expectedContentHash)throw httpError('Application changed before editing; read its current version',409);
     const traceLog: AgentTrace[] = [];
     const prompt = String(input.prompt || '').trim();
     if (!prompt) throw httpError('prompt required');
@@ -7401,7 +7402,7 @@ export function createLiveUIRuntime(db: Database.Database, options: LIVEUIAGENTR
       return { canvasState: canvasForUser(db, canvas, input.user), canvasPatch, message: 'node moved', trace: traceLog };
     },
 
-    async patchApp(input: { appId: string; prompt: string; llm?: LlmRuntimeConfig; user?: string }) {
+    async patchApp(input: { appId: string; prompt: string; llm?: LlmRuntimeConfig; user?: string; expectedContentHash?:string }) {
       return patchAgentApp(input);
     },
 

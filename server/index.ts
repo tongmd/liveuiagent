@@ -1,3 +1,4 @@
+import {installApplicationRoutes} from './application-routes.js';
 import 'dotenv/config';
 import {domesticHarnessFromEnv} from './domestic-harness-inference.js';
 import {domesticHarnesses,harnessIds,harnessDefinition,selectHarnessModel,harnessLabel} from './harness-catalog.js';
@@ -165,6 +166,11 @@ const richWorkspaces=createRichWorkspaces(db,{userOf:requestUser,harnessFor:(req
   const selected=Object.assign(Object.create(req),{body:{...req.body,...(id?{appId:id}:{})}});
   return llmConfigFromRequest(selected);
 },prepare:(req,llm,appId)=>personal.prepare(req,llm),memoryStatus:req=>personal.requestStatus(req),bindHarness:(owner,appId,harness)=>nativeHarnessBindings.save(owner,appId,harness as HarnessId),recall:(owner,appId,prompt)=>personal.recall(owner,appId)});
+const applicationManagement=installApplicationRoutes(app,db,{
+  userOf:requestUser,llmOf:llmConfigFromRequest,harnessFor:req=>runtimeSettings.forRequest(req),
+  bindingOf:(owner,id)=>nativeHarnessBindings.get(owner,id),during:(req,id,work)=>appHarness.during(req,id,work),
+  nativePatch:input=>agentGateway.patchApp(input),rich:richWorkspaces,html:completeApps,
+});
 richWorkspaces.install(app);
 completeApps.install(app);
 
@@ -422,7 +428,7 @@ app.post('/agent/query-state', async (req, res, next) => {
 
 app.post('/agent/scheduler-state', async (_req, res, next) => {
   try {
-    res.json(agentGateway.schedulerState());
+    const state=agentGateway.schedulerState();res.json({...state,active:state.active+applicationManagement.activeCount(),applicationManagementActive:applicationManagement.activeCount()});
   } catch (e) { next(e); }
 });
 

@@ -419,5 +419,21 @@ export function createCompleteApps(db: Database.Database, personal: any, userOf:
     const {evidence: _untrusted, ...result}=current.result||{};
     return {...result,...(current.evidence?{evidence:current.evidence}:{})};
   }
-  return {merge,install,capabilities,loadApp,saveStore,evaluateAction,configured:Boolean(apiBase)};
+  // An application-management agent can request an HTML revision through the
+  // existing coding service. Return its actual executor and durable job ID.
+  async function reviseManaged(req:express.Request,appId:string,onProgress?:(step:string)=>void) {
+    await loadApp(req,appId);
+    const job=await start(req,appId);let current=job;
+    const deadline=Date.now()+20*60*1000;
+    while(['running','queued'].includes(current.status)){
+      if(Date.now()>deadline)throw Object.assign(error('HTML revision is still tracked by its original job; do not resubmit',504),{code:'application_edit_pending',jobId:job.id});
+      onProgress?.(current.stage||'Editing application');
+      await new Promise(r=>setTimeout(r,1000));current=await dsh(req,'jobs/'+job.id);
+    }
+    if(current.status!=='done')throw Object.assign(error(current.error||'HTML revision failed',502),{jobId:job.id});
+    const state=await dsh(req,'state');rememberMetadata(userOf(req),state.apps);
+    const saved=await loadApp(req,appId);
+    return {ok:true,appId,version:saved.app.revision,name:saved.app.name,jobId:job.id,execution:job.execution,delegated:true};
+  }
+  return {merge,install,capabilities,loadApp,saveStore,evaluateAction,reviseManaged,configured:Boolean(apiBase)};
 }

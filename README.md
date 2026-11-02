@@ -61,6 +61,8 @@ Model requests use your configured provider. No model API calls are needed for t
 
 ## Supported Harnesses
 
+All six harnesses can list and read the signed-in user’s Native, visual, and HTML applications, and request edits from the same conversation. Native and visual edits use the selected harness while preserving the application’s saved executor binding and data. HTML edits use the existing DSH coding service as a tool and report that delegation. Questions read saved content without regenerating the app. Version checks and durable request receipts prevent stale or repeated edits from being silently submitted again.
+
 | Harness | Application representation | Configuration |
 | --- | --- | --- |
 | LiveUIAgent (native) | Application specifications rendered by the shared runtime | Included in the local runtime |
