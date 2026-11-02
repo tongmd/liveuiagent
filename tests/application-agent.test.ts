@@ -80,3 +80,8 @@ test('multi-App later invalid tool cannot erase a successful edit receipt',async
  f.access.list=async()=>({apps:[{id:'app_a'},{id:'app_b'}],total:2});
  await assert.rejects(runApplicationAgent(f.input),(e:any)=>{assert.equal(e.code,'application_agent_tool');assert.equal(e.completedEdits[0].appId,'app_a');return true;});
 });
+test('a true owner App outside the routed edit targets cannot be modified by model drift',async()=>{
+ const f=fixture([{intent:'edit',appIds:['app_a']},{tool:'read_app',appId:'app_b'},{tool:'revise_app',appId:'app_b'}]);
+ f.access.list=async()=>({apps:[{id:'app_a'},{id:'app_b'}],total:2});
+ await assert.rejects(runApplicationAgent(f.input),{code:'application_agent_edit_target'});assert.equal(f.writes.length,0);
+});

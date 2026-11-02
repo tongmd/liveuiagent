@@ -83,6 +83,7 @@ export async function runApplicationAgent(input:ApplicationAgentInput):Promise<R
         const token=result.token??result.expectedToken;if(typeof token==='string'&&token)reads.set(appId,{token,result});
       }else{
         if(intent!=='edit')throw error('This request only authorizes reading applications.','application_agent_read_only',403);
+        if(Array.isArray(route.appIds)&&route.appIds.length&&!route.appIds.includes(appId))throw error('This application is outside the edit targets selected for the user request.','application_agent_edit_target',403);
         if(attempted.has(appId))throw error('An edit was already dispatched for this application; inspect its original result.','application_agent_no_replay',409);
         const read=reads.get(appId);if(!read)throw error('Read the application and its version before editing.','application_agent_read_required',409);
         attempted.add(appId);input.onProgress?.('Editing application');
