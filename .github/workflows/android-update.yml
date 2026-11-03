@@ -4,10 +4,16 @@ on:
   push:
     paths:
       - 'apps/mobile/android/**'
+      - '.gitmodules'
+      - 'vendor/recallos'
+      - 'vendor/recallos/**'
       - '.github/workflows/android-update.yml'
   pull_request:
     paths:
       - 'apps/mobile/android/**'
+      - '.gitmodules'
+      - 'vendor/recallos'
+      - 'vendor/recallos/**'
       - '.github/workflows/android-update.yml'
 permissions:
   contents: read
@@ -24,6 +30,8 @@ jobs:
         api: [30, 34]
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

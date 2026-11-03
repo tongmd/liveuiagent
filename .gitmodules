@@ -1,0 +1,3 @@
+[submodule "vendor/recallos"]
+	path = vendor/recallos
+	url = https://github.com/tongmd/personalmemoryos.git

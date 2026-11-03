@@ -3,10 +3,16 @@ on:
   push:
     paths:
       - 'apps/mobile/**'
+      - '.gitmodules'
+      - 'vendor/recallos'
+      - 'vendor/recallos/**'
       - '.github/workflows/mobile.yml'
   pull_request:
     paths:
       - 'apps/mobile/**'
+      - '.gitmodules'
+      - 'vendor/recallos'
+      - 'vendor/recallos/**'
       - '.github/workflows/mobile.yml'
   workflow_dispatch:
 permissions:
@@ -22,6 +28,8 @@ jobs:
       GIT_LFS_SKIP_SMUDGE: "1"
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - name: Select simulator
         run: |
           xcodebuild -version
@@ -80,6 +88,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -108,6 +118,8 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

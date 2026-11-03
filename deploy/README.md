@@ -9,7 +9,9 @@ npm run deploy -- --host YOUR_SSH_HOST \
   --auth-file /etc/nginx/YOUR_HTPASSWD
 ```
 
-Requires Git, Bash, SSH/SCP locally; noninteractive `sudo`, an unprivileged application account, Python 3.12+, systemd, Nginx, and Node.js 22 remotely. Add `--bootstrap` on Debian/Ubuntu to install Node and browser dependencies. The Nginx site must already exist. Use `--server-name` to select a server block when its file contains several.
+Requires Git, Bash, Python 3, SSH/SCP locally; noninteractive `sudo`, an unprivileged application account, Python 3.12+, systemd, Nginx, and Node.js 22 remotely. Add `--bootstrap` on Debian/Ubuntu to install Node and browser dependencies. The Nginx site must already exist. Use `--server-name` to select a server block when its file contains several.
+
+Run `git submodule update --init --recursive` before deployment. The source archive expands the exact recorded `vendor/recallos` commit and excludes Git metadata and untracked files. An uninitialized dependency stops packaging instead of silently producing an incomplete release.
 
 ## Configuration
 

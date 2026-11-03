@@ -31,13 +31,16 @@ Four independent applications generated with Codex: Workspace Layout, 3D Packing
 Requires Node.js 22.19 or later and npm. Linux and macOS are supported by the local workflow.
 
 ```bash
-git clone https://github.com/tongmd/liveuiagent.git
+git clone --recurse-submodules https://github.com/tongmd/liveuiagent.git
 cd liveuiagent
 npm ci --workspace @liveuiagent/dsh-plugin --include-workspace-root
 cp .env.example .env
 npm run build
 npm start
 ```
+
+Existing checkouts should run `git submodule update --init --recursive` after pulling.
+RecallOS is pinned at `vendor/recallos` as a Git submodule; web, iOS app, and Android APK workflows fetch the same recorded commit. See [RecallOS integration](RECALLOS.md).
 
 Open `http://127.0.0.1:8787`. In Settings, choose a model, configure an OpenAI-compatible API endpoint and key, then describe an application. For example:
 

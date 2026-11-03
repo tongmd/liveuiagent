@@ -4,6 +4,8 @@ Ulemi is the mobile app for the existing liveUI workspace. Android uses WebView;
 
 The mobile projects use the selected black U icon. The visible app name is Ulemi; existing package identifiers, credentials, and service addresses stay compatible. They do not bundle model credentials or an account password. Sign in with your existing liveUI account. The service address is built into the app; the first-use flow does not ask for backend configuration. The older `apps/shell` is a separate component-renderer prototype, not the build target for these apps.
 
+RecallOS is the shared source dependency at [`vendor/recallos`](../../vendor/recallos). Clone the repository with `git clone --recurse-submodules`, or run `git submodule update --init --recursive` before building an existing checkout. The iOS app, Android APK, and web CI all fetch the parent repository's pinned RecallOS commit. The hosted workspace uses the same [server-side RecallOS adapter](../../RECALLOS.md); this does not bundle Python/Git, private memory, or gateway credentials into a mobile binary.
+
 ## First use
 
 A brief black U animation leads into account sign-in. The first successful login offers three short, skippable steps: describe what you need, refine an application through conversation, and reopen it later. Returning users go straight to their workspace after authentication. The account menu can reopen the guide.

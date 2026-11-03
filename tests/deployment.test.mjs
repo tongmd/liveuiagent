@@ -57,3 +57,29 @@ test('staged source archive includes latest files/deletions and excludes artifac
   await fs.writeFile(path.join(directory,'server/new.ts'),'unstaged edit');
   const rejected=spawnSync('bash',['scripts/deploy-archive.sh',directory,archive,'staged'],{encoding:'utf8'});assert.equal(rejected.status,2);
 });
+
+test('deployment expands the pinned RecallOS commit and rejects an uninitialized submodule',async t=>{
+  const scratch=await fs.mkdtemp(path.join(os.tmpdir(),'liveui-submodule-source-'));t.after(()=>fs.rm(scratch,{recursive:true,force:true}));
+  const directory=path.join(scratch,'ulemi'),upstream=path.join(scratch,'recallos');
+  const git=(cwd,...args)=>{const result=spawnSync('git',args,{cwd,encoding:'utf8'});assert.equal(result.status,0,result.stderr);return result.stdout.trim();};
+  for(const root of [directory,upstream]){await fs.mkdir(root);git(root,'init','-q');git(root,'config','user.name','Fixture');git(root,'config','user.email','fixture@example.invalid');}
+  await fs.writeFile(path.join(upstream,'.gitignore'),'private.env\n');
+  await fs.writeFile(path.join(upstream,'memory.py'),'pinned source');
+  git(upstream,'add','.');git(upstream,'commit','-qm','Pinned RecallOS');
+  const pinned=git(upstream,'rev-parse','HEAD');
+  await fs.writeFile(path.join(directory,'package.json'),'{}');
+  git(directory,'-c','protocol.file.allow=always','submodule','add','-q',upstream,'vendor/recallos');
+  git(directory,'add','.');git(directory,'commit','-qm','Ulemi pin');
+  // A newer upstream version and local private files must not enter this image.
+  await fs.writeFile(path.join(upstream,'memory.py'),'unselected upstream source');git(upstream,'add','.');git(upstream,'commit','-qm','Upstream change');
+  await fs.writeFile(path.join(directory,'vendor/recallos/private.env'),'fixture private value');
+  const archive=path.join(scratch,'release.tar.gz');
+  const result=spawnSync('bash',['scripts/deploy-archive.sh',directory,archive],{encoding:'utf8'});assert.equal(result.status,0,result.stderr);
+  assert.equal(git(path.join(directory,'vendor/recallos'),'rev-parse','HEAD'),pinned);
+  const listing=spawnSync('tar',['-tzf',archive],{encoding:'utf8'});assert.equal(listing.status,0);assert.match(listing.stdout,/vendor\/recallos\/memory.py/);assert.doesNotMatch(listing.stdout,/private.env|(?:^|\/)\.git(?:\/|$)/m);
+  const content=spawnSync('tar',['-xOzf',archive,'vendor/recallos/memory.py'],{encoding:'utf8'});assert.equal(content.stdout,'pinned source');
+  git(directory,'submodule','deinit','-f','--','vendor/recallos');
+  const missing=spawnSync('bash',['scripts/deploy-archive.sh',directory,archive],{encoding:'utf8'});assert.equal(missing.status,2);assert.match(missing.stderr,/git submodule update --init --recursive/);
+  // A rejected build must preserve the last complete archive.
+  const preserved=spawnSync('tar',['-xOzf',archive,'vendor/recallos/memory.py'],{encoding:'utf8'});assert.equal(preserved.stdout,'pinned source');
+});
