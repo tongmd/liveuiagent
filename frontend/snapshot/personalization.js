@@ -20,7 +20,7 @@
   }
   function close(){panel?.remove();panel=null;status=null;document.querySelector('.personal-space-button')?.focus();}
   function open(tab=currentTab){currentTab=tab;panel?.remove();panel=element('section',{class:'personal-panel',role:'dialog','aria-modal':'true','aria-label':'Memory'});status=element('p',{class:'personal-status',role:'status'});
-    const head=element('div',{class:'personal-head'},[element('div',{},[element('h2',{text:'Memory'})]),button('Close',close)]);
+    const head=element('div',{class:'personal-head'},[element('div',{},[element('h2',{text:state.recallos?.brand||'Memory'})]),button('Close',close)]);
     const tabs=element('nav',{'aria-label':'Memory settings'},[['library','Apps'],['memory','Memories']].map(([id,name])=>{const b=button(name,()=>open(id));b.setAttribute('aria-current',String(id===tab));return b;}));
     const content=element('div',{class:'personal-content'});panel.append(head,tabs,content,status);document.body.append(panel);
     if(tab==='memory')renderMemory(content);if(tab==='library')renderLibrary(content);
@@ -40,15 +40,15 @@
         const content=element('textarea',{rows:3,maxlength:1200,'aria-label':'Edit saved preference'});content.value=m.content;
         const condition=element('textarea',{rows:2,maxlength:400,'aria-label':'Edit context'});condition.value=m.condition||'';
         const editor=element('div',{class:'personal-memory-editor'},[field('Content',content),...(m.source==='interaction'?[field('Context',condition)]:[])]);
-        editor.append(button('Save changes',async()=>{try{const out=await api('/memory','PUT',{id:m.id,content:content.value,scope:m.scope,...(m.source==='interaction'?{condition:condition.value}:{}),expiresAt:m.expiresAt||null});state.memories=out.memories;open('memory');}catch(e){notify(e.message)}}),button('Cancel',()=>open('memory')));item.replaceChildren(editor);content.focus();
+        editor.append(button('Save changes',async()=>{try{const out=await api('/memory','PUT',{id:m.id,version:m.version,content:content.value,scope:m.scope,...(m.source==='interaction'?{condition:condition.value}:{}),expiresAt:m.expiresAt||null});state.memories=out.memories;open('memory');}catch(e){notify(e.message)}}),button('Cancel',()=>open('memory')));item.replaceChildren(editor);content.focus();
       });
-      item.append(element('div',{class:'personal-actions'},[edit,button('Delete',async()=>{try{await api('/memory/'+encodeURIComponent(m.id),'DELETE');state.memories=state.memories.filter(x=>x.id!==m.id);open('memory')}catch(e){notify(e.message)}})]));list.append(item);
+      item.append(element('div',{class:'personal-actions'},[edit,button('Delete',async()=>{try{await api('/memory/'+encodeURIComponent(m.id),'DELETE',{version:m.version});state.memories=state.memories.filter(x=>x.id!==m.id);open('memory')}catch(e){notify(e.message)}})]));list.append(item);
     }
     root.append(list);
   }
   function renderLibrary(root){root.append(element('p',{text:'Choose the apps shown on your workspace. Hiding an app keeps its data.'}));const checks=[];for(const a of state.apps){const input=element('input',{type:'checkbox','aria-label':a.name});input.checked=!state.hidden.includes(a.appId)&&(!a.shared||state.enabledShared.includes(a.appId));checks.push([a.appId,input]);root.append(element('label',{class:'personal-library-item'},[input,element('span',{},[element('strong',{text:a.name}),element('small',{text:a.description})])]));}
     root.append(button('Save app visibility',async()=>{try{await api('/library','PUT',{visible:checks.filter(([id,c])=>c.checked).map(([id])=>id)});location.reload()}catch(e){notify(e.message)}}));}
-  window.__personalReady.then(()=>{const mount=()=>{document.body.append(element('button',{class:'personal-space-button',type:'button',text:'Memory',onclick:async()=>{try{state=await api('');window.__personalState=state;open()}catch(e){notify(e.message)}}}));
+  window.__personalReady.then(()=>{const mount=()=>{document.body.append(element('button',{class:'personal-space-button',type:'button',text:state.recallos?.brand||'Memory',onclick:async()=>{try{state=await api('');window.__personalState=state;open()}catch(e){notify(e.message)}}}));
       let refreshing=false;
       const syncNewApps=async()=>{if(refreshing||!state.apps?.length)return;const known=new Set(state.apps.map(a=>a.appId));if(![...document.querySelectorAll('[data-app-id]')].some(n=>n.dataset.appId&&!known.has(n.dataset.appId)))return;refreshing=true;try{state=await api('');window.__personalState=state;apply()}catch{}finally{refreshing=false}};
       const obs=new MutationObserver(()=>{apply();syncNewApps()});obs.observe(document.body,{childList:true,subtree:true});apply();

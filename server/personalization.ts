@@ -3,6 +3,7 @@ import type express from 'express';
 import { randomUUID } from 'node:crypto';
 import { createContextualMemory, redactContext } from './contextual-memory.js';
 import type { LlmRuntimeConfig } from './liveuiagent.js';
+import { createRecallOSBackend } from './recallos.js';
 
 const text = (s: unknown, max = 1200) => typeof s === 'string' ? s.trim().slice(0,max) : '';
 const fail = (message: string, status = 400) => Object.assign(new Error(message), { status });
@@ -10,7 +11,8 @@ export function createPersonalization(db: Database.Database, userOf: (r: express
   db.exec(`CREATE TABLE IF NOT EXISTS personal_state (owner TEXT PRIMARY KEY, value_json TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS personal_memory (owner TEXT NOT NULL, id TEXT NOT NULL, scope TEXT NOT NULL, content TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT, PRIMARY KEY(owner,id));`);
   db.exec('CREATE TABLE IF NOT EXISTS complete_apps(owner TEXT NOT NULL,app_id TEXT NOT NULL,info_json TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(owner,app_id))');
-  const contextual=createContextualMemory(db);
+  const recallos=process.env.RECALLOS_URL?createRecallOSBackend(db):undefined;
+  const contextual=createContextualMemory(db,recallos);
   const statuses=new WeakMap<express.Request,any>();
   function state(owner: string): any {
     const row = db.prepare('SELECT value_json FROM personal_state WHERE owner=?').get(owner) as any;
@@ -29,6 +31,7 @@ export function createPersonalization(db: Database.Database, userOf: (r: express
     return row;
   }
   function memories(owner: string, scope?: string) {
+    if(recallos)return recallos.list(owner).filter(r=>r.source==='explicit').filter(r=>scope===undefined||(r.active&&(r.scope==='global'||r.scope===scope)));
     const rows = db.prepare('SELECT id,scope,content,updated_at AS updatedAt,expires_at AS expiresAt FROM personal_memory WHERE owner=? ORDER BY updated_at DESC').all(owner) as any[];
     return rows.map(r=>({...r,source:'explicit',active:!r.expiresAt||Date.parse(r.expiresAt)>Date.now()})).filter(r=>scope===undefined || (r.active && (r.scope==='global'||r.scope===scope)));
   }
@@ -37,7 +40,7 @@ export function createPersonalization(db: Database.Database, userOf: (r: express
   }
   function view(owner: string) {
     const external=(db.prepare('SELECT app_id,info_json FROM complete_apps WHERE owner=?').all(owner) as any[]).map(r=>{const a=JSON.parse(r.info_json);return {appId:r.app_id,name:a.name,description:a.description,shared:false}});
-    return {...state(owner),memories:[...memories(owner),...contextual.list(owner)],apps:[...external,...db.prepare("SELECT app_id AS appId,name,description,owner FROM agent_apps WHERE owner IN ('',?) ORDER BY updated_at DESC").all(owner).map((a:any)=>({appId:a.appId,name:a.name,description:a.description,shared:a.owner===''}))]};
+    return {...state(owner),memories:[...memories(owner),...contextual.list(owner).filter(m=>!recallos||m.source!=='explicit')],recallos:recallos?.status(owner),apps:[...external,...db.prepare("SELECT app_id AS appId,name,description,owner FROM agent_apps WHERE owner IN ('',?) ORDER BY updated_at DESC").all(owner).map((a:any)=>({appId:a.appId,name:a.name,description:a.description,shared:a.owner===''}))]};
   }
   function decorate(owner: string, result: any) {
     const s=state(owner), visible=new Set<string>((result.apps||[]).filter((a:any)=>{
@@ -79,7 +82,8 @@ export function createPersonalization(db: Database.Database, userOf: (r: express
       const appearance={title:text(p.title,80),background:p.background,surface:p.surface,text:p.text,accent:p.accent,radius:Math.max(0,Math.min(28,p.radius)),density:p.density,font:p.font,layout:p.layout,brief,model:llm.model,updatedAt:new Date().toISOString()};
       const fresh=state(owner);fresh.appearances[appId]=appearance;save(owner,fresh);
       if(rememberForFuture){
-        db.prepare('INSERT INTO personal_memory VALUES (?,?,?,?,?,?) ON CONFLICT(owner,id) DO UPDATE SET scope=excluded.scope,content=excluded.content,updated_at=excluded.updated_at,expires_at=NULL').run(owner,'personal-appearance-preference','global','Interface preference: '+brief,new Date().toISOString(),null);
+        if(recallos){await recallos.upsert(owner,{id:'personal-appearance-preference',scope:'global',content:'Interface preference: '+brief,source:'explicit'},'liveui-appearance/'+randomUUID(),brief);await recallos.refresh(owner);}
+        else db.prepare('INSERT INTO personal_memory VALUES (?,?,?,?,?,?) ON CONFLICT(owner,id) DO UPDATE SET scope=excluded.scope,content=excluded.content,updated_at=excluded.updated_at,expires_at=NULL').run(owner,'personal-appearance-preference','global','Interface preference: '+brief,new Date().toISOString(),null);
       }
       return {appId,appearance,memories:view(owner).memories};
 
@@ -93,6 +97,7 @@ export function createPersonalization(db: Database.Database, userOf: (r: express
   async function prepare(req:express.Request,llm:LlmRuntimeConfig|undefined) {
     if(!llm||statuses.has(req))return llm;
     const owner=userOf(req),s=state(owner),body=req.body||{},scope=String(body.appId||body.selectedAppId||'global');
+    await contextual.refresh(owner);
     const explicit=context(owner,scope);
     if(s.contextualEnabled===false){llm.personalContext=JSON.stringify(explicit);statuses.set(req,{status:'disabled',remembered:0});return llm;}
     let input=typeof body.prompt==='string'?body.prompt:typeof body.brief==='string'?body.brief:'';
@@ -113,6 +118,7 @@ export function createPersonalization(db: Database.Database, userOf: (r: express
     return llm;
   }
   function install(app: express.Express) {
+    if(recallos)app.use('/agent/personal',async(req,_res,next)=>{try{await contextual.refresh(userOf(req));next();}catch(error){next(error)}});
     app.get('/agent/personal', (req,res)=>res.json(view(userOf(req))));
     app.put('/agent/personal/context-settings',(req,res,next)=>{try{
       if(typeof req.body?.enabled!=='boolean')throw fail('enabled must be a boolean');
@@ -142,18 +148,20 @@ export function createPersonalization(db: Database.Database, userOf: (r: express
       s.enabledShared=apps.filter((a:any)=>a.shared&&visible.has(a.appId)).map((a:any)=>a.appId);
       s.hidden=apps.filter((a:any)=>!visible.has(a.appId)).map((a:any)=>a.appId);save(owner,s);res.json({ok:true});
     }catch(e){next(e)}});
-    app.put('/agent/personal/memory', (req,res,next)=>{try {
+    app.put('/agent/personal/memory', async(req,res,next)=>{try {
       const owner=userOf(req),content=redactContext(text(req.body?.content)),scope=text(req.body?.scope,120)||'global';
       if (!content)throw fail('Enter a preference to remember');if(scope!=='global')access(owner,scope);
       if (memories(owner).length>=100&&!req.body?.id)throw fail('Memory is limited to 100 entries. Remove an existing entry first.');
       let expiresAt:any=null;
       if(req.body?.expiresAt){const date=new Date(req.body.expiresAt);if(!Number.isFinite(+date)||+date<=Date.now())throw fail('The expiration date must be in the future');expiresAt=date.toISOString();}
       const id=text(req.body?.id,80)||randomUUID();
-      if(contextual.edit(owner,id,content,typeof req.body?.condition==='string'?req.body.condition:undefined,scope,expiresAt)){res.json({id,memories:view(owner).memories});return;}
-      db.prepare('INSERT INTO personal_memory VALUES (?,?,?,?,?,?) ON CONFLICT(owner,id) DO UPDATE SET scope=excluded.scope,content=excluded.content,updated_at=excluded.updated_at,expires_at=excluded.expires_at').run(owner,id,scope,content,new Date().toISOString(),expiresAt);
+      if(recallos&&req.body?.version&&recallos.list(owner).find(r=>r.id===id)?.version!==req.body.version)throw fail('Memory changed in another session. Refresh before editing.',409);
+      if(await contextual.edit(owner,id,content,typeof req.body?.condition==='string'?req.body.condition:undefined,scope,expiresAt)){res.json({id,memories:view(owner).memories});return;}
+      if(recallos){await recallos.upsert(owner,{id,scope,content,expiresAt,source:'explicit',condition:typeof req.body?.condition==='string'?req.body.condition:'Relevant interface tasks'},'liveui-explicit/'+randomUUID(),content);await recallos.refresh(owner);}
+      else db.prepare('INSERT INTO personal_memory VALUES (?,?,?,?,?,?) ON CONFLICT(owner,id) DO UPDATE SET scope=excluded.scope,content=excluded.content,updated_at=excluded.updated_at,expires_at=excluded.expires_at').run(owner,id,scope,content,new Date().toISOString(),expiresAt);
       res.json({id,memories:view(owner).memories});
     }catch(e){next(e)}});
-    app.delete('/agent/personal/memory/:id',(req,res)=>{contextual.remove(userOf(req),String(req.params.id));db.prepare('DELETE FROM personal_memory WHERE owner=? AND id=?').run(userOf(req),String(req.params.id));res.json({ok:true});});
+    app.delete('/agent/personal/memory/:id',async(req,res,next)=>{try{const owner=userOf(req),id=String(req.params.id);if(recallos&&req.body?.version&&recallos.list(owner).find(r=>r.id===id)?.version!==req.body.version)throw fail('Memory changed in another session. Refresh before deleting.',409);await contextual.remove(owner,id);if(!recallos)db.prepare('DELETE FROM personal_memory WHERE owner=? AND id=?').run(owner,id);res.json({ok:true});}catch(error){next(error)}});
     app.post('/agent/personal/appearance',async(req,res,next)=>{try{
       const owner=userOf(req),appId=text(req.body?.appId,120),brief=text(req.body?.brief,1600);
       const work=()=>generateAppearance(owner,appId,brief,llmOf(req),req.body?.rememberForFuture===true);
@@ -161,5 +169,5 @@ export function createPersonalization(db: Database.Database, userOf: (r: express
     }catch(e){next(e)}});
     app.delete('/agent/personal/appearance/:id',(req,res)=>{const owner=userOf(req),s=state(owner);delete s.appearances[String(req.params.id)];save(owner,s);res.json({ok:true});});
   }
-  return {install,decorate,context,state,moveCanvas,inheritAppearance,prepare,recall:(owner:string,scope:string)=>[...context(owner,scope),...contextual.list(owner).filter((m:any)=>m.active&&(m.scope==='global'||m.scope===scope)).map((m:any)=>({preference:m.content,when:m.condition,source:'interaction'}))],observe:async(owner:string,input:any,llm:any)=>{if(state(owner).contextualEnabled===false)return;const result=await contextual.process(owner,input,llm);const fresh=state(owner);fresh.contextualLastStatus=result.status;save(owner,fresh);return result;},requestStatus:(req:express.Request)=>statuses.get(req)};
+  return {install,decorate,context,state,moveCanvas,inheritAppearance,prepare,recall:(owner:string,scope:string)=>[...context(owner,scope),...contextual.list(owner).filter((m:any)=>m.active&&(!recallos||m.source!=='explicit')&&(m.scope==='global'||m.scope===scope)).map((m:any)=>({preference:m.content,when:m.condition,source:'interaction'}))],observe:async(owner:string,input:any,llm:any)=>{if(state(owner).contextualEnabled===false)return;const result=await contextual.process(owner,input,llm);const fresh=state(owner);fresh.contextualLastStatus=result.status;save(owner,fresh);return result;},requestStatus:(req:express.Request)=>statuses.get(req)};
 }
